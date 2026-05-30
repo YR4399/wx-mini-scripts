@@ -1,96 +1,176 @@
-# 微信小程序自动化脚本合集
+<div align="center">
 
-基于 **WCS (WeChat Cloud Service)** 自动获取 `wx.login code`，实现微信小程序的签到、任务、抽奖自动化。
+<img src="https://raw.githubusercontent.com/AnotherSadGit/AnotherSadGit/master/assets/waifu.gif" width="120" />
 
-> 运行环境：[呆呆面板](https://github.com/linzixuanzz/Dumb-Panel) Docker 容器  
-> 最后同步：2026-05-30
+# ✨ 微信小程序自动化脚本合集 ✨
+
+**「 每天自动签到，把时间留给二次元 」**
+
+<br />
+
+[![WeChat](https://img.shields.io/badge/WeChat-MiniProgram-07C160?style=for-the-badge&logo=wechat&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
+[![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
+[![MIT](https://img.shields.io/badge/License-MIT-FEE75C?style=for-the-badge)](https://github.com/YR4399/wx-mini-scripts/blob/main/LICENSE)
+
+<br />
+
+> 🌟 基于 **WCS** 自动获取 `wx.login code`  
+> 🚀 实现签到 · 任务 · 抽奖 全自动  
+> 🎯 运行环境：呆呆面板 Docker 容器
+
+</div>
 
 ---
 
-## 脚本列表
+## 📜 脚本一览
 
-| 脚本 | 功能 | 更新时间 | 状态 |
-|------|------|----------|------|
-| `angel_sign.py` | 安吉尔小程序签到 | 05-30 | ✅ 正常 |
-| `claim_daily_gift.py` | 微信支付优惠券每日领取 | 05-29 | ✅ 正常 |
-| `glico_sign.py` | 格力高club 签到+抽奖+520活动 | 05-29 | ✅ 正常 |
-| `haishibao_sign.py` | 孩视宝签到（有赞零售平台） | 05-29 | ✅ 正常 |
-| `haitian_sign.py` | 海天美味馆 签到+抽奖+任务 | 05-29 | ⚠️ 需手动token |
-| `jph.py` | 君品荟 签到+花园种植（完整版） | 05-30 | ✅ 正常 |
-| `jph_runner.py` | 君品荟签到（轻量版，支持宿主机/容器） | 05-30 | ⚠️ 部分失败 |
-| `lj_sign.py` | 联家超市每日签到 | 05-29 | ✅ 正常 |
-| `ljg_ad_watcher.py` | 乐购激励广告自动观看 | 05-30 | ⚠️ 待调试 |
-| `mcyx_wechatserver.py` | 名创优品 自动登录+任务 | 05-29 | ⚠️ 待调试 |
-| `monalisa_wechatserver.py` | 蒙娜丽莎小程序签到 | 05-29 | ⚠️ 待调试 |
-| `quechao.py` | 雀巢会员签到+任务+抽奖 | 05-29 | ✅ 正常 |
-| `tpy_lyb.py` | 太平洋蓝医保 签到+健康问答 | 05-29 | ✅ 正常 |
-| `wps小程序.py` | WPS小程序 签到+浏览任务+抽奖 | 05-29 | ✅ 正常 |
-| `wx_code_client.py` | 微信Code获取客户端（公共模块） | 05-29 | 🔧 工具模块 |
-| `xmyx_auto_wcs.py` | 星妈会/飞鹤 签到+浏览任务 | 05-30 | ✅ 正常 |
-| `zhenxi.py` | 伊利甄稀 免单券/会员券抽奖 | 05-29 | ✅ 正常 |
-| `伊利qq星code5.24.py` | 伊利QQ星 全自动每日任务（多账号） | 05-29 | ✅ 正常 |
-| `小紫_sign.py` | 小紫有约 签到 | 05-30 | ✅ 正常 |
-| `星韵多号并发稳定毛0.2一次.py` | 星韵(舞心传媒) 自动化 | 05-29 | ✅ 正常 |
-| `星韵每小时抽奖0.2配合主脚本运行.py` | 星韵每小时抽奖（配合主脚本） | 05-29 | ✅ 正常 |
-| `浓五的酒馆 (2).py` | 浓五的酒馆 签到 | 05-29 | ✅ 正常 |
-| `溪云严选.py` | 溪云严选 自动获取code签到 | 05-29 | ✅ 正常 |
-| `牛牛短剧.py` | 牛牛短剧 自动登录+任务 | 05-29 | ✅ 正常 |
-| `王老吉.py` | 王老吉小程序 签到抽奖 | 05-29 | ✅ 正常 |
-| `纷享荟小程序.py` | 纷享荟积分任务自动化 | 05-30 | ✅ 正常 |
-| `袋鼠mama_sign.py` | 袋鼠妈妈签到（有赞平台） | 05-29 | ✅ 正常(2/3) |
-| `赵钱孙李.py` | 赵钱孙李养老 WCS集成版 | 05-29 | ✅ 正常 |
+<div align="center">
 
-### 状态说明
+### 🎀 签到类
+
+</div>
+
+| 脚本 | 说明 | 更新 | 状态 |
+|:-----|:-----|:----:|:----:|
+| `angel_sign.py` | 安吉尔 · 每日签到 | 05-30 | ✨ |
+| `袋鼠mama_sign.py` | 袋鼠妈妈 · 有赞签到 | 05-29 | ✨ |
+| `haishibao_sign.py` | 孩视宝 · 有赞零售签到 | 05-29 | ✨ |
+| `lj_sign.py` | 联家超市 · 每日签到 | 05-29 | ✨ |
+| `monalisa_wechatserver.py` | 蒙娜丽莎 · 自动签到 | 05-29 | 🔧 |
+| `小紫_sign.py` | 小紫有约 · 每日签到 | 05-30 | ✨ |
+| `tpy_lyb.py` | 太平洋蓝医保 · 签到+问答 | 05-29 | ✨ |
+
+<div align="center">
+
+### 🎁 任务 & 抽奖类
+
+</div>
+
+| 脚本 | 说明 | 更新 | 状态 |
+|:-----|:-----|:----:|:----:|
+| `glico_sign.py` | 格力高 · 签到+抽奖+520活动 | 05-29 | ✨ |
+| `quechao.py` | 雀巢 · 签到+任务+抽奖 | 05-29 | ✨ |
+| `claim_daily_gift.py` | 微信支付 · 每日优惠券 | 05-29 | ✨ |
+| `王老吉.py` | 王老吉 · 签到抽奖 | 05-29 | ✨ |
+| `wps小程序.py` | WPS · 签到+浏览+抽奖 | 05-29 | ✨ |
+| `ljg_ad_watcher.py` | 乐购 · 激励广告观看 | 05-30 | ⚠️ |
+
+<div align="center">
+
+### 🌸 综合自动化类
+
+</div>
+
+| 脚本 | 说明 | 更新 | 状态 |
+|:-----|:-----|:----:|:----:|
+| `jph.py` | 君品荟 · 签到+花园种植 | 05-30 | ✨ |
+| `jph_runner.py` | 君品荟 · 轻量版(宿主机/容器) | 05-30 | ⚠️ |
+| `mcyx_wechatserver.py` | 名创优品 · 登录+任务 | 05-29 | 🔧 |
+| `xmyx_auto_wcs.py` | 星妈会/飞鹤 · 签到+浏览 | 05-30 | ✨ |
+| `纷享荟小程序.py` | 纷享荟 · 积分任务 | 05-30 | ✨ |
+| `牛牛短剧.py` | 牛牛短剧 · 登录+任务 | 05-29 | ✨ |
+| `haitian_sign.py` | 海天美味馆 · 签到+抽奖 | 05-29 | 🔑 |
+
+<div align="center">
+
+### 🍼 伊利系列
+
+</div>
+
+| 脚本 | 说明 | 更新 | 状态 |
+|:-----|:-----|:----:|:----:|
+| `伊利qq星code5.24.py` | 伊利QQ星 · 全自动多账号 | 05-29 | ✨ |
+| `zhenxi.py` | 伊利甄稀 · 免单券/会员券 | 05-29 | ✨ |
+| `星韵多号并发稳定毛0.2一次.py` | 星韵 · 多号并发 | 05-29 | ✨ |
+| `星韵每小时抽奖0.2配合主脚本运行.py` | 星韵 · 每小时抽奖 | 05-29 | ✨ |
+
+<div align="center">
+
+### 🏠 其他
+
+</div>
+
+| 脚本 | 说明 | 更新 | 状态 |
+|:-----|:-----|:----:|:----:|
+| `溪云严选.py` | 溪云严选 · 自动签到 | 05-29 | ✨ |
+| `浓五的酒馆 (2).py` | 浓五的酒馆 · 签到 | 05-29 | ✨ |
+| `赵钱孙李.py` | 赵钱孙李养老 · WCS集成 | 05-29 | ✨ |
+| `wx_code_client.py` | 微信Code获取 · 公共模块 | 05-29 | 🔩 |
+
+<br />
+
+<div align="center">
 
 | 标记 | 含义 |
-|------|------|
-| ✅ 正常 | 最近一次运行成功 |
-| ⚠️ 待调试 | 存在问题，需要排查 |
-| ⚠️ 需手动token | 需要手动抓包提供token |
-| 🔧 工具模块 | 公共依赖，非独立运行脚本 |
+|:----:|:-----|
+| ✨ | 运行正常 |
+| ⚠️ | 需要调试 |
+| 🔧 | 待适配 |
+| 🔑 | 需手动Token |
+| 🔩 | 工具模块 |
+
+</div>
 
 ---
 
-## 环境要求
+## 🛠️ 快速开始
 
-- **运行平台**：呆呆面板 (Docker)
-- **微信服务**：WCS (wechatserver) 用于自动获取 `wx.login code`
-- **Python 依赖**：`requests`（呆呆面板自带）
+```
+ ① 克隆仓库          ② 配置环境变量         ③ 添加定时任务
+┌─────────────┐    ┌─────────────────┐    ┌──────────────────┐
+│ git clone    │ →  │ wx_server_url   │ →  │ task code/xxx.py │
+│ 本仓库       │    │ wx_auth         │    │ 呆呆面板设置      │
+│              │    │ wx_opinion      │    │                  │
+└─────────────┘    └─────────────────┘    └──────────────────┘
+```
 
 ### 环境变量
 
-| 变量 | 说明 |
-|------|------|
-| `wx_server_url` | WCS 服务地址（如 `http://172.17.0.3:8787`） |
-| `wx_auth` | WCS API Key |
-| `wx_opinion` | 账号 openid 列表（`&` 分隔） |
+| 变量 | 说明 | 示例 |
+|:-----|:-----|:-----|
+| `wx_server_url` | WCS 服务地址 | `http://172.17.0.3:8787` |
+| `wx_auth` | WCS API Key | `your_api_key` |
+| `wx_opinion` | openid 列表 (`&` 分隔) | `owNAX6...&owNAX6...` |
 
 ---
 
-## 使用方式
-
-1. 将脚本放入呆呆面板的 `scripts/code/` 目录
-2. 配置环境变量（WCS 地址、API Key、openid）
-3. 在呆呆面板中添加定时任务：`task code/脚本名.py`
-
----
-
-## 项目结构
+## 📁 项目结构
 
 ```
 wx-mini-scripts/
-├── README.md              # 本文件
-├── .gitignore
-└── code/
-    ├── angel_sign.py       # 安吉尔签到
-    ├── claim_daily_gift.py # 微信每日红包
-    ├── glico_sign.py       # 格力高
-    ├── ...                 # 其他脚本
-    └── 赵钱孙李.py         # 赵钱孙李养老
+├── 📄 README.md            ← 你正在看的这个
+├── 🚫 .gitignore
+└── 📂 code/
+    ├── 🎀 angel_sign.py
+    ├── 🎀 袋鼠mama_sign.py
+    ├── 🎁 glico_sign.py
+    ├── 🎁 quechao.py
+    ├── 🌸 jph.py
+    ├── 🌸 纷享荟小程序.py
+    ├── 🍼 伊利qq星code5.24.py
+    ├── 🍼 zhenxi.py
+    ├── 🏠 溪云严选.py
+    ├── 🏠 赵钱孙李.py
+    └── ... (共 28 个脚本)
 ```
 
 ---
 
-## License
+<div align="center">
 
-MIT
+## 💖 致谢
+
+[呆呆面板](https://github.com/linzixuanzz/Dumb-Panel) · [WCS](https://github.com/smallfawn/QLScriptPublic)
+
+<br />
+
+**「 今天的签到，就交给小助手吧～ 」**
+
+<img src="https://media.tenor.com/images/f0c8b7a3c0b3a5b3c0b3a5b3c0b3a5b3/tenor.gif" width="200" />
+
+<br />
+
+![Visitors](https://komarev.com/ghpvc/?username=YR4399&label=Visitors&color=ff69b4&style=flat-square)
+
+</div>
