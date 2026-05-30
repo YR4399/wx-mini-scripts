@@ -10,14 +10,14 @@
 
 [![WeChat](https://img.shields.io/badge/WeChat-MiniProgram-07C160?style=for-the-badge&logo=wechat&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
-[![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
+[![Docker](https://img.shields.io/badge/Docker-Container-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![MIT](https://img.shields.io/badge/License-MIT-FEE75C?style=for-the-badge)](https://github.com/YR4399/wx-mini-scripts/blob/main/LICENSE)
 
 <br />
 
-> 🌟 基于 **WCS** 自动获取 `wx.login code`  
-> 🚀 实现签到 · 任务 · 抽奖 全自动  
-> 🎯 运行环境：呆呆面板 Docker 容器
+> 🌟 自动获取 `wx.login code` 实现微信小程序自动化  
+> 🚀 签到 · 任务 · 抽奖 全自动  
+> 🎯 基于 Docker 容器化部署
 
 </div>
 
@@ -95,7 +95,7 @@
 |:-----|:-----|:----:|:----:|
 | `溪云严选.py` | 溪云严选 · 自动签到 | 05-29 | ✨ |
 | `浓五的酒馆 (2).py` | 浓五的酒馆 · 签到 | 05-29 | ✨ |
-| `赵钱孙李.py` | 赵钱孙李养老 · WCS集成 | 05-29 | ✨ |
+| `赵钱孙李.py` | 赵钱孙李养老 · 自动签到 | 05-29 | ✨ |
 | `wx_code_client.py` | 微信Code获取 · 公共模块 | 05-29 | 🔩 |
 
 <br />
@@ -117,10 +117,10 @@
 ## 🛠️ 快速开始
 
 ```
- ① 克隆仓库          ② 配置环境变量         ③ 添加定时任务
+  ① 克隆仓库          ② 配置环境变量         ③ 添加定时任务
 ┌─────────────┐    ┌─────────────────┐    ┌──────────────────┐
-│ git clone    │ →  │ wx_server_url   │ →  │ task code/xxx.py │
-│ 本仓库       │    │ wx_auth         │    │ 呆呆面板设置      │
+│ git clone    │ →  │ wx_server_url   │ →  │ python code/x.py │
+│ 本仓库       │    │ wx_auth         │    │ crontab / 任务调度│
 │              │    │ wx_opinion      │    │                  │
 └─────────────┘    └─────────────────┘    └──────────────────┘
 ```
@@ -129,8 +129,8 @@
 
 | 变量 | 说明 | 示例 |
 |:-----|:-----|:-----|
-| `wx_server_url` | WCS 服务地址 | `http://172.17.0.3:8787` |
-| `wx_auth` | WCS API Key | `your_api_key` |
+| `wx_server_url` | 微信服务地址 | `http://your-server:8787` |
+| `wx_auth` | API Key | `your_api_key` |
 | `wx_opinion` | openid 列表 (`&` 分隔) | `owNAX6...&owNAX6...` |
 
 ---
@@ -161,7 +161,7 @@ wx-mini-scripts/
 
 ## 💖 致谢
 
-[呆呆面板](https://github.com/linzixuanzz/Dumb-Panel) · [WCS](https://github.com/smallfawn/QLScriptPublic)
+感谢所有开源贡献者
 
 <br />
 

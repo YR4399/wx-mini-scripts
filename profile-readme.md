@@ -53,8 +53,8 @@
 ```
 ┌─────────────────────────────┐
 │  ▸ wx-mini-scripts   28 bots  │
-│  ▸ 呆呆面板自动化      ONLINE  │
-│  ▸ WCS 云服务         ACTIVE  │
+│  ▸ 自动化签到系统      ONLINE  │
+│  ▸ 微信小程序自动化    ACTIVE  │
 │  ▸ 签到矩阵           DAILY   │
 │  ▸ 任务引擎           RUNNING │
 └─────────────────────────────┘
@@ -158,7 +158,7 @@
 | 📅 Today | 袋鼠妈妈 2/3 accounts signed | `OK` |
 | 📅 Today | GitHub repo + 二次元风格 README | `DONE` |
 | 📅 Yesterday | 君品荟 AJ-Captcha 滑块破解 | `DONE` |
-| 📅 Yesterday | WCS 本地容器网络配置 | `DONE` |
+| 📅 Yesterday | 微信服务容器网络配置 | `DONE` |
 
 </div>
 
