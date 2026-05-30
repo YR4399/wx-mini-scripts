@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.json
+.cache/
+缓存token/
+zqsm_tokens/
+*.log
+.env
