@@ -13,7 +13,7 @@
   双域名双 Token:
     - fm.exijiu.com        -> 商城系统, 商城 token (X-Access-Token)
     - apimallwm.exijiu.com -> 花园系统, 花园 token (X-Access-Token)
-  花园系统 AES-CBC 加密 (PKCS7 + HEX 输出), 密钥来自 WCS /wx/encrypt
+  花园系统 AES-CBC 加密 (PKCS7 + HEX 输出), 密钥来自 WCS /wx/encryptkey
 
 登录说明:
   wxMiniLogin 传 code + phoneCode 可获取 token
@@ -80,7 +80,7 @@ AUTH_BASIC = 'Basic d2VjaGF0OndlY2hhdF9zZWNyZXQ='
 APP_VERSION = '1.0.0'
 CHANNEL_CODE = 'xj_mall_wx_applet'
 
-# 花园加密相关 (运行时从 WCS /wx/encrypt 获取)
+# 花园加密相关 (运行时从 WCS /wx/encryptkey 获取)
 _encrypt_key_cache = {}  # {user_key: {'encryptKey': str, 'iv': str, 'ts': float}}
 
 
@@ -307,7 +307,7 @@ class WCSClient:
         """对君品荟小程序执行 wx.login() 获取 code
         使用 Python requests 直接调用 WCS 容器内部 IP (绕过代理)
         """
-        body = {'appid': APPID, 'userKey': user_key or openid, 'openid': openid}
+        body = {'userKey': user_key or openid, 'openid': openid, 'appid': APPID}
         try:
             r = requests.post(f'{self.wcs_internal}/wx/code', json=body,
                               headers={'auth': self.auth, 'Content-Type': 'application/json'},
@@ -322,15 +322,15 @@ class WCSClient:
 
     def get_encrypt_key(self, openid, user_key=None):
         """获取花园系统 AES 加密密钥 (wx.getUserCryptoManager().getLatestUserKey)"""
-        body = {'appid': APPID, 'userKey': user_key or openid, 'openid': openid}
+        body = {'userKey': user_key or openid, 'openid': user_key or openid}
         try:
-            r = requests.post(f'{self.wcs_internal}/wx/encrypt', json=body,
+            r = requests.post(f'{self.wcs_internal}/wx/encryptkey', json=body,
                               headers={'auth': self.auth, 'Content-Type': 'application/json'},
                               timeout=60, proxies={'http': None, 'https': None})
             data = r.json()
             if data.get('status') and data.get('data'):
                 enc_data = data['data']
-                ek = enc_data.get('encryptKey', '')
+                ek = enc_data.get('encrypt_key', '')
                 iv = enc_data.get('iv', '')
                 if ek and iv:
                     uk = user_key or openid
@@ -341,9 +341,9 @@ class WCSClient:
                     }
                     log.info(f'[WCS] 获取加密密钥成功 (iv={iv})')
                     return ek, iv
-            log.warning(f'[WCS] /wx/encrypt 返回: {data}')
+            log.warning(f'[WCS] /wx/encryptkey 返回: {data}')
         except Exception as e:
-            log.warning(f'[WCS] /wx/encrypt 异常: {e}')
+            log.warning(f'[WCS] /wx/encryptkey 异常: {e}')
         return None, None
 # ============ 自动登录 (WCS code) ============
 
@@ -602,7 +602,7 @@ def mall_check_sign(mall_token):
 def init_garden_session(garden_token, wcs, openid, user_key=None):
     """
     初始化花园系统 session:
-    1. 获取 AES 加密密钥 (WCS /wx/encrypt)
+    1. 获取 AES 加密密钥 (WCS /wx/encryptkey)
     2. 保存 session key (saveSessionKey)
     """
     uk = user_key or openid
@@ -666,6 +666,9 @@ def garden_daily_sign(garden_token, user_key):
             return True
         else:
             msg = data.get('msg', '')
+            if data.get('err') == 5001:
+                log.warning(f'[花园签到] 被防刷拦截 (5001), 跳过后续花园操作')
+                return 'blocked'
             log.warning(f'[花园签到] 失败: {msg} ({data})')
             return False
     except Exception as e:
@@ -743,6 +746,9 @@ def garden_seed(garden_token, user_key, plot_id, crop_type=1):
             return True
         else:
             msg = data.get('msg', '')
+            if data.get('err') == 5001:
+                log.warning(f'[种植{crop_name}] 被防刷拦截 (5001)')
+                return 'blocked'
             log.warning(f'[种植{crop_name}] 失败: {msg} ({data})')
             return False
     except Exception as e:
@@ -773,7 +779,8 @@ def garden_watering(garden_token, user_key, plot_id):
             msg = data.get('msg', '')
             err_code = data.get('err', 0)
             if err_code == 5001:
-                log.warning(f'[浇水] 被防刷拦截: {msg}')
+                log.warning(f'[浇水] 被防刷拦截 (5001)')
+                return 'blocked'
             else:
                 log.warning(f'[浇水] 失败: {msg} ({data})')
             return False
@@ -886,7 +893,9 @@ def run_one_account(acc, wcs=None):
 
     log.info('[2/5] 花园系统初始化...')
     time.sleep(random.uniform(1.0, 2.0))
-    if not init_garden_session(garden_token, wcs, openid, user_key):
+    # 用 WCS 注册的 openid 获取 encryptkey (不是君品荟 openId)
+    wcs_openid = acc.get('wcs_openid', user_key)
+    if not init_garden_session(garden_token, wcs, wcs_openid, user_key):
         log.error('[花园初始化] 失败, 跳过花园操作')
         return
 
@@ -904,30 +913,26 @@ def run_one_account(acc, wcs=None):
     # ---- 花园签到 ----
     log.info('[4/5] 花园签到...')
     time.sleep(random.uniform(0.5, 1.5))
-    garden_daily_sign(garden_token, user_key)
+    sign_result = garden_daily_sign(garden_token, user_key)
+    blocked_5001 = (sign_result == 'blocked')
 
     # ---- 种植与浇水 ----
-    log.info('[5/5] 种植与浇水...')
-    time.sleep(random.uniform(0.5, 1.0))
-    plots = get_sorghum_index(garden_token)
-    if plots:
-        for plot in plots:
-            status = plot.get('status', -1)
-            serial = plot.get('serial_number', '?')
-            plot_id = plot.get('id')
-
-            if status == -1:
-                # 空闲地块, 尝试种植高粱
-                time.sleep(random.uniform(0.8, 1.5))
-                garden_seed(garden_token, user_key, plot_id, crop_type=1)
-            elif status == 10:
-                # 种植中, 尝试浇水
-                time.sleep(random.uniform(0.8, 1.5))
-                garden_watering(garden_token, user_key, plot_id)
-            elif status == 0:
-                # 刚种植 (status=0 表示刚种下的), 尝试浇水
-                time.sleep(random.uniform(0.8, 1.5))
-                garden_watering(garden_token, user_key, plot_id)
+    if blocked_5001:
+        log.info('[5/5] 跳过种植与浇水 (5001 防刷拦截)')
+    else:
+        log.info('[5/5] 种植与浇水...')
+        time.sleep(random.uniform(0.5, 1.0))
+        plots = get_sorghum_index(garden_token)
+        if plots:
+            for plot in plots:
+                status = plot.get('status', -1)
+                plot_id = plot.get('id')
+                if status == -1:
+                    time.sleep(random.uniform(0.8, 1.5))
+                    garden_seed(garden_token, user_key, plot_id, crop_type=1)
+                elif status in (10, 0):
+                    time.sleep(random.uniform(0.8, 1.5))
+                    garden_watering(garden_token, user_key, plot_id)
 
     # ---- 每日答题 ----
     log.info('[附加] 每日答题...')
@@ -990,24 +995,23 @@ def main():
             wcs_accounts = wcs.get_accounts()
             if wcs_accounts:
                 log.info(f'[WCS] 发现 {len(wcs_accounts)} 个注册账号, 为 {len(no_token)} 个纯 openid 账号自动登录...')
-                for acc in no_token:
-                    openid = acc['openid']
-                    uk = acc.get('user_key', openid)
-                    # 反查 userKey
-                    for wa in wcs_accounts:
-                        if wa.get('openid') == openid:
-                            uk = wa.get('userKey', openid)
-                            break
-                    login_result = login_via_code(wcs, openid, uk)
+                for wa in wcs_accounts:
+                    wcs_openid = wa["openid"]
+                    uk = wa.get("userKey", wcs_openid)
+                    login_result = login_via_code(wcs, wcs_openid, uk)
                     if login_result:
-                        acc['mall_token'] = login_result['token']
-                        acc['garden_token'] = login_result['token']
-                        acc['remark'] = login_result.get('remark', acc.get('remark', openid[:8]))
-                        acc['user_key'] = uk
+                        acc = {
+                            "openid": login_result.get("openid", wcs_openid),
+                            "mall_token": login_result["token"],
+                            "garden_token": login_result["token"],
+                            "remark": login_result.get("remark", wcs_openid[:8]),
+                            "user_key": uk,
+                            "wcs_openid": wcs_openid,
+                        }
                         has_token.append(acc)
                         log.info(f'[自动登录] {acc["remark"]} 成功')
                     else:
-                        log.warning(f'[自动登录] {openid[:12]} 失败, 跳过')
+                        log.warning(f'[自动登录] {wcs_openid[:12]} 失败, 跳过')
         except Exception as e:
             log.warning(f'[WCS] 自动登录异常: {e}')
 
@@ -1028,18 +1032,22 @@ def main():
                 log.warning(f'[WCS] 连接失败: {e}')
                 wcs = None
 
+        # 按顺序关联 WCS 账号
+        wcs_account_map = {}
+        if wcs:
+            try:
+                wcs_accounts_list = wcs.get_accounts()
+                if wcs_accounts_list:
+                    for idx2, wa in enumerate(wcs_accounts_list):
+                        wcs_account_map[idx2] = wa
+            except Exception:
+                pass
+
         for i, acc in enumerate(manual_accounts):
-            if wcs:
-                # 尝试从 WCS 账号列表反查 userKey
-                try:
-                    wcs_accounts = wcs.get_accounts()
-                    if wcs_accounts:
-                        for wa in wcs_accounts:
-                            if wa.get('openid') == acc['openid']:
-                                acc['user_key'] = wa.get('userKey', acc['openid'])
-                                break
-                except Exception:
-                    pass
+            if wcs and i in wcs_account_map:
+                wa = wcs_account_map[i]
+                acc['wcs_openid'] = wa['openid']
+                acc['user_key'] = wa.get('userKey', wa['openid'])
 
             run_one_account(acc, wcs)
 

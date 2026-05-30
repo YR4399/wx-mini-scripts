@@ -691,7 +691,7 @@ async def amain() -> int:
         LOG.error("未配置环境变量 WX_SERVER_APIKEY（呆呆面板自动注入 wx_auth）")
         return 1
 
-    os.getenv("wx_opinion") or raw = os.getenv("MCYX_ACCOUNT", "").strip()
+    raw = os.getenv("wx_opinion") or os.getenv("MCYX_ACCOUNT", "").strip()
     if not raw:
         LOG.error("未配置环境变量 MCYX_ACCOUNT")
         LOG.error("格式: userKey（多账号 & 分隔）")

@@ -27,6 +27,11 @@ import sys
 import os
 from urllib.parse import urlencode
 
+# 清除代理（Docker 容器内可能有不可用的代理）
+for _k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
+    os.environ.pop(_k, None)
+os.environ['NO_PROXY'] = '*'
+
 try:
     from Crypto.Cipher import AES, PKCS1_v1_5
     from Crypto.PublicKey import RSA
@@ -123,11 +128,11 @@ class WCSConsoleClient:
         return None
 
     def get_encrypt_key(self, openid, appid, timeout=60):
-        data = {'appid': appid}
+        data = {}
         if openid:
             data['openid'] = openid
         log.info(f'WCS控制台: 获取encrypt_key (openid={openid[:8] if openid else "(自动)"}...)')
-        result = self._post('/wx/encrypt', data, timeout=timeout)
+        result = self._post('/wx/encryptkey', data, timeout=timeout)
         if result and result.get('status'):
             return result.get('data', {})
         log.error(f'get_encrypt_key 失败: {result}')
@@ -872,7 +877,7 @@ def main():
                 log.error(f'{aid} 获取encryptKey失败，跳过')
                 continue
 
-            enc_key = enc_data.get('encryptKey')
+            enc_key = enc_data.get('encrypt_key')
             iv_hex = enc_data.get('iv')
             if not enc_key or not iv_hex:
                 log.error(f'{aid} encryptKey/iv 格式异常: {enc_data}')

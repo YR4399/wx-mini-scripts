@@ -552,12 +552,18 @@ def run_manual_mode():
 def main():
     manual_accounts = parse_manual_accounts()
 
-    if manual_accounts:
+    # 过滤掉没有 token 的账号（纯 openid 由 WCS 处理）
+    has_token = [a for a in manual_accounts if a.get('token')]
+    no_token = [a for a in manual_accounts if not a.get('token')]
+
+    if has_token:
         log.info('使用手动 token 模式')
         run_manual_mode()
     elif WCS_AUTH:
         log.info('使用 WCS 自动登录模式')
         run_wcs_mode()
+    elif no_token:
+        log.error('有 openid 但 WCS 未配置，无法自动登录')
     else:
         log.error('未配置登录方式')
         print()
