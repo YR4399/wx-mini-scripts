@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AnotherSadGit/AnotherSadGit/master/assets/waifu.gif" width="120" />
+<img src="banner.svg" width="100%" />
 
 # ✨ 微信小程序自动化脚本合集 ✨
 

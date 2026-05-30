@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="50%" style="stop-color:#16213e"/>
+      <stop offset="100%" style="stop-color:#0f3460"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ff6b9d"/>
+      <stop offset="50%" style="stop-color:#c44dff"/>
+      <stop offset="100%" style="stop-color:#4dc9ff"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="300" fill="url(#bg)" rx="10"/>
+
+  <!-- Decorative circles -->
+  <circle cx="50" cy="50" r="80" fill="#ff6b9d" opacity="0.05"/>
+  <circle cx="750" cy="250" r="100" fill="#4dc9ff" opacity="0.05"/>
+  <circle cx="400" cy="150" r="120" fill="#c44dff" opacity="0.03"/>
+
+  <!-- Stars decoration -->
+  <g fill="#fff" opacity="0.6">
+    <circle cx="120" cy="40" r="2"/>
+    <circle cx="200" cy="60" r="1.5"/>
+    <circle cx="680" cy="50" r="2"/>
+    <circle cx="720" cy="80" r="1.5"/>
+    <circle cx="100" cy="200" r="1.5"/>
+    <circle cx="700" cy="220" r="2"/>
+    <circle cx="350" cy="30" r="1"/>
+    <circle cx="500" cy="270" r="1.5"/>
+    <circle cx="600" cy="40" r="1"/>
+    <circle cx="150" cy="260" r="1.5"/>
+  </g>
+
+  <!-- Sparkle effects -->
+  <g fill="#ffeb3b" filter="url(#glow)">
+    <polygon points="150,100 153,108 160,108 155,113 157,120 150,116 143,120 145,113 140,108 147,108" opacity="0.8"/>
+    <polygon points="650,80 652,86 658,86 654,90 655,96 650,92 645,96 646,90 642,86 648,86" opacity="0.6"/>
+    <polygon points="300,250 302,256 308,256 304,260 305,266 300,262 295,266 296,260 292,256 298,256" opacity="0.7"/>
+  </g>
+
+  <!-- Main title -->
+  <text x="400" y="100" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="42" font-weight="bold" fill="url(#accent)" filter="url(#shadow)">
+    微信小程序自动化脚本
+  </text>
+
+  <!-- Subtitle -->
+  <text x="400" y="140" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="18" fill="#aaa">
+    ✨ 签到 · 任务 · 抽奖 全自动 ✨
+  </text>
+
+  <!-- Tech badges -->
+  <g transform="translate(400, 180)" text-anchor="middle">
+    <rect x="-180" y="-15" width="100" height="28" rx="14" fill="#07C160" opacity="0.9"/>
+    <text x="-130" y="4" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">WeChat</text>
+
+    <rect x="-65" y="-15" width="100" height="28" rx="14" fill="#3776AB" opacity="0.9"/>
+    <text x="-15" y="4" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Python 3</text>
+
+    <rect x="50" y="-15" width="100" height="28" rx="14" fill="#2496ED" opacity="0.9"/>
+    <text x="100" y="4" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Docker</text>
+
+    <rect x="165" y="-15" width="80" height="28" rx="14" fill="#FEE75C" opacity="0.9"/>
+    <text x="205" y="4" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#333" text-anchor="middle">MIT</text>
+  </g>
+
+  <!-- Stats -->
+  <g transform="translate(400, 240)" text-anchor="middle">
+    <text x="-120" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#4dc9ff">28 个脚本</text>
+    <text x="0" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#ff6b9d">·</text>
+    <text x="30" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#c44dff">自动签到</text>
+    <text x="100" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#ff6b9d">·</text>
+    <text x="130" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#4dc9ff">每日任务</text>
+    <text x="200" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#ff6b9d">·</text>
+    <text x="230" y="0" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#c44dff">幸运抽奖</text>
+  </g>
+
+  <!-- Bottom decoration line -->
+  <line x1="100" y1="275" x2="700" y2="275" stroke="url(#accent)" stroke-width="1" opacity="0.3"/>
+</svg>
