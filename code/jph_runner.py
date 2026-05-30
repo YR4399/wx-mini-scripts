@@ -2,18 +2,29 @@
 """君品荟签到 - 支持从宿主机或容器内运行
 滑块验证码: 本地模板匹配 + AES-ECB 加密
 """
-import subprocess, json, requests, time, sys, base64, os, io
+import os, sys, subprocess
+# 清除代理（必须在 import 之前）
+for _k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
+    os.environ.pop(_k, None)
+os.environ['NO_PROXY'] = '*'
+
+# 自动安装缺失依赖
+def _ensure(pkg, pip_name=None):
+    try:
+        __import__(pkg)
+    except ImportError:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pip_name or pkg, '-q', '--break-system-packages'])
+_ensure('numpy'); _ensure('scipy'); _ensure('PIL', 'Pillow'); _ensure('requests'); _ensure('Crypto', 'pycryptodome')
+
+import json, time, io, base64
 import numpy as np
+import requests
 from PIL import Image
 from scipy.signal import correlate2d
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
 requests.packages.urllib3.disable_warnings()
-
-for _k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
-    os.environ.pop(_k, None)
-os.environ['NO_PROXY'] = '*'
 
 APPID = 'wx8d41cdc44c8aeaab'
 BASE = 'https://fm.exijiu.com'
