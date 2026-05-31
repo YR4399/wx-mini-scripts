@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-05-31 16:00
-> 📦 脚本总数：**29** 个
+> 🕐 最后同步：2026-05-31 18:00
+> 📦 脚本总数：**30** 个
 
 </div>
 
@@ -58,7 +58,7 @@
 | `monalisa_wechatserver.py` | 蒙娜丽莎小程序自动签到 - wechatserver 自动登录版 (无缓存) | 05-31 | 05-31 09:00 | ✨ |
 | `wps小程序.py` | WPS小程序签到+浏览任务+抽奖自动化脚本 | 05-30 | 05-31 14:00 | ✨ |
 | `xmyx_auto_wcs.py` | 星妈会小程序自动化签到 + 浏览任务脚本 (WCS Console 适配版) | 05-30 | 05-31 01:00 | ✨ |
-| `牛牛短剧.py` | 牛牛短剧 - 自动登录 + 任务脚本（wechatserver 适配版） | 05-30 | 05-31 12:29 | ✨ |
+| `牛牛短剧.py` | 牛牛短剧 - 自动登录 + 任务脚本（wechatserver 适配版） | 05-30 | — | — |
 | `纷享荟小程序.py` | 纷享会积分任务自动化 - WCS 全自动版 | 05-30 | — | — |
 
 <div align="center">
@@ -83,6 +83,7 @@
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
 | `ljg_ad_watcher.py` | 乐购 (ljgglp.com) 激励广告自动观看脚本 | 05-30 | 05-31 00:00 | ✨ |
+| `quanmianshidai.py` | 项目 全棉时代种棉花 | 05-31 | — | — |
 | `quechao.py` | 雀巢会员自动签到 + 任务 + 抽奖 脚本 V2.0 | 05-30 | 05-31 10:00 | ✨ |
 | `tpy_lyb.py` | 太平洋蓝医保 (cpic.com.cn) - 每日签到 & 健康问答自动化脚本 | 05-31 | 05-31 07:00 | ✨ |
 | `浓五的酒馆 (2).py` | 读取本地 Token 缓存 | 05-30 | 05-31 00:50 | ✨ |
