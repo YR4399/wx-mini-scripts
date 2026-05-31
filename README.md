@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-05-31 22:00
+> 🕐 最后同步：2026-06-01 00:00
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -31,7 +31,7 @@
 | `haishibao_sign.py` | (无描述) | 05-31 | 05-31 10:00 | ✨ |
 | `haitian_sign.py` | (无描述) | 05-31 | — | — |
 | `lj_sign.py` | (无描述) | 05-31 | 05-31 00:30 | ✨ |
-| `小紫_sign.py` | (无描述) | 05-31 | 05-31 00:00 | ✨ |
+| `小紫_sign.py` | (无描述) | 05-31 | — | — |
 | `袋鼠mama_sign.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
 
 <div align="center">
@@ -86,7 +86,7 @@
 | `campari.js` | 金巴厘杯中空间签到 | 05-31 |  | 💥 |
 | `casetify.js` | CASETiFY 签到 | 05-31 |  | 💥 |
 | `choubao.js` | cron: 30 9 * * * | 05-31 |  | 💥 |
-| `dasenlin.js` | 大参林小程序签到 | 05-31 |  | 💥 |
+| `dasenlin.js` | 大参林小程序签到 | 05-31 | 05-31 22:07 | ✨ |
 | `fej.js` | 敷尔佳小程序签到 | 05-31 |  | 💥 |
 | `guyu.js` | cron: 30 9 * * 1 | 05-31 |  | 💥 |
 | `hrj.js` | 好人家签到 | 05-31 |  | 💥 |
@@ -127,7 +127,7 @@
 
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
-| `ljg_ad_watcher.py` | (无描述) | 05-31 | 05-31 00:00 | ✨ |
+| `ljg_ad_watcher.py` | (无描述) | 05-31 | — | — |
 | `quanmianshidai.py` | (无描述) | 05-31 | — | — |
 | `quechao.py` | (无描述) | 05-31 | 05-31 10:00 | ✨ |
 | `tpy_lyb.py` | (无描述) | 05-31 | 05-31 07:00 | ✨ |
