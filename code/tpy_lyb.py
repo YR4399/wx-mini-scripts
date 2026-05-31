@@ -710,12 +710,9 @@ def parse_account(raw_line):
 
 def load_manual_accounts():
     """从 tpylyb 环境变量/缓存加载手动 token 账号"""
-    raw = os.environ.get('wx_opinion') or os.environ.get('tpylyb', '') or _config.get('tpylyb', '')
+    raw = os.environ.get('tpylyb', '') or _config.get('tpylyb', '')
     if not raw:
         return []
-    # wx_opinion openid format (& separated)
-    if '&' in raw and '#' not in raw:
-        return [{'remark': o[:8], 'openid': o, 'token': '', 'unionid': ''} for o in raw.split('&') if o.strip()]
     return [parse_account(l) for l in raw.strip().split('\n') if l.strip()]
 
 

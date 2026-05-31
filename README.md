@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-05-31 14:00
+> 🕐 最后同步：2026-05-31 16:00
 > 📦 脚本总数：**29** 个
 
 </div>
@@ -56,7 +56,7 @@
 | `jph_runner.py` | 君品荟签到 - 支持从宿主机或容器内运行 | 05-30 | — | — |
 | `mcyx_wechatserver.py` | 名创优品 - wechatserver 自动登录版（带 token 缓存 + 任务完成检测） | 05-31 | 05-31 09:00 | ✨ |
 | `monalisa_wechatserver.py` | 蒙娜丽莎小程序自动签到 - wechatserver 自动登录版 (无缓存) | 05-31 | 05-31 09:00 | ✨ |
-| `wps小程序.py` | WPS小程序签到+浏览任务+抽奖自动化脚本 | 05-30 | — | — |
+| `wps小程序.py` | WPS小程序签到+浏览任务+抽奖自动化脚本 | 05-30 | 05-31 14:00 | ✨ |
 | `xmyx_auto_wcs.py` | 星妈会小程序自动化签到 + 浏览任务脚本 (WCS Console 适配版) | 05-30 | 05-31 01:00 | ✨ |
 | `牛牛短剧.py` | 牛牛短剧 - 自动登录 + 任务脚本（wechatserver 适配版） | 05-30 | 05-31 12:29 | ✨ |
 | `纷享荟小程序.py` | 纷享会积分任务自动化 - WCS 全自动版 | 05-30 | — | — |
