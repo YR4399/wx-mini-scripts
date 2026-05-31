@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-05-31 19:34
-> 📦 脚本总数：**30** 个
+> 🕐 最后同步：2026-05-31 19:35
+> 📦 脚本总数：**66** 个
 
 </div>
 
@@ -82,10 +82,46 @@
 
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
+| `bluedash.js` | (无描述) | 05-31 | — | — |
+| `campari.js` | (无描述) | 05-31 |  | 💥 |
+| `casetify.js` | (无描述) | 05-31 |  | 💥 |
+| `choubao.js` | (无描述) | 05-31 |  | 💥 |
+| `dasenlin.js` | (无描述) | 05-31 |  | 💥 |
+| `fej.js` | (无描述) | 05-31 |  | 💥 |
+| `guyu.js` | (无描述) | 05-31 |  | 💥 |
+| `hrj.js` | (无描述) | 05-31 |  | 💥 |
+| `jingyoujia.js` | (无描述) | 05-31 |  | 💥 |
+| `jyxe.js` | (无描述) | 05-31 |  | 💥 |
+| `kekoukele.js` | (无描述) | 05-31 |  | 💥 |
 | `ljg_ad_watcher.py` | 乐购 (ljgglp.com) 激励广告自动观看脚本 | 05-31 | 05-31 00:00 | ✨ |
+| `longfor.js` | (无描述) | 05-31 |  | 💥 |
+| `mfd.js` | (无描述) | 05-31 |  | 💥 |
+| `miaoyouHome.js` | (无描述) | 05-31 |  | 💥 |
+| `miqilin.js` | (无描述) | 05-31 |  | 💥 |
+| `musi.js` | (无描述) | 05-31 |  | 💥 |
+| `mxbc.js` | (无描述) | 05-31 | — | — |
+| `nice.js` | (无描述) | 05-31 |  | 💥 |
+| `nissin.js` | (无描述) | 05-31 |  | 💥 |
+| `nwdjg.js` | (无描述) | 05-31 |  | 💥 |
+| `parkson.js` | (无描述) | 05-31 |  | 💥 |
+| `qiaqia.js` | (无描述) | 05-31 |  | 💥 |
 | `quanmianshidai.py` | 项目 全棉时代种棉花 | 05-31 | — | — |
 | `quechao.py` | 雀巢会员自动签到 + 任务 + 抽奖 脚本 V2.0 | 05-31 | 05-31 10:00 | ✨ |
+| `roki.js` | (无描述) | 05-31 |  | 💥 |
+| `stokke.js` | (无描述) | 05-31 |  | 💥 |
+| `tmj.js` | (无描述) | 05-31 |  | 💥 |
+| `tnjy.js` | (无描述) | 05-31 |  | 💥 |
 | `tpy_lyb.py` | 太平洋蓝医保 (cpic.com.cn) - 每日签到 & 健康问答自动化脚本 | 05-31 | 05-31 07:00 | ✨ |
+| `tslj.js` | (无描述) | 05-31 |  | 💥 |
+| `wb.js` | (无描述) | 05-31 |  | 💥 |
+| `wcs.js` | (无描述) | 05-31 | — | — |
+| `wx_midea.js` | (无描述) | 05-31 |  | 💥 |
+| `wx_xlxyh.js` | (无描述) | 05-31 |  | 💥 |
+| `yingshujufeng.js` | (无描述) | 05-31 |  | 💥 |
+| `ykb.js` | (无描述) | 05-31 |  | 💥 |
+| `yz19.js` | (无描述) | 05-31 |  | 💥 |
+| `yz9d.js` | (无描述) | 05-31 |  | 💥 |
+| `zhanma.js` | (无描述) | 05-31 |  | 💥 |
 | `浓五的酒馆 (2).py` | 读取本地 Token 缓存 | 05-31 | 05-31 00:50 | ✨ |
 | `溪云严选.py` | 溪云严选 - wechatserver 自动获取 code 版本 | 05-31 | 05-31 09:30 | ✨ |
 | `王老吉.py` | 王老吉小程序 — 签到抽奖脚本 | 05-31 | — | — |
