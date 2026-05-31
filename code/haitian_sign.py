@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-海天美味馆 签到 + 抽奖 + 任务脚本
-基于 SunnyNet 抓包数据 2026-05-29
+海天美味馆 签到 + 积分任务 + 抽奖
+基于 HAR 抓包 2026-05-30
 
 环境变量:
-  wx_opinion - openid 列表 (用 & 分隔)
-  haitian    - refresh_token 备用 (用 & 分隔)
+  haitian - refresh_token (多个用 & 分隔)
+
+用法:
+  1. 手机抓包获取 phoneNew/login 响应中的 refresh_token
+  2. 配置环境变量 haitian=<refresh_token>
+  3. 运行脚本
 
 AppID: wx7a890ea13f50d7b6
 """
@@ -19,328 +23,227 @@ import requests
 
 requests.packages.urllib3.disable_warnings()
 
-# ===== 配置 =====
-BASE = 'https://cmallapi.xkmm.cn'
-SIGN_ACTIVITY = '202606'
-LUCKY_ACTIVITY = 'jfcj202606'
+# 清除代理
+for _k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
+    os.environ.pop(_k, None)
+os.environ['NO_PROXY'] = '*'
 
-WCS_BASE = os.environ.get('wx_server_url', 'http://host.docker.internal:8788')
-WCS_AUTH = os.environ.get('wx_auth', '')
-APPID = 'wx7a890ea13f50d7b6'
+# 配置
+BASE = 'https://cmallapi.xkmm.cn'
+LUCKY_ACTIVITY = 'jfcj202606'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger('haitian')
 
-
-# ===== WCS fallback =====
-def get_wx_code(openid):
-    body = {'appid': APPID, 'openid': openid}
-    for path in ['/wx/code', '/wx/operatedata', '/wx/encryptkey', '/wx/encrypt']:
-        try:
-            r = requests.post(f'{WCS_BASE}{path}', json=body,
-                              headers={'auth': WCS_AUTH, 'Content-Type': 'application/json'},
-                              timeout=60, verify=False)
-            data = r.json()
-            if data.get('status'):
-                d = data.get('data', {})
-                code = d.get('code') or d.get('encrypt_key')
-                if code:
-                    log.info(f'  {path} OK')
-                    return code
-        except Exception as e:
-            log.warning(f'  {path} error: {e}')
-    return None
+# Token 缓存
+TOKEN_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.haitian_tokens.json')
 
 
-# ===== 登录 =====
-def login_via_wcs(openid):
-    """通过 WCS operatedata 获取 code+edata 登录"""
-    # 一次 operatedata 调用同时获取 code + edata + iv
-    code, edata, iv = get_operatedata(openid)
-    if not code:
-        log.error('  WCS 获取 code 失败')
-        return None, None
-    log.info(f'  code: {code[:20]}...')
-
-    # 调用 phoneNew/login 登录
-    import uuid as uuid_mod
-    uid = uuid_mod.uuid4().hex[:20]
-    params = {
-        'code': code,
-        'uuid': uid,
-        'app_versions': '28.0.15',
-    }
-    if edata and iv:
-        params['edata'] = edata
-        params['iv'] = iv
-
-    url = f'{BASE}/buyer-api/wechat/mini/phoneNew/login'
+def load_cache():
     try:
-        headers = {
-            'uuid': uid,
-            'envVersion': 'release',
-            'xweb_xhr': '1',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/132.0.0.0 MicroMessenger/7.0.20.1781 MiniProgramEnv/Windows',
-        }
-        r = requests.post(url, params=params, json={}, headers=headers, timeout=15, verify=False)
+        with open(TOKEN_CACHE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+def save_cache(cache):
+    with open(TOKEN_CACHE, 'w') as f:
+        json.dump(cache, f, indent=2, ensure_ascii=False)
+
+
+def refresh_token(rt):
+    """用 refresh_token 换新 access_token"""
+    try:
+        r = requests.post(f'{BASE}/buyer-api/passport/token',
+                          data=f'refresh_token={rt}',
+                          headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                          timeout=15, verify=False)
         d = r.json()
         at = d.get('access_token', '') or d.get('accessToken', '')
-        rt = d.get('refresh_token', '') or d.get('refreshToken', '')
+        new_rt = d.get('refresh_token', '') or d.get('refreshToken', '')
         if at:
-            log.info(f'  登录成功! uid={d.get("uid", "")}')
-            return at, rt
-        log.warning(f'  登录失败: {d.get("message", "")} code={d.get("code", "")}')
-        # E131 可能是 code 过期，重试一次
-        if d.get('code') == 'E131':
-            log.info('  重试...')
-            code2, edata2, iv2 = get_operatedata(openid)
-            if code2:
-                params['code'] = code2
-                if edata2 and iv2:
-                    params['edata'] = edata2
-                    params['iv'] = iv2
-                params['uuid'] = uuid_mod.uuid4().hex[:20]
-                r = requests.post(url, params=params, json={}, headers=headers, timeout=15, verify=False)
-                d = r.json()
-                at = d.get('access_token', '') or d.get('accessToken', '')
-                rt = d.get('refresh_token', '') or d.get('refreshToken', '')
-                if at:
-                    log.info(f'  重试登录成功! uid={d.get("uid", "")}')
-                    return at, rt
-                log.warning(f'  重试失败: {d.get("message", "")} code={d.get("code", "")}')
+            return at, new_rt
+        log.warning(f'  刷新失败: {d.get("message", "")}')
     except Exception as e:
-        log.error(f'  登录异常: {e}')
-
+        log.error(f'  刷新异常: {e}')
     return None, None
 
 
-def get_operatedata(openid):
-    """获取 wx.getPhoneNumber 授权数据 (同时返回 code)"""
-    body = {'appid': APPID, 'openid': openid}
-    try:
-        r = requests.post(f'{WCS_BASE}/wx/operatedata', json=body,
-                          headers={'auth': WCS_AUTH, 'Content-Type': 'application/json'},
-                          timeout=60, verify=False)
-        data = r.json()
-        if data.get('status'):
-            d = data.get('data', {})
-            code = d.get('code', '')
-            edata = d.get('encryptedData', '') or d.get('data', '')
-            iv = d.get('iv', '')
-            if code:
-                log.info(f'  operatedata OK (code+edata)')
-                return code, edata, iv
-    except Exception as e:
-        log.warning(f'  operatedata error: {e}')
-    return None, None, None
+def get_valid_token(idx, rt):
+    """获取有效 token: 直接用 → 缓存 → refresh"""
+    cache = load_cache()
+    key = f'account_{idx}'
 
+    # 1. 有缓存的 access_token，先试用
+    if key in cache and cache[key].get('access_token'):
+        at = cache[key]['access_token']
+        try:
+            r = requests.get(f'{BASE}/buyer-api/members/points/current',
+                             headers={'Authorization': at}, timeout=10, verify=False)
+            if r.status_code == 200 and 'consum_point' in r.text:
+                return at
+        except:
+            pass
 
-def get_token(openid, refresh_tok=None):
-    """获取 token: 优先 refresh_token，失败则 WCS 登录"""
-    # 1. 尝试 refresh_token
-    if refresh_tok:
-        log.info('  尝试 refresh_token...')
-        at, rt = refresh_access_token(refresh_tok)
+    # 2. 直接用提供的 token 当 access_token 测试
+    if rt:
+        try:
+            r = requests.get(f'{BASE}/buyer-api/members/points/current',
+                             headers={'Authorization': rt}, timeout=10, verify=False)
+            if r.status_code == 200 and 'consum_point' in r.text:
+                log.info('  token 直接可用')
+                cache[key] = {
+                    'access_token': rt,
+                    'refresh_token': rt,
+                    'updated': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                save_cache(cache)
+                return rt
+        except:
+            pass
+
+    # 3. 尝试 refresh_token 刷新
+    cached_rt = cache.get(key, {}).get('refresh_token', '') or rt
+    if cached_rt:
+        log.info('  刷新 token...')
+        at, new_rt = refresh_token(cached_rt)
         if at:
-            log.info('  refresh_token 成功')
-            return at, rt
-        log.info('  refresh_token 已过期')
+            cache[key] = {
+                'access_token': at,
+                'refresh_token': new_rt or cached_rt,
+                'updated': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            save_cache(cache)
+            return at
 
-    # 2. WCS 自动登录
-    log.info('  WCS 自动登录...')
-    return login_via_wcs(openid)
-
-
-def refresh_access_token(refresh_tok):
-    """用 refresh_token 换新 accessToken"""
-    url = f'{BASE}/buyer-api/passport/token'
-    r = requests.post(url, data=f'refresh_token={refresh_tok}',
-                      headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                      timeout=15, verify=False)
-    data = r.json()
-    at = data.get('accessToken', '')
-    rt = data.get('refreshToken', '')
-    return at, rt
+    return None
 
 
-def make_auth(token):
-    return {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+def api(method, token, path, params=None, json_data=None):
+    headers = {'Authorization': token, 'Content-Type': 'application/json'}
+    r = requests.request(method, f'{BASE}{path}', params=params, json=json_data,
+                         headers=headers, timeout=15, verify=False)
+    try:
+        return r.json()
+    except:
+        return r.text
 
 
-# ===== 签到 =====
-def check_sign(token):
-    """查询签到状态"""
-    url = f'{BASE}/buyer-api/sign/activity/member/info'
-    r = requests.get(url, params={'activityCode': SIGN_ACTIVITY},
-                     headers=make_auth(token), timeout=15, verify=False)
-    data = r.json()
-    is_sign = data.get('is_sign', False)
-    sign_day = data.get('sign_day_num', 0)
-    return is_sign, sign_day
-
-
-def do_sign(token):
-    """执行签到"""
-    url = f'{BASE}/buyer-api/sign/activity/sign'
-    body = {'activity_code': SIGN_ACTIVITY, 'fill_date': ''}
-    r = requests.post(url, json=body, headers=make_auth(token), timeout=15, verify=False)
-    data = r.json()
-    is_sign = data.get('is_sign', False)
-    sign_day = data.get('sign_day_num', 0)
-    return is_sign, sign_day
-
-
-def get_points(token):
-    """查询积分"""
-    url = f'{BASE}/buyer-api/members/points/current'
-    r = requests.get(url, headers=make_auth(token), timeout=15, verify=False)
-    return r.json().get('balance', 0) or r.json().get('current', 0)
-
-
-# ===== 抽奖 =====
-def get_lucky_opportunities(token):
-    """查询抽奖次数"""
-    url = f'{BASE}/buyer-api/lucky/activity/opporturnity'
-    r = requests.get(url, params={'activityCode': LUCKY_ACTIVITY},
-                     headers=make_auth(token), timeout=15, verify=False)
-    data = r.json()
-    return data.get('can_use', 0), data.get('opportunity_num', 0)
-
-
-def do_lucky(token):
-    """执行抽奖"""
-    url = f'{BASE}/buyer-api/lucky/activity/extract'
-    r = requests.get(url, params={'activityCode': LUCKY_ACTIVITY},
-                     headers=make_auth(token), timeout=15, verify=False)
-    data = r.json()
-    prize = data.get('lucky_record_vo', {})
-    prize_name = prize.get('prize_name', '未知')
-    remaining = data.get('opporturnity', 0)
-    return prize_name, remaining
-
-
-# ===== 任务 =====
-def get_tasks(token):
-    """获取任务列表"""
-    url = f'{BASE}/buyer-api/lucky/task/package'
-    r = requests.get(url, params={'activityCode': LUCKY_ACTIVITY},
-                     headers=make_auth(token), timeout=15, verify=False)
-    return r.json()
-
-
-def do_login_task(token):
-    """完成登录任务 (自动)"""
-    url = f'{BASE}/buyer-api/members/active/action'
-    r = requests.get(url, params={'type': 'LOG'}, headers=make_auth(token),
-                     timeout=15, verify=False)
-    return r.json().get('code') == '200'
-
-
-def do_browse_task(token):
-    """模拟浏览任务"""
-    url = f'{BASE}/buyer-api/members/commnity/brosing/duration/add'
-    r = requests.get(url, params={'seconds': str(random.randint(15, 30))},
-                     headers=make_auth(token), timeout=15, verify=False)
-    return r.json().get('code') == '200'
-
-
-# ===== 主流程 =====
-def process_account(openid, refresh_tok=None):
+def process_account(idx, total, rt):
     """处理单个账号"""
-    if not refresh_tok:
-        log.error('  无 refresh_token，跳过（需要抓包获取）')
+    log.info('=' * 50)
+    log.info(f'[{idx}/{total}] 海天美味馆')
+    log.info('=' * 50)
+
+    token = get_valid_token(idx, rt)
+    if not token:
+        log.error('  token 获取失败，跳过')
         return False
-    # 1. 刷新 token
-    log.info('  刷新 token...')
-    access_token, new_refresh = refresh_access_token(refresh_tok)
-    if not access_token:
-        log.error('  token 刷新失败（需要重新抓包获取 refresh_token）')
-        return False
-    log.info(f'  token 获取成功')
-    if new_refresh:
-        log.info(f'  新 refresh_token 已获取（下次可自动使用）')
 
-    # 2. 查询积分
-    points = get_points(access_token)
-    log.info(f'  当前积分: {points}')
+    # 查询积分
+    points = api('GET', token, '/buyer-api/members/points/current')
+    consum = points.get('consum_point', 0) if isinstance(points, dict) else 0
+    log.info(f'  [积分] 当前: {consum}')
 
-    # 3. 签到
-    is_sign, sign_day = check_sign(access_token)
-    if is_sign:
-        log.info(f'  今日已签到 (连续{sign_day}天)')
-    else:
-        log.info('  执行签到...')
-        is_sign, sign_day = do_sign(access_token)
-        if is_sign:
-            log.info(f'  签到成功! 连续{sign_day}天')
-        else:
-            log.warning('  签到失败')
+    # 签到
+    log.info('  [签到] 执行签到...')
+    api('GET', token, '/buyer-api/members/active/action', {'type': 'LOG'})
+    time.sleep(0.5)
 
-    # 4. 完成任务获取抽奖次数
-    log.info('  完成任务...')
-    do_login_task(access_token)
-    time.sleep(1)
-    do_browse_task(access_token)
-    time.sleep(1)
+    # 积分任务
+    log.info('  [任务] 活跃任务...')
+    api('GET', token, '/buyer-api/members/active/action', {'type': 'ACT'})
+    time.sleep(0.5)
+    api('GET', token, '/buyer-api/members/active/action', {'type': 'PAG'})
+    time.sleep(0.5)
+    api('GET', token, '/buyer-api/members/active/action', {'type': 'SHA'})
+    time.sleep(0.5)
 
-    # 5. 查询抽奖次数
-    can_use, total = get_lucky_opportunities(access_token)
-    log.info(f'  抽奖次数: 可用{can_use}/总{total}')
+    # 浏览时长
+    log.info('  [任务] 浏览时长...')
+    for _ in range(3):
+        api('POST', token, f'/buyer-api/members/commnity/brosing/duration/add?seconds={random.randint(20, 45)}')
+        time.sleep(1)
 
-    # 6. 抽奖
+    # 文章浏览
+    api('POST', token, '/buyer-api/members/article_view/add/28.0.15', json_data=['232', '230'])
+    time.sleep(0.5)
+
+    # 积分任务状态
+    tasks = api('GET', token, '/buyer-api/members/pointTask')
+    if isinstance(tasks, dict):
+        sign = tasks.get('sign', [])
+        if len(sign) >= 4:
+            log.info(f'  [任务] 签到: {sign[0]}/{sign[2]} +{sign[3]}积分')
+        browse = tasks.get('community_browse', [])
+        if len(browse) >= 4:
+            log.info(f'  [任务] 社区浏览: {browse[0]}/{browse[2]} +{browse[3]}积分')
+
+    # 领取登录抽奖机会
+    log.info('  [抽奖] 领取登录机会...')
+    api('PUT', token, f'/buyer-api/lucky/task/getLoginOpporturnity/{LUCKY_ACTIVITY}')
+    time.sleep(0.5)
+
+    # 积分兑换抽奖机会
+    log.info('  [抽奖] 积分兑换...')
+    for _ in range(2):
+        api('GET', token, '/buyer-api/lucky/activity/redeem', {'activityCode': LUCKY_ACTIVITY})
+        time.sleep(1)
+
+    # 查询抽奖次数
+    opp = api('GET', token, '/buyer-api/lucky/activity/opporturnity', {'activityCode': LUCKY_ACTIVITY})
+    can_use = opp.get('can_use', 0) if isinstance(opp, dict) else 0
+    log.info(f'  [抽奖] 可用次数: {can_use}')
+
+    # 抽奖
     if can_use > 0:
-        log.info(f'  开始抽奖 ({can_use}次)...')
+        log.info(f'  [抽奖] 开始抽奖 ({can_use} 次)...')
         for i in range(can_use):
-            try:
-                prize_name, remaining = do_lucky(access_token)
-                log.info(f'    [{i+1}] 中奖: {prize_name} (剩余{remaining}次)')
-                time.sleep(2)
-            except Exception as e:
-                log.error(f'    [{i+1}] 抽奖失败: {e}')
-                break
+            result = api('GET', token, '/buyer-api/lucky/activity/extract', {'activityCode': LUCKY_ACTIVITY})
+            prize = result.get('lucky_record_vo', {}) if isinstance(result, dict) else {}
+            name = prize.get('prize_name', '未中奖') if prize else '未中奖'
+            remaining = result.get('opporturnity', 0) if isinstance(result, dict) else 0
+            log.info(f'    [{i+1}/{can_use}] {name} (剩余 {remaining} 次)')
+            time.sleep(random.uniform(1.5, 3))
     else:
-        log.info('  无抽奖次数')
+        log.info('  [抽奖] 无可用次数')
 
-    # 7. 最终积分
-    final_points = get_points(access_token)
-    log.info(f'  最终积分: {final_points}')
+    # 最终积分
+    final = api('GET', token, '/buyer-api/members/points/current')
+    final_consum = final.get('consum_point', 0) if isinstance(final, dict) else 0
+    log.info(f'  [结果] 积分: {consum} → {final_consum} ({"+" if final_consum >= consum else ""}{final_consum - consum})')
 
     return True
 
 
 def main():
     log.info('=' * 50)
-    log.info('海天美味馆 签到 + 抽奖 + 任务')
+    log.info('海天美味馆 签到 + 积分任务 + 抽奖')
     log.info('=' * 50)
 
-    # 读取账号 (openid 列表)
-    raw_opinion = os.environ.get('wx_opinion', '')
-    raw_haitian = os.environ.get('haitian', '')
-
-    if raw_opinion:
-        openids = [o.strip() for o in raw_opinion.split('&') if o.strip()]
-    else:
-        log.error('未配置 wx_opinion 环境变量')
+    raw = os.environ.get('haitian', '')
+    if not raw:
+        log.error('未配置 haitian 环境变量 (refresh_token)')
+        log.error('用法: 抓包获取 phoneNew/login 响应中的 refresh_token')
+        log.error('      配置环境变量 haitian=<refresh_token>')
         sys.exit(1)
 
-    # refresh_token 列表 (可选)
-    refresh_tokens = [t.strip() for t in raw_haitian.split('&') if t.strip()] if raw_haitian else []
-
-    log.info(f'共 {len(openids)} 个账号')
+    tokens = [t.strip() for t in raw.split('&') if t.strip()]
+    log.info(f'共 {len(tokens)} 个账号')
 
     ok = 0
-    for i, openid in enumerate(openids, 1):
-        log.info(f'\n===== [{i}/{len(openids)}] =====')
-        rt = refresh_tokens[i-1] if i-1 < len(refresh_tokens) else None
+    for i, rt in enumerate(tokens, 1):
         try:
-            if process_account(openid, rt):
+            if process_account(i, len(tokens), rt):
                 ok += 1
         except Exception as e:
-            log.error(f'异常: {e}')
-        time.sleep(3)
+            log.error(f'账号 {i} 异常: {e}')
+        if i < len(tokens):
+            time.sleep(random.uniform(3, 6))
 
     log.info(f'\n{"=" * 50}')
-    log.info(f'完成: {ok}/{len(openids)} 成功')
+    log.info(f'完成: {ok}/{len(tokens)} 成功')
 
 
 if __name__ == '__main__':

@@ -1,50 +1,16 @@
-# -*- coding: utf-8 -*-
-"""
-君品荟 (exijiu.com) - 每日签到 & 花园种植自动化脚本
-
-功能:
-  - 商城每日签到 (fm.exijiu.com)
-  - 花园签到 (apimallwm.exijiu.com)
-  - 自动种植高粱/小麦
-  - 浇水、施肥
-  - 每日答题
-
-架构:
-  双域名双 Token:
-    - fm.exijiu.com        -> 商城系统, 商城 token (X-Access-Token)
-    - apimallwm.exijiu.com -> 花园系统, 花园 token (X-Access-Token)
-  花园系统 AES-CBC 加密 (PKCS7 + HEX 输出), 密钥来自 WCS /wx/encryptkey
-
-登录说明:
-  wxMiniLogin 传 code + phoneCode 可获取 token
-  - 纯 code (无 phoneCode): 已绑定手机号的用户可直接登录
-  - code + phoneCode: 首次登录需要手机号授权
-  WCS 模式下自动用 /wx/code 获取 code, 尝试纯 code 登录
-  若服务端要求 phoneCode, 则 fallback 到手动 token 模式
-
-环境变量:
-  wx_server_url  - WCS 控制台地址, 默认 http://127.0.0.1:8787
-  wx_auth        - WCS 控制台 AUTH key
-  jph            - 可选, 手动 token (格式: 备注#openid#商城token#花园token)
-
-依赖: pip install requests pycryptodome
-"""
-
 import os
 import sys
 
-# 清除代理环境变量 (Dumb-Panel 容器配置了不可用的代理)
-for _k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
+# 清除代理环境变量
+for _k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
     os.environ.pop(_k, None)
-os.environ['NO_PROXY'] = '*'
+os.environ["NO_PROXY"] = "*"
 
-# 绕过 Docker 代理 (Dumb-Panel 容器配置了不可用的代理)
-os.environ['NO_PROXY'] = os.environ.get('NO_PROXY', '') + ',192.168.0.104,172.17.0.1,127.0.0.1,localhost'
-os.environ['no_proxy'] = os.environ.get('no_proxy', '') + ',192.168.0.104,172.17.0.1,127.0.0.1,localhost'
 import time
 import random
 import json
 import base64
+import io
 import logging
 from datetime import datetime
 
@@ -52,16 +18,30 @@ try:
     import requests
 except ImportError:
     import subprocess
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'requests', '-q'])
+    subprocess.check_call([sys.executable, -m, pip, install, requests, -q])
     import requests
 
 try:
     from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad
 except ImportError:
     import subprocess
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pycryptodome', '-q'])
+    subprocess.check_call([sys.executable, -m, pip, install, pycryptodome, -q])
     from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad
 
+try:
+    import numpy as np
+    from PIL import Image
+    from scipy.signal import correlate2d
+    from scipy import ndimage
+except ImportError:
+    import subprocess
+    subprocess.check_call([sys.executable, -m, pip, install, numpy, scipy, Pillow, -q])
+    import numpy as np
+    from PIL import Image
+    from scipy.signal import correlate2d
+    from scipy import ndimage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -524,18 +504,54 @@ def load_manual_accounts():
     return accounts
 
 
-# ============ 商城签到 ============
+
+
+# ============ 滑块验证码处理 ============
+
+def detect_gap(bg_b64, slider_b64):
+    """本地模板匹配检测缺口 x 坐标"""
+    bg = np.array(Image.open(io.BytesIO(base64.b64decode(bg_b64))).convert('L'))
+    if slider_b64:
+        sl = np.array(Image.open(io.BytesIO(base64.b64decode(slider_b64))).convert('L'))
+        bg_n = (bg - bg.mean()) / (bg.std() + 1e-6)
+        sl_n = (sl - sl.mean()) / (sl.std() + 1e-6)
+        corr = correlate2d(bg_n, sl_n, mode='valid')
+        return int(np.unravel_index(np.argmax(corr), corr.shape)[1])
+    from scipy import ndimage
+    edge = np.abs(ndimage.sobel(bg, axis=1)).mean(axis=0)
+    edge[:50] = 0
+    return int(np.argmax(edge))
+
+
+def solve_captcha(token, headers):
+    """获取验证码 → 本地检测缺口 → AES-ECB 加密 → 提交"""
+    # headers already passed
+    r = requests.post(f'{MALL_BASE}/api/captcha/get', json={}, headers=headers, timeout=15, verify=False)
+    d = r.json()
+    if not d.get('success'):
+        return None
+    rd = d['data']['repData']
+    ct, sk = rd['token'], rd['secretKey']
+    x = detect_gap(rd['originalImageBase64'], rd.get('jigsawImageBase64', ''))
+    log.info(f"  缺口: x={x}")
+    pd = json.dumps({"x": round(x), "y": 5, "t": int(time.time()*1000), "sk": sk[:16]}, separators=(',',':'))
+    enc = base64.b64encode(AES.new(sk.encode(), AES.MODE_ECB).encrypt(pad(pd.encode(), 16))).decode()
+    r2 = requests.post(f'{MALL_BASE}/api/captcha/check', json={'token': ct, 'pointJson': enc}, headers=headers, timeout=15, verify=False)
+    if r2.json().get('data',{}).get('success'):
+        log.info("  ✅ 验证码通过")
+        return ct
+    log.info(f"  ❌ 验证码失败: {r2.json().get('data',{}).get('repMsg','')}")
+    return None
+
+
 
 def mall_sign_in(mall_token, wcs=None, openid=None, user_key=None):
     """
-    商城每日签到
-
-    签到接口需要传入一个新的 wx.login code (一次性)
-    如果 WCS 可用则自动获取, 否则使用缓存 token 直接签到
+    商城每日签到 (带滑块验证码处理)
     """
     headers = mall_headers(mall_token)
 
-    # 获取新的 wx.login code (签到接口需要)
+    # 获取新的 wx.login code
     code = None
     if wcs and openid:
         for attempt in range(3):
@@ -545,38 +561,52 @@ def mall_sign_in(mall_token, wcs=None, openid=None, user_key=None):
             if attempt < 2:
                 time.sleep(3 * (attempt + 1))
         if not code:
-            log.warning('[商城签到] 获取 login code 失败, 尝试无 code 签到')
+            log.warning("[商城签到] 获取 login code 失败")
 
-    if code:
-        body = {'code': code, 'channelCode': CHANNEL_CODE}
-    else:
-        # 无 code 时尝试空 body (可能失败)
-        body = {'channelCode': CHANNEL_CODE}
+    # 尝试签到 (最多重试 3 次, 处理验证码)
+    for i in range(3):
+        captcha_token = solve_captcha(mall_token, headers)
 
-    try:
-        resp = requests.post(
-            f'{MALL_BASE}/api/customer/daily/fillSignIn',
-            json=body,
-            headers=headers,
-            timeout=15
-        )
-        data = resp.json()
-        if data.get('code') == '10000' and data.get('success'):
-            sign_data = data.get('data', {})
-            points = sign_data.get('pointValue', 0)
-            desc = sign_data.get('resultDesc', '')
-            cont_days = sign_data.get('continuousSignDays', 0)
-            log.info(f'[商城签到] 成功! +{points}积分, 连签{cont_days}天 - {desc}')
-            return True
-        elif data.get('code') == '10000' and not data.get('success'):
-            log.info(f'[商城签到] 已签到: {data}')
-            return True
+        if code:
+            body = {"code": code, "channelCode": CHANNEL_CODE}
         else:
-            log.warning(f'[商城签到] 失败: {data}')
+            body = {"channelCode": CHANNEL_CODE}
+
+        if captcha_token:
+            body["captchaToken"] = captcha_token
+
+        try:
+            resp = requests.post(
+                f"{MALL_BASE}/api/customer/daily/fillSignIn",
+                json=body,
+                headers=headers,
+                timeout=15,
+                verify=False
+            )
+            data = resp.json()
+            if data.get("code") == "10000" and data.get("success"):
+                sign_data = data.get("data", {})
+                points = sign_data.get("pointValue", 0)
+                desc = sign_data.get("resultDesc", "")
+                cont_days = sign_data.get("continuousSignDays", 0)
+                log.info(f"[商城签到] 成功! +{points}积分, 连签{cont_days}天 - {desc}")
+                return True
+            elif data.get("code") == "10000" and not data.get("success"):
+                log.info("[商城签到] 已签到")
+                return True
+            elif "验证码" in str(data.get("message", "")) and i < 2:
+                log.warning(f"[商城签到] 验证码失败, 重试...")
+                time.sleep(2)
+                continue
+            else:
+                log.warning(f"[商城签到] 失败: {data}")
+                return False
+        except Exception as e:
+            log.error(f"[商城签到] 请求异常: {e}")
             return False
-    except Exception as e:
-        log.error(f'[商城签到] 请求异常: {e}')
-        return False
+
+    return False
+
 
 
 def mall_check_sign(mall_token):
