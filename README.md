@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 00:00
+> 🕐 最后同步：2026-06-01 00:53
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -30,8 +30,8 @@
 | `glico_sign.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
 | `haishibao_sign.py` | (无描述) | 05-31 | 05-31 10:00 | ✨ |
 | `haitian_sign.py` | (无描述) | 05-31 | — | — |
-| `lj_sign.py` | (无描述) | 05-31 | 05-31 00:30 | ✨ |
-| `小紫_sign.py` | (无描述) | 05-31 | — | — |
+| `lj_sign.py` | (无描述) | 05-31 | 06-01 00:30 | ✨ |
+| `小紫_sign.py` | (无描述) | 05-31 | 06-01 00:00 | ✨ |
 | `袋鼠mama_sign.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
 
 <div align="center">
@@ -83,10 +83,10 @@
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
 | `bluedash.js` | BLUE DASH 布鲁大师小程序签到 | 05-31 | — | — |
-| `campari.js` | 金巴厘杯中空间签到 | 05-31 |  | 💥 |
-| `casetify.js` | CASETiFY 签到 | 05-31 |  | 💥 |
-| `choubao.js` | cron: 30 9 * * * | 05-31 |  | 💥 |
-| `dasenlin.js` | 大参林小程序签到 | 05-31 | 05-31 22:07 | ✨ |
+| `campari.js` | 金巴厘杯中空间签到 | 05-31 | 06-01 00:23 | ✨ |
+| `casetify.js` | CASETiFY 签到 | 05-31 | 06-01 00:31 | ✨ |
+| `choubao.js` | cron: 30 9 * * * | 05-31 | 06-01 00:39 | ✨ |
+| `dasenlin.js` | 大参林小程序签到 | 05-31 | 06-01 00:47 | ✨ |
 | `fej.js` | 敷尔佳小程序签到 | 05-31 |  | 💥 |
 | `guyu.js` | cron: 30 9 * * 1 | 05-31 |  | 💥 |
 | `hrj.js` | 好人家签到 | 05-31 |  | 💥 |
@@ -127,11 +127,11 @@
 
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
-| `ljg_ad_watcher.py` | (无描述) | 05-31 | — | — |
+| `ljg_ad_watcher.py` | (无描述) | 05-31 | 06-01 00:00 | ✨ |
 | `quanmianshidai.py` | (无描述) | 05-31 | — | — |
 | `quechao.py` | (无描述) | 05-31 | 05-31 10:00 | ✨ |
 | `tpy_lyb.py` | (无描述) | 05-31 | 05-31 07:00 | ✨ |
-| `浓五的酒馆 (2).py` | (无描述) | 05-31 | 05-31 00:50 | ✨ |
+| `浓五的酒馆 (2).py` | (无描述) | 05-31 | 06-01 00:50 | ✨ |
 | `溪云严选.py` | (无描述) | 05-31 | 05-31 09:30 | ✨ |
 | `王老吉.py` | (无描述) | 05-31 | — | — |
 | `赵钱孙李.py` | (无描述) | 05-31 | 05-31 10:20 | ✨ |
