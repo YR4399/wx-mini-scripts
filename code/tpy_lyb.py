@@ -23,7 +23,7 @@ API 流程:
     AI 答题已内置阿里云百炼 API Key，无需额外配置。
 """
 import os
-n# 清除代理环境变量
+# 清除代理环境变量
 for _k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
     os.environ.pop(_k, None)
 os.environ["NO_PROXY"] = "*"
