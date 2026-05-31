@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 04:00
+> 🕐 最后同步：2026-06-01 06:00
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -112,12 +112,12 @@
 | `wb.js` | 花生帮粉丝俱乐部签到任务 | 05-31 | 06-01 03:51 | ✨ |
 | `wcs.js` | (无描述) | 05-31 | — | — |
 | `wx_midea.js` | (无描述) | 05-31 | 06-01 03:59 | ✨ |
-| `wx_xlxyh.js` | (无描述) | 05-31 |  | 💥 |
-| `yingshujufeng.js` | 影视飓风小程序签到 | 05-31 |  | 💥 |
-| `ykb.js` | 盈客宝电玩小程序签到 | 05-31 |  | 💥 |
-| `yz19.js` | tuoluzhe 拓路者小程序签到 | 05-31 |  | 💥 |
-| `yz9d.js` | 戴可思小程序签到 | 05-31 | 06-01 01:33 | ✨ |
-| `zhanma.js` | (无描述) | 05-31 |  | 💥 |
+| `wx_xlxyh.js` | (无描述) | 05-31 | 06-01 04:07 | ✨ |
+| `yingshujufeng.js` | 影视飓风小程序签到 | 05-31 | 06-01 04:15 | ✨ |
+| `ykb.js` | 盈客宝电玩小程序签到 | 05-31 | 06-01 04:23 | ✨ |
+| `yz19.js` | tuoluzhe 拓路者小程序签到 | 05-31 | 06-01 04:31 | ✨ |
+| `yz9d.js` | 戴可思小程序签到 | 05-31 | 06-01 04:39 | ✨ |
+| `zhanma.js` | (无描述) | 05-31 | 06-01 04:47 | ✨ |
 
 <div align="center">
 
