@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 09:40
-> 📦 脚本总数：**65** 个
+> 🕐 最后同步：2026-06-01 09:44
+> 📦 脚本总数：**66** 个
 
 </div>
 
@@ -117,6 +117,7 @@
 | `ykb.js` | 盈客宝电玩小程序签到 | 06-01 | 06-01 04:23 | ✨ |
 | `yz19.js` | tuoluzhe 拓路者小程序签到 | 06-01 | 06-01 04:31 | ✨ |
 | `yz9d.js` | 戴可思小程序签到 | 06-01 | 06-01 04:39 | ✨ |
+| `zhanma.js` | (无描述) | 06-01 | — | — |
 
 <div align="center">
 
