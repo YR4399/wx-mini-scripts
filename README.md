@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 12:00
+> 🕐 最后同步：2026-06-01 14:00
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -56,7 +56,7 @@
 | `jph_runner.py` | (无描述) | 06-01 | — | — |
 | `mcyx_wechatserver.py` | (无描述) | 06-01 | 06-01 09:00 | ✨ |
 | `monalisa_wechatserver.py` | (无描述) | 06-01 | 06-01 09:00 | 💥 |
-| `wps小程序.py` | (无描述) | 06-01 | 05-31 14:00 | ✨ |
+| `wps小程序.py` | (无描述) | 06-01 | — | — |
 | `xmyx_auto_wcs.py` | (无描述) | 06-01 | 06-01 01:00 | ✨ |
 | `牛牛短剧.py` | (无描述) | 06-01 | 06-01 09:00 | ✨ |
 | `纷享荟小程序.py` | (无描述) | 06-01 | — | — |
@@ -134,7 +134,7 @@
 | `浓五的酒馆 (2).py` | (无描述) | 06-01 | 06-01 00:50 | ✨ |
 | `溪云严选.py` | (无描述) | 06-01 | 06-01 09:30 | ✨ |
 | `王老吉.py` | (无描述) | 06-01 | — | — |
-| `赵钱孙李.py` | (无描述) | 06-01 | 06-01 10:20 | ✨ |
+| `赵钱孙李.py` | (无描述) | 06-01 | 06-01 12:39 | ✨ |
 
 <div align="center">
 
