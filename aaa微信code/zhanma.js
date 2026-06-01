@@ -1,5 +1,9 @@
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
 
  * 多账号使用 @ 或者 & 或 新建多个环境变量
  * cron: 12 8 * * *
@@ -133,7 +137,11 @@ let ok = ''
     .catch((e) => console.log(e))
     .finally(() => $.done())
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 获取信息
  * 
  */
@@ -182,7 +190,11 @@ async function getuser (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 获取手机号
  * 
  */
@@ -219,7 +231,11 @@ function getTel (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 签到
  * 
  */
@@ -256,7 +272,11 @@ function checkin (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序添加好友任务
  * 
  */
@@ -290,7 +310,11 @@ function joinxcx (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序获取好友列表
  * 
  */
@@ -340,7 +364,11 @@ function getranklist (addFriend = false, fromsafe = '', timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序加为好友
  * 
  */
@@ -374,7 +402,11 @@ function getotherhorseinfo (likeUserId, timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序点赞
  * 
  */
@@ -409,7 +441,11 @@ function like (likeUserId, timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序分享任务
  * 
  */
@@ -443,7 +479,11 @@ function getshare (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序战马分享任务
  * 
  */
@@ -477,7 +517,11 @@ function checkslgift (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 小程序完善信息
  * 
  */
@@ -511,7 +555,11 @@ function saveuserinfo (avatar, nickname, sex, birthday, tel, timeout = 2 * 1000)
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 公众号口令只可完成一次
  * 
  */
@@ -548,7 +596,11 @@ function gzhkl (timeout = 2 * 1000) {
 }
 
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 查询题库
  * 
  */
@@ -601,7 +653,11 @@ async function gettiku (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 刷新题目
  * 
  */
@@ -632,7 +688,11 @@ function getques (timeout = 2 * 1000) {
 
 
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 答题1
  * 
  */
@@ -665,7 +725,11 @@ function ques1 (timeout = 2 * 1000) {
 }
 
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 答题2
  * 
  */
@@ -700,7 +764,11 @@ function ques2 (timeout = 2 * 1000) {
 }
 
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 答题3
  * 
  */
@@ -735,7 +803,11 @@ function ques3 (timeout = 2 * 1000) {
 }
 
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 领养马儿
  * 
  */
@@ -766,7 +838,11 @@ function getmaer (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 摸一摸
  * 
  */
@@ -797,7 +873,11 @@ function getmoyimo (timeout = 2 * 1000) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 喂马
  * 
  */
@@ -833,7 +913,11 @@ async function getweima (timeout = 2 * 1000) {
 }
 
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 偷饲料
  * 
  */
@@ -861,7 +945,11 @@ function tousiliao (num2) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
  * 送饲料
  * 
  */
@@ -891,7 +979,11 @@ function songsiliao (num2) {
     })
 }
 
-/**
+/*
+@Description: 战马能量星球签到
+cron: 12 8 * * *
+*/
+/*
 * 获取远程版本，鸟VPS不改post请求获取不了内容
 */
 function getVersion (timeout = 3 * 1000) {
