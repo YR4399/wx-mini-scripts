@@ -1,5 +1,5 @@
 /*
-@Description:  
+@Description: 五道口小程序签到
 cron: 30 9 * * *
 */
 

@@ -1,6 +1,6 @@
 
 /*
-@Description:  
+@Description: 可口可乐小程序签到
 cron: 30 9 * * 1
 */
 

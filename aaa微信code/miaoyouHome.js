@@ -1,4 +1,10 @@
-/**
+/*
+@Description: 庙友之家签到
+@Author: sm
+@Date: 2024.06.07
+cron: 30 8 * * *
+*/
+/*
  */
 
 const $ = new Env("wx_庙友之家");
@@ -104,8 +110,20 @@ async function start() {
     .catch((e) => console.log(e))
     .finally(() => $.done());
 
-//********************************************************
-/**
+//*
+@Description: 庙友之家签到
+@Author: sm
+@Date: 2024.06.07
+cron: 30 8 * * *
+*/
+/*******************************************************
+/*
+@Description: 庙友之家签到
+@Author: sm
+@Date: 2024.06.07
+cron: 30 8 * * *
+*/
+/*
  */
 async function checkEnv() {
     let userCookie = ($.isNode() ? process.env[ckName] : $.getdata(ckName)) || "";
@@ -290,7 +308,13 @@ function Env(t, s) {
                 }
             }
         }
-        /**
+        /*
+@Description: 庙友之家签到
+@Author: sm
+@Date: 2024.06.07
+cron: 30 8 * * *
+*/
+/*
         */
         queryStr(options) {
             return Object.entries(options)

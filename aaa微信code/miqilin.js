@@ -1,5 +1,5 @@
 /*
-@Description:  
+@Description: 米麒麟小程序签到
 cron: 30 9 * * *
 */
 

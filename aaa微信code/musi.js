@@ -1,7 +1,7 @@
 
 
 /*
-@Description:  
+@Description: 木斯小程序签到
 cron: 30 9 * * *
 */
 

@@ -1,5 +1,5 @@
 /*
-@Description:  
+@Description: Stokke小程序签到
 cron: 30 9 * * 1
 */
 

@@ -1,5 +1,5 @@
 /*
-@Description:  
+@Description: 臭宝乐园签到
 cron: 30 9 * * *
 */
 
