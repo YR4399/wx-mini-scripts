@@ -14,7 +14,6 @@ const MINI_APP_ID = "wx6c7b851c877dba42";
 const PASSPORT_BASE = "https://passport.jlc.com";
 const API_BASE = "https://m.jlc.com";
 const TOKEN_CACHE_FILE = path.join(__dirname, "jlc_token_cache.json");
-const SECRET_KEY = "61306231663964312d613530382d343163382d393065322d353439663864376462623030";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF";
 
 let ckName = "wx_opinion";
@@ -46,6 +45,7 @@ class Task {
         this.index = $.userIdx++;
         this.openid = String(openid || "").trim();
         this.accessToken = "";
+        this.secretKey = "";
     }
 
     async run() {
@@ -55,6 +55,7 @@ class Task {
             this.accessToken = cached;
             $.log("账号[" + this.index + "] 使用缓存token");
             if (await this.checkToken()) {
+                await this.getSecretKey();
                 await this.doTasks();
                 return;
             }
@@ -65,7 +66,10 @@ class Task {
         // 2. 登录
         if (!await this.loginByWxCode()) return;
 
-        // 3. 执行任务
+        // 3. 获取动态 secretkey
+        await this.getSecretKey();
+
+        // 4. 执行任务
         await this.doTasks();
     }
 
@@ -126,7 +130,6 @@ class Task {
                         "X-JLC-ClientType": "MP-WEIXIN",
                         "X-JLC-MP-Env": "release",
                         "X-JLC-MP-Version": "1.111.0",
-                        "secretkey": SECRET_KEY,
                         "X-JLC-AccessToken": "NONE",
                     },
                     timeout: 15000
@@ -148,6 +151,20 @@ class Task {
         }
     }
 
+    async getSecretKey() {
+        try {
+            const { data: result } = await axios.post(API_BASE + "/api/integrated/secret/update", {}, {
+                headers: this.getHeaders(),
+                timeout: 15000
+            });
+            if (result.success && result.data && result.data.keyId) {
+                this.secretKey = result.data.keyId;
+            }
+        } catch (e) {
+            // 忽略失败，使用默认值
+        }
+    }
+
     getHeaders() {
         return {
             "Content-Type": "application/json",
@@ -157,7 +174,7 @@ class Task {
             "X-JLC-ClientType": "MP-WEIXIN",
             "X-JLC-MP-Env": "release",
             "X-JLC-MP-Version": "1.111.0",
-            "secretkey": SECRET_KEY,
+            "secretkey": this.secretKey || "61306231663964312d613530382d343163382d393065322d353439663864376462623030",
             "Referer": "https://servicewechat.com/" + MINI_APP_ID + "/139/page-frame.html",
         };
     }
@@ -185,7 +202,7 @@ class Task {
                 timeout: 15000
             });
             if (result.success && result.data) {
-                const { haveSignIn, day, haveReceive } = result.data;
+                const { haveSignIn, day } = result.data;
                 $.log("账号[" + this.index + "] 签到状态: " + (haveSignIn ? "已签到" : "未签到") + ", 连续" + day + "天");
             }
         } catch (e) {
@@ -195,7 +212,7 @@ class Task {
 
     async signIn() {
         try {
-            const { data: signResult } = await axios.get(API_BASE + "/api/activity/sign/signIn", {
+            const { data: signResult } = await axios.get(API_BASE + "/api/activity/sign/signIn?platformType=MP-WEIXIN&source=2", {
                 headers: this.getHeaders(),
                 timeout: 15000
             });
