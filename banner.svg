@@ -10,10 +10,6 @@
       <stop offset="50%" style="stop-color:#c44dff"/>
       <stop offset="100%" style="stop-color:#4dc9ff"/>
     </linearGradient>
-    <linearGradient id="sakura" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#ffb7c5;stop-opacity:0.8"/>
-      <stop offset="100%" style="stop-color:#ff6b9d;stop-opacity:0.4"/>
-    </linearGradient>
     <filter id="glow">
       <feGaussianBlur stdDeviation="3" result="blur"/>
       <feMerge>
@@ -21,100 +17,54 @@
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <filter id="softGlow">
-      <feGaussianBlur stdDeviation="2" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <clipPath id="bannerClip">
+      <rect width="800" height="280" rx="10"/>
+    </clipPath>
   </defs>
   
-  <!-- 背景 -->
   <rect width="800" height="280" fill="url(#bg)"/>
   
-  <!-- 星空背景 -->
-  <circle cx="50" cy="30" r="1" fill="white" opacity="0.6"/>
-  <circle cx="120" cy="60" r="1.5" fill="white" opacity="0.4"/>
-  <circle cx="200" cy="20" r="1" fill="white" opacity="0.7"/>
-  <circle cx="300" cy="50" r="1.2" fill="white" opacity="0.5"/>
-  <circle cx="450" cy="25" r="1" fill="white" opacity="0.6"/>
-  <circle cx="550" cy="45" r="1.5" fill="white" opacity="0.3"/>
-  <circle cx="650" cy="35" r="1" fill="white" opacity="0.7"/>
-  <circle cx="720" cy="55" r="1.2" fill="white" opacity="0.4"/>
-  <circle cx="80" cy="80" r="0.8" fill="white" opacity="0.5"/>
-  <circle cx="380" cy="70" r="1" fill="white" opacity="0.6"/>
-  <circle cx="580" cy="80" r="0.8" fill="white" opacity="0.4"/>
-  <circle cx="700" cy="75" r="1" fill="white" opacity="0.5"/>
-  
-  <!-- 樱花花瓣装饰 -->
-  <ellipse cx="100" cy="40" rx="8" ry="4" fill="url(#sakura)" transform="rotate(-30 100 40)" opacity="0.6"/>
-  <ellipse cx="250" cy="60" rx="6" ry="3" fill="url(#sakura)" transform="rotate(20 250 60)" opacity="0.5"/>
-  <ellipse cx="500" cy="35" rx="7" ry="3.5" fill="url(#sakura)" transform="rotate(-15 500 35)" opacity="0.7"/>
-  <ellipse cx="680" cy="50" rx="5" ry="2.5" fill="url(#sakura)" transform="rotate(25 680 50)" opacity="0.4"/>
-  <ellipse cx="150" cy="90" rx="6" ry="3" fill="url(#sakura)" transform="rotate(-10 150 90)" opacity="0.5"/>
-  <ellipse cx="600" cy="85" rx="7" ry="3.5" fill="url(#sakura)" transform="rotate(30 600 85)" opacity="0.6"/>
-  
-  <!-- 麻衣学姐剪影/轮廓 - 优雅侧身像 -->
-  <g transform="translate(620, 30)" filter="url(#softGlow)">
-    <!-- 头发 - 长直发 -->
-    <path d="M0,80 Q-10,40 20,20 Q40,5 50,25 Q55,45 45,70 Q40,85 35,120 Q30,150 25,180 Q20,200 15,210 Q10,220 5,215 Q0,210 5,195 Q10,180 15,160 Q20,140 25,120 Q30,100 25,80 Z" fill="#2d1b4e" opacity="0.9"/>
-    <path d="M50,25 Q60,15 70,25 Q75,40 70,60 Q65,80 60,100 Q55,120 50,140 Q45,160 40,175 Q35,185 30,180 Q35,165 40,145 Q45,125 50,105 Q55,85 55,65 Q55,45 50,35 Z" fill="#2d1b4e" opacity="0.9"/>
-    
-    <!-- 脸部轮廓 -->
-    <path d="M20,20 Q25,15 35,18 Q45,22 48,35 Q50,45 48,55 Q45,65 40,70 Q35,73 30,70 Q25,65 22,55 Q20,45 20,35 Z" fill="#f8e8d0" opacity="0.9"/>
-    
-    <!-- 眼睛 - 麻衣学姐的标志性眼神 -->
-    <ellipse cx="32" cy="40" rx="5" ry="3" fill="#4a2c6a"/>
-    <circle cx="33" cy="39" r="1.5" fill="white" opacity="0.8"/>
-    <circle cx="31" cy="41" r="0.8" fill="white" opacity="0.5"/>
-    
-    <!-- 嘴巴 - 微笑 -->
-    <path d="M30,55 Q35,58 40,55" stroke="#d4a0a0" stroke-width="1" fill="none"/>
-    
-    <!-- 兔子耳朵发箍 -->
-    <path d="M15,15 Q10,0 15,-15 Q18,-20 20,-15 Q22,-10 20,0 Q18,8 15,15" fill="#2d1b4e" stroke="#4a2c6a" stroke-width="0.5"/>
-    <path d="M45,15 Q42,0 45,-15 Q48,-20 50,-15 Q52,-10 50,0 Q48,8 45,15" fill="#2d1b4e" stroke="#4a2c6a" stroke-width="0.5"/>
-    
-    <!-- 身体/校服轮廓 -->
-    <path d="M25,70 Q20,75 18,85 Q15,95 18,105 Q22,115 30,120 Q38,125 45,120 Q50,115 52,105 Q55,95 52,85 Q50,75 45,70 Q40,68 35,68 Q30,68 25,70 Z" fill="#1a1a2e" opacity="0.8"/>
-    
-    <!-- 领结 -->
-    <path d="M30,72 L35,68 L40,72 L35,76 Z" fill="#ff6b9d" opacity="0.8"/>
-    
-    <!-- 长发飘逸效果 -->
-    <path d="M15,80 Q5,100 0,130 Q-5,160 0,190 Q5,210 10,220" stroke="#2d1b4e" stroke-width="3" fill="none" opacity="0.6"/>
-    <path d="M55,80 Q60,100 65,130 Q70,160 65,190 Q60,210 55,220" stroke="#2d1b4e" stroke-width="3" fill="none" opacity="0.6"/>
+  <g clip-path="url(#bannerClip)">
+    <g transform="translate(400, 140) scale(1.8)">
+      <path d="M-80,60 Q-90,20 -60,0 Q-40,-15 -20,0 Q0,15 10,40 Q20,60 15,100 Q10,140 5,180 Q0,210 -10,230 Q-20,240 -25,235 Q-20,220 -15,200 Q-10,180 -5,160 Q0,140 -5,120 Q-10,100 -20,80 Q-30,60 -40,50 Q-50,40 -60,35 Q-70,30 -80,40 Z" fill="#2d1b4e" opacity="0.9"/>
+      <path d="M10,40 Q20,30 30,40 Q35,55 30,70 Q25,85 20,100 Q15,115 10,130 Q5,145 0,160 Q-5,170 -10,165 Q-5,150 0,130 Q5,110 10,90 Q15,70 15,50 Q15,35 10,25 Z" fill="#2d1b4e" opacity="0.9"/>
+      <path d="M-60,0 Q-55,-5 -45,-2 Q-35,2 -30,15 Q-25,25 -28,35 Q-32,45 -40,48 Q-48,50 -55,48 Q-62,45 -65,35 Q-68,25 -65,15 Z" fill="#f8e8d0" opacity="0.9"/>
+      <ellipse cx="-48" cy="20" rx="6" ry="4" fill="#4a2c6a"/>
+      <circle cx="-47" cy="19" r="2" fill="white" opacity="0.8"/>
+      <circle cx="-49" cy="21" r="1" fill="white" opacity="0.5"/>
+      <path d="M-50,35 Q-45,38 -40,35" stroke="#d4a0a0" stroke-width="1.5" fill="none"/>
+      <path d="M-75,-5 Q-80,-20 -75,-35 Q-72,-40 -70,-35 Q-68,-30 -70,-20 Q-72,-10 -75,0" fill="#2d1b4e" stroke="#4a2c6a" stroke-width="0.8"/>
+      <path d="M-25,-5 Q-28,-20 -25,-35 Q-22,-40 -20,-35 Q-18,-30 -20,-20 Q-22,-10 -25,0" fill="#2d1b4e" stroke="#4a2c6a" stroke-width="0.8"/>
+      <path d="M-40,48 Q-50,55 -55,65 Q-60,75 -58,85 Q-55,95 -48,100 Q-40,105 -30,108 Q-20,110 -10,108 Q0,105 5,100 Q10,95 12,85 Q15,75 10,65 Q5,55 -5,48 Q-15,45 -25,45 Q-35,45 -40,48 Z" fill="#1a1a2e" opacity="0.85"/>
+      <path d="M-25,50 L-20,45 L-15,50 L-20,55 Z" fill="#ff6b9d" opacity="0.9"/>
+      <path d="M-25,50 L-30,45 L-35,50 L-30,55 Z" fill="#ff6b9d" opacity="0.9"/>
+      <path d="M-58,85 Q-60,95 -65,110 Q-70,125 -75,140 Q-70,145 -60,140 Q-50,135 -40,130 Q-30,125 -20,130 Q-10,135 0,140 Q10,145 15,140 Q10,125 5,110 Q0,95 -2,85" fill="#1a1a2e" opacity="0.8"/>
+      <path d="M-60,140 Q-58,150 -55,170 Q-52,190 -50,210 Q-48,220 -50,225" fill="#f8e8d0" opacity="0.8"/>
+      <path d="M-20,130 Q-18,150 -15,170 Q-12,190 -10,210 Q-8,220 -10,225" fill="#f8e8d0" opacity="0.8"/>
+      <path d="M-55,225 Q-60,228 -65,225 Q-70,222 -65,218 Q-60,215 -55,218" fill="#2d1b4e" opacity="0.9"/>
+      <path d="M-15,225 Q-20,228 -25,225 Q-30,222 -25,218 Q-20,215 -15,218" fill="#2d1b4e" opacity="0.9"/>
+      <path d="M-75,60 Q-85,80 -90,110 Q-95,140 -90,170 Q-85,200 -80,220" stroke="#2d1b4e" stroke-width="4" fill="none" opacity="0.6"/>
+      <path d="M10,60 Q15,80 20,110 Q25,140 20,170 Q15,200 10,220" stroke="#2d1b4e" stroke-width="4" fill="none" opacity="0.6"/>
+    </g>
+    <rect width="800" height="280" fill="#000" opacity="0.3"/>
   </g>
   
-  <!-- 主标题 -->
   <text x="400" y="100" font-family="Arial, sans-serif" font-size="42" font-weight="bold" fill="url(#title)" text-anchor="middle" filter="url(#glow)">微信小程序自动化</text>
-  
-  <!-- 副标题 -->
   <text x="400" y="140" font-family="Arial, sans-serif" font-size="18" fill="#a0a0a0" text-anchor="middle" letter-spacing="4">SIGN IN • TASK • LUCKY DRAW</text>
-  
-  <!-- 装饰线 -->
   <line x1="150" y1="155" x2="650" y2="155" stroke="url(#title)" stroke-width="1" opacity="0.3"/>
-  
-  <!-- 标语 -->
   <text x="400" y="185" font-family="Arial, sans-serif" font-size="14" fill="#c44dff" text-anchor="middle" opacity="0.8">「 每天自动签到，把时间留给二次元 」</text>
   
-  <!-- 技术标签 -->
   <g transform="translate(400, 220)" text-anchor="middle">
     <rect x="-180" y="-12" width="70" height="24" rx="12" fill="#07C160" opacity="0.2"/>
     <text x="-145" y="4" font-family="Arial, sans-serif" font-size="11" fill="#07C160">WeChat</text>
-    
     <rect x="-95" y="-12" width="70" height="24" rx="12" fill="#3776AB" opacity="0.2"/>
     <text x="-60" y="4" font-family="Arial, sans-serif" font-size="11" fill="#3776AB">Python</text>
-    
     <rect x="-10" y="-12" width="70" height="24" rx="12" fill="#2496ED" opacity="0.2"/>
     <text x="25" y="4" font-family="Arial, sans-serif" font-size="11" fill="#2496ED">Docker</text>
-    
     <rect x="95" y="-12" width="70" height="24" rx="12" fill="#FEE75C" opacity="0.2"/>
     <text x="130" y="4" font-family="Arial, sans-serif" font-size="11" fill="#FEE75C">Auto</text>
   </g>
   
-  <!-- 底部装饰 -->
   <rect x="0" y="260" width="800" height="20" fill="url(#bg)" opacity="0.5"/>
   <line x1="0" y1="260" x2="800" y2="260" stroke="url(#title)" stroke-width="0.5" opacity="0.2"/>
 </svg>
