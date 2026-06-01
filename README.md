@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 09:48
+> 🕐 最后同步：2026-06-01 10:00
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -28,7 +28,7 @@
 | `angel_sign.py` | (无描述) | 06-01 | 06-01 08:00 | 💥 |
 | `dls_sign.py` | (无描述) | 06-01 | — | — |
 | `glico_sign.py` | (无描述) | 06-01 | 06-01 08:00 | ✨ |
-| `haishibao_sign.py` | (无描述) | 06-01 | 05-31 10:00 | ✨ |
+| `haishibao_sign.py` | (无描述) | 06-01 | — | — |
 | `haitian_sign.py` | (无描述) | 06-01 | — | — |
 | `lj_sign.py` | (无描述) | 06-01 | 06-01 00:30 | ✨ |
 | `小紫_sign.py` | (无描述) | 06-01 | 06-01 00:00 | ✨ |
@@ -129,7 +129,7 @@
 |:-----|:-----|:----:|:----:|:----:|
 | `ljg_ad_watcher.py` | (无描述) | 06-01 | 06-01 00:00 | ✨ |
 | `quanmianshidai.py` | (无描述) | 06-01 | — | — |
-| `quechao.py` | (无描述) | 06-01 | 05-31 10:00 | ✨ |
+| `quechao.py` | (无描述) | 06-01 | — | — |
 | `tpy_lyb.py` | (无描述) | 06-01 | 06-01 07:00 | ✨ |
 | `浓五的酒馆 (2).py` | (无描述) | 06-01 | 06-01 00:50 | ✨ |
 | `溪云严选.py` | (无描述) | 06-01 | 06-01 09:30 | ✨ |
