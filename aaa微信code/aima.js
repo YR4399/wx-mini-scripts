@@ -253,14 +253,14 @@ async function signIn(account, index) {
 
   let accounts = [];
   if ($.isNode()) {
-    const env = process.env.aima;
+    const env = process.env.wx_opinion;
     if (env) {
       accounts = env.split(/&|\n/).map((t) => t.trim()).filter(Boolean);
     }
   }
 
   if (accounts.length === 0) {
-    $.msg("❌ 未找到账号标识，请配置变量 'aima'");
+    $.log("❌ 未找到账号标识，请配置变量 'aima'");
     return;
   }
 
