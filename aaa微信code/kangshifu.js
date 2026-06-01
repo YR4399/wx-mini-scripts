@@ -27,7 +27,7 @@ const $ = new Env("康师傅畅饮社");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
-const WeChatServer = require("../wxapp/wcs.js");
+const WeChatServer = require("./wcs.js");
 
 const ckName = "wx_opinion";
 const MINI_APP_ID = "wx54f3e6a00f7973a7";

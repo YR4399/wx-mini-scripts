@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 18:00
+> 🕐 最后同步：2026-06-01 20:00
 > 📦 脚本总数：**78** 个
 
 </div>
@@ -57,7 +57,7 @@
 | `monalisa_wechatserver.py` | (无描述) | 06-01 | 06-01 09:00 | 💥 |
 | `wps小程序.py` | (无描述) | 06-01 | 06-01 14:00 | ✨ |
 | `xmyx_auto_wcs.py` | (无描述) | 06-01 | 06-01 01:00 | ✨ |
-| `牛牛短剧.py` | (无描述) | 06-01 | — | — |
+| `牛牛短剧.py` | (无描述) | 06-01 | 06-01 18:00 | ✨ |
 | `纷享荟小程序.py` | (无描述) | 06-01 | — | — |
 
 <div align="center">
@@ -100,7 +100,7 @@
 | `iqoo.js` | IQOO社区小程序 积分脚本 | 06-01 | — | — |
 | `jingyoujia.js` | 劲友家小程序签到 | 06-01 | 06-01 01:19 | ✨ |
 | `jyxe.js` | 旧衣小二签到 | 06-01 | 06-01 01:27 | ✨ |
-| `kangshifu.js` | 康师傅畅饮社 | 06-01 |  | 💥 |
+| `kangshifu.js` | 康师傅畅饮社 | 06-01 | — | — |
 | `kekoukele.js` | 可口可乐小程序签到 | 06-01 | 06-01 01:35 | ✨ |
 | `lieer.js` | 烈儿宝贝小程序签到 | 06-01 |  | 💥 |
 | `longfor.js` | 龙湖天街小程序签到 | 06-01 | 06-01 01:43 | ✨ |
