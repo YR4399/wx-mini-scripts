@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 06:00
+> 🕐 最后同步：2026-06-01 08:00
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -25,14 +25,14 @@
 
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
-| `angel_sign.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
+| `angel_sign.py` | (无描述) | 05-31 | — | — |
 | `dls_sign.py` | (无描述) | 05-31 | — | — |
-| `glico_sign.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
+| `glico_sign.py` | (无描述) | 05-31 | — | — |
 | `haishibao_sign.py` | (无描述) | 05-31 | 05-31 10:00 | ✨ |
 | `haitian_sign.py` | (无描述) | 05-31 | — | — |
 | `lj_sign.py` | (无描述) | 05-31 | 06-01 00:30 | ✨ |
 | `小紫_sign.py` | (无描述) | 05-31 | 06-01 00:00 | ✨ |
-| `袋鼠mama_sign.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
+| `袋鼠mama_sign.py` | (无描述) | 05-31 | — | — |
 
 <div align="center">
 
@@ -52,7 +52,7 @@
 
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
-| `jph.py` | (无描述) | 05-31 | 05-31 08:00 | ✨ |
+| `jph.py` | (无描述) | 05-31 | — | — |
 | `jph_runner.py` | (无描述) | 05-31 | — | — |
 | `mcyx_wechatserver.py` | (无描述) | 05-31 | 05-31 09:00 | ✨ |
 | `monalisa_wechatserver.py` | (无描述) | 05-31 | 05-31 09:00 | ✨ |
@@ -130,7 +130,7 @@
 | `ljg_ad_watcher.py` | (无描述) | 05-31 | 06-01 00:00 | ✨ |
 | `quanmianshidai.py` | (无描述) | 05-31 | — | — |
 | `quechao.py` | (无描述) | 05-31 | 05-31 10:00 | ✨ |
-| `tpy_lyb.py` | (无描述) | 05-31 | 05-31 07:00 | ✨ |
+| `tpy_lyb.py` | (无描述) | 05-31 | 06-01 07:00 | ✨ |
 | `浓五的酒馆 (2).py` | (无描述) | 05-31 | 06-01 00:50 | ✨ |
 | `溪云严选.py` | (无描述) | 05-31 | 05-31 09:30 | ✨ |
 | `王老吉.py` | (无描述) | 05-31 | — | — |
