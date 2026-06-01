@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="banner.png" width="100%" />
+<img src="banner.svg" width="100%" />
 
 # ✨ 微信小程序自动化脚本合集 ✨
 
@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 10:00
+> 🕐 最后同步：2026-06-01 12:00
 > 📦 脚本总数：**66** 个
 
 </div>
@@ -25,10 +25,10 @@
 
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
-| `angel_sign.py` | (无描述) | 06-01 | 06-01 08:00 | 💥 |
+| `angel_sign.py` | (无描述) | 06-01 | — | — |
 | `dls_sign.py` | (无描述) | 06-01 | — | — |
 | `glico_sign.py` | (无描述) | 06-01 | 06-01 08:00 | ✨ |
-| `haishibao_sign.py` | (无描述) | 06-01 | — | — |
+| `haishibao_sign.py` | (无描述) | 06-01 | 06-01 10:00 | ✨ |
 | `haitian_sign.py` | (无描述) | 06-01 | — | — |
 | `lj_sign.py` | (无描述) | 06-01 | 06-01 00:30 | ✨ |
 | `小紫_sign.py` | (无描述) | 06-01 | 06-01 00:00 | ✨ |
@@ -129,12 +129,12 @@
 |:-----|:-----|:----:|:----:|:----:|
 | `ljg_ad_watcher.py` | (无描述) | 06-01 | 06-01 00:00 | ✨ |
 | `quanmianshidai.py` | (无描述) | 06-01 | — | — |
-| `quechao.py` | (无描述) | 06-01 | — | — |
+| `quechao.py` | (无描述) | 06-01 | 06-01 10:00 | ✨ |
 | `tpy_lyb.py` | (无描述) | 06-01 | 06-01 07:00 | ✨ |
 | `浓五的酒馆 (2).py` | (无描述) | 06-01 | 06-01 00:50 | ✨ |
 | `溪云严选.py` | (无描述) | 06-01 | 06-01 09:30 | ✨ |
 | `王老吉.py` | (无描述) | 06-01 | — | — |
-| `赵钱孙李.py` | (无描述) | 06-01 | 05-31 10:20 | ✨ |
+| `赵钱孙李.py` | (无描述) | 06-01 | 06-01 10:20 | ✨ |
 
 <div align="center">
 
