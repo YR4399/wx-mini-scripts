@@ -1,8 +1,6 @@
 /*
 @Description: 嘉立创金豆商城签到
 cron: 30 8 * * *
-变量名：jlc
-变量值：备注#accessToken，多账号&分隔
 */
 
 const { Env } = require("../tools/env.js");
@@ -13,12 +11,21 @@ const path = require("path");
 
 // ====== 配置 ======
 const MINI_APP_ID = "wx6c7b851c877dba42";
+const PASSPORT_BASE = "https://passport.jlc.com";
 const API_BASE = "https://m.jlc.com";
 const TOKEN_CACHE_FILE = path.join(__dirname, "jlc_token_cache.json");
 const SECRET_KEY = "61306231663964312d613530382d343163382d393065322d353439663864376462623030";
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254193e) XWEB/19841";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "jlc";
+let ckName = "wx_opinion";
+
+// ====== WCS 初始化 ======
+const WeChatServer = require("./wcs.js");
+const wechat = new WeChatServer({
+    url: process.env.wx_server_url || "http://192.168.31.196:8787",
+    appid: MINI_APP_ID,
+    auth: process.env.wx_auth || "",
+});
 
 // ====== 缓存 ======
 function readTokenCache() {
@@ -35,34 +42,110 @@ function writeTokenCache(cache) {
 
 // ====== 任务类 ======
 class Task {
-    constructor(remark, accessToken) {
+    constructor(openid) {
         this.index = $.userIdx++;
-        this.remark = remark || "";
-        this.accessToken = accessToken || "";
+        this.openid = String(openid || "").trim();
+        this.accessToken = "";
     }
 
     async run() {
-        if (!this.accessToken) {
-            $.log("账号[" + this.index + "] 未提供AccessToken");
-            return;
+        // 1. 尝试缓存 token
+        const cached = this.getCachedToken();
+        if (cached) {
+            this.accessToken = cached;
+            $.log("账号[" + this.index + "] 使用缓存token");
+            if (await this.checkToken()) {
+                await this.doTasks();
+                return;
+            }
+            $.log("账号[" + this.index + "] 缓存token失效，重新登录");
+            this.removeCachedToken();
         }
 
-        $.log("账号[" + this.index + "] " + (this.remark || "开始"));
+        // 2. 登录
+        if (!await this.loginByWxCode()) return;
 
-        // 1. 检查 token 是否有效
-        if (!(await this.checkToken())) {
-            $.log("账号[" + this.index + "] AccessToken无效或已过期");
-            return;
-        }
+        // 3. 执行任务
+        await this.doTasks();
+    }
 
-        // 2. 查询签到状态
+    async doTasks() {
         await this.getSignInStatus();
-
-        // 3. 执行签到
         await this.signIn();
-
-        // 4. 查询积分
         await this.getIntegral();
+    }
+
+    async loginByWxCode() {
+        try {
+            // Step 1: 获取 wx.login code
+            const { data } = await wechat.getCode(this.openid);
+            const code = data?.code || data?.data?.code;
+            if (!code) {
+                $.log("账号[" + this.index + "] 获取code失败");
+                return false;
+            }
+
+            // Step 2: check-applet-login 获取 appletLoginToken
+            const { data: checkResult } = await axios.post(
+                PASSPORT_BASE + "/api/cas/sso/login/check-applet-login",
+                { appId: "JLC_MOBILE_APP", appletAuthCode: code },
+                { headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT }, timeout: 15000 }
+            );
+
+            if (!checkResult.success || !checkResult.data || !checkResult.data.token) {
+                $.log("账号[" + this.index + "] check-applet-login失败: " + JSON.stringify(checkResult));
+                return false;
+            }
+
+            const appletLoginToken = checkResult.data.token;
+
+            // Step 3: applet-silent-login 获取 CAS 授权码
+            const { data: silentResult } = await axios.post(
+                PASSPORT_BASE + "/api/cas/sso/login/applet-silent-login",
+                { token: appletLoginToken, appId: "JLC_MOBILE_APP" },
+                { headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT }, timeout: 15000 }
+            );
+
+            if (!silentResult.success || !silentResult.data || !silentResult.data.code) {
+                $.log("账号[" + this.index + "] applet-silent-login失败: " + JSON.stringify(silentResult));
+                return false;
+            }
+
+            const casCode = silentResult.data.code;
+
+            // Step 4: login-by-code 获取 AccessToken
+            const formData = "code=" + casCode;
+            const { data: loginResult } = await axios.post(
+                API_BASE + "/api/login/login-by-code",
+                formData,
+                {
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "User-Agent": USER_AGENT,
+                        "X-JLC-MP-AppId": MINI_APP_ID,
+                        "X-JLC-ClientType": "MP-WEIXIN",
+                        "X-JLC-MP-Env": "release",
+                        "X-JLC-MP-Version": "1.111.0",
+                        "secretkey": SECRET_KEY,
+                        "X-JLC-AccessToken": "NONE",
+                    },
+                    timeout: 15000
+                }
+            );
+
+            if (loginResult.success && loginResult.data && loginResult.data.accessToken) {
+                this.accessToken = loginResult.data.accessToken;
+                this.saveCachedToken();
+                $.log("账号[" + this.index + "] 登录成功, 用户: " + (loginResult.data.customerCode || ""));
+                return true;
+            }
+
+            $.log("账号[" + this.index + "] login-by-code失败: " + JSON.stringify(loginResult));
+            return false;
+        } catch (e) {
+            $.log("账号[" + this.index + "] 登录异常: " + (e.message || e));
+            return false;
+        }
     }
 
     getHeaders() {
@@ -75,11 +158,7 @@ class Task {
             "X-JLC-MP-Env": "release",
             "X-JLC-MP-Version": "1.111.0",
             "secretkey": SECRET_KEY,
-            "xweb_xhr": "1",
             "Referer": "https://servicewechat.com/" + MINI_APP_ID + "/139/page-frame.html",
-            "Sec-Fetch-Site": "cross-site",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
         };
     }
 
@@ -95,7 +174,6 @@ class Task {
             }
             return false;
         } catch (e) {
-            $.log("账号[" + this.index + "] Token验证失败: " + (e.message || e));
             return false;
         }
     }
@@ -108,13 +186,11 @@ class Task {
             });
             if (result.success && result.data) {
                 const { haveSignIn, day, haveReceive } = result.data;
-                $.log("账号[" + this.index + "] 签到状态: " + (haveSignIn ? "已签到" : "未签到") + ", 连续" + day + "天, 奖励" + (haveReceive ? "已领取" : "未领取"));
-                return result.data;
+                $.log("账号[" + this.index + "] 签到状态: " + (haveSignIn ? "已签到" : "未签到") + ", 连续" + day + "天");
             }
         } catch (e) {
             $.log("账号[" + this.index + "] 查询签到状态失败: " + (e.message || e));
         }
-        return null;
     }
 
     async signIn() {
@@ -125,7 +201,6 @@ class Task {
             });
             if (signResult.success) {
                 $.log("账号[" + this.index + "] 签到成功!");
-                return true;
             } else {
                 const msg = signResult.message || signResult.errorCode || JSON.stringify(signResult);
                 if (msg.indexOf("已签到") !== -1 || msg.indexOf("already") !== -1) {
@@ -142,7 +217,6 @@ class Task {
                 $.log("账号[" + this.index + "] 签到异常: " + (e.message || e));
             }
         }
-        return false;
     }
 
     async getIntegral() {
@@ -160,6 +234,22 @@ class Task {
             }
         } catch (e) {}
     }
+
+    getCachedToken() {
+        const cache = readTokenCache();
+        return cache[this.openid] ? cache[this.openid].token : "";
+    }
+    saveCachedToken() {
+        const cache = readTokenCache();
+        cache[this.openid] = { token: this.accessToken, ts: Date.now() };
+        writeTokenCache(cache);
+    }
+    removeCachedToken() {
+        const cache = readTokenCache();
+        delete cache[this.openid];
+        writeTokenCache(cache);
+        this.accessToken = "";
+    }
 }
 
 // ====== 主入口 ======
@@ -167,26 +257,13 @@ async function main() {
     const envStr = process.env[ckName] || "";
     if (!envStr) {
         $.log("未配置 " + ckName + " 环境变量");
-        $.log("");
-        $.log("配置方式：");
-        $.log("  变量名: jlc");
-        $.log("  变量值: 备注#accessToken，多账号用&分隔");
-        $.log("  示例: 我的账号#a9e5962f-b38b-4b7a-bdf0-051215e521b4");
-        $.log("");
-        $.log("AccessToken获取方式：");
-        $.log("  打开嘉立创小程序 → 抓包 → 找到 X-JLC-AccessToken 请求头");
         return;
     }
-
-    const accounts = envStr.split(/[&\n]/).filter(s => s.trim());
-    $.log("共 " + accounts.length + " 个账号");
-
-    for (const account of accounts) {
+    const openids = envStr.split(/[&\n]/).filter(s => s.trim());
+    $.log("共 " + openids.length + " 个账号");
+    for (const openid of openids) {
         try {
-            const parts = account.trim().split("#");
-            const remark = parts[0] || "";
-            const accessToken = parts[1] || parts[0] || "";
-            await new Task(remark, accessToken).run();
+            await new Task(openid.trim()).run();
         } catch (e) {
             $.log("账号异常: " + (e.message || e));
         }

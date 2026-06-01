@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-01 22:00
-> 📦 脚本总数：**78** 个
+> 🕐 最后同步：2026-06-02 00:00
+> 📦 脚本总数：**79** 个
 
 </div>
 
@@ -29,6 +29,7 @@
 | `dls_sign.py` | (无描述) | 06-01 | — | — |
 | `glico_sign.py` | (无描述) | 06-01 | 06-01 08:00 | ✨ |
 | `haishibao_sign.py` | (无描述) | 06-01 | 06-01 10:00 | ✨ |
+| `jlc_sign.js` | 嘉立创金豆商城签到 | 06-02 | — | — |
 | `lj_sign.py` | (无描述) | 06-01 | 06-01 00:30 | ✨ |
 | `小紫_sign.py` | (无描述) | 06-01 | — | — |
 | `袋鼠mama_sign.py` | (无描述) | 06-01 | 06-01 08:00 | ✨ |
@@ -139,7 +140,7 @@
 | 脚本 | 说明 | 更新 | 运行 | 状态 |
 |:-----|:-----|:----:|:----:|:----:|
 | `BREO.py` | (无描述) | 06-01 |  | 💥 |
-| `ljg_ad_watcher.py` | (无描述) | 06-01 | 06-01 00:00 | ✨ |
+| `ljg_ad_watcher.py` | (无描述) | 06-01 | — | — |
 | `quanmianshidai.py` | (无描述) | 06-01 | — | — |
 | `quechao.py` | (无描述) | 06-01 | 06-01 10:00 | ✨ |
 | `tpy_lyb.py` | (无描述) | 06-01 | 06-01 07:00 | ✨ |
