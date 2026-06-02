@@ -173,7 +173,13 @@ class Task {
             const updateResult = await this.request(`/front/activity/update_lottery_result`, {
                 params: { id: record_id },
             });
-            $.log(`账号[${this.index}] 确认领取: ${JSON.stringify(updateResult)}`);
+            if (updateResult.code !== 0) {
+                // 没有抽奖次数，抛出特殊标记
+                const err = new Error(updateResult.msg || "没有抽奖次数");
+                err.noQuota = true;
+                throw err;
+            }
+            return updateResult.data || { record_id, prizeName };
         }
 
         return { record_id, prizeName };
@@ -246,8 +252,12 @@ class Task {
                 try {
                     await $.wait(1500 + Math.random() * 2000);
                     const lotteryResult = await this.doLottery();
-                    $.log(`账号[${this.index}] 第${j + 1}次抽奖: ${lotteryResult.prizeName || "谢谢参与"}`);
+                    $.log(`账号[${this.index}] 第${j + 1}次抽奖: ${lotteryResult.prizeName || lotteryResult.goodName || "谢谢参与"}`);
                 } catch (e) {
+                    if (e.noQuota) {
+                        $.log(`账号[${this.index}] 第${j + 1}次: ${e.message}，停止抽奖`);
+                        break;
+                    }
                     $.log(`账号[${this.index}] 第${j + 1}次抽奖异常: ${e.message}`);
                     break;
                 }

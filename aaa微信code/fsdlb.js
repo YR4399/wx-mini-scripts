@@ -25,7 +25,7 @@ const $ = new Env("逢三得利吧小程序");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
-const WeChatServer = require("../wxapp/wcs.js");
+const WeChatServer = require("./wcs.js");
 
 let ckName = "wx_opinion";
 const MINI_APP_ID = "wxb33ed03c6c715482";

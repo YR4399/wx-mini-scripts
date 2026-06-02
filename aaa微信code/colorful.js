@@ -31,7 +31,7 @@ const axios = require("axios");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const WeChatServer = require("../wxapp/wcs.js");
+const WeChatServer = require("./wcs.js");
 
 const ckName = "wx_opinion";
 const strSplitor = "#";

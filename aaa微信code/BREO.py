@@ -1,8 +1,8 @@
 #by:哆啦A梦
 #入口:http://mx.qrurl.net/h5/wxa/link?sid=26407uif5Oq
-#BREO变量填写wx_server里的openid/账号标识，多账号换行分割
+#wx_opinion变量填写wx_server里的openid/账号标识，多账号&分割
 #需要配置wx_server_url、wx_auth，用于获取wx.login code
-#账号变量名:BREO
+#账号变量名:wx_opinion
 #new Env("BREO")
 #cron 8 9,10,11 * * *
 
@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+import random
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -27,7 +28,10 @@ LOGIN_BASE = "https://breoplus.breo.cn/app/minic"
 APP_BASE = "https://breoplus.breo.cn/breo-app"
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF"
 
+COMMENT_WORDS = ["今天天气真好，适合出去走走晒太阳", "加油加油，继续努力向前冲", "开心每一天，保持好心情", "努力奋斗，未来可期加油", "生活美好，珍惜当下的时光", "坚持就是胜利，绝不放弃", "未来可期，一起加油努力", "感恩遇见，珍惜美好缘分", "越努力越幸运，一起加油", "每天进步一点点就很好"]
+
 session = requests.Session()
+
 
 def read_token_cache():
     try:
@@ -37,23 +41,28 @@ def read_token_cache():
     except Exception:
         return {}
 
+
 def write_token_cache(cache):
     try:
         TOKEN_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         print(f"⚠️ 写入token缓存失败: {e}")
 
+
 def mask_token(token):
     if not token:
         return ""
     return f"{token[:6]}***{token[-6:]}"
 
+
 def is_success(result):
     return result.get("success") is True or str(result.get("code")) in ("0000", "200", "200.0")
+
 
 def is_token_error(message):
     text = str(message)
     return any(key in text for key in ["40101", "40102", "token", "登录", "授权", "过期", "失效"])
+
 
 def wx_headers():
     return {
@@ -62,17 +71,18 @@ def wx_headers():
         "Content-Type": "application/json",
     }
 
+
 def app_headers(token=None):
     headers = {
         "User-Agent": DEFAULT_UA,
-        "content-Type": "application/json",
         "Content-Type": "application/json",
         "deviceInfo": "{}",
-        "Referer": "https://servicewechat.com/wx61457400e4212cec/390/page-frame.html",
+        "Referer": f"https://servicewechat.com/{MINI_APP_ID}/390/page-frame.html",
     }
     if token:
         headers["token"] = token
     return headers
+
 
 def breo_task_headers(token):
     return {
@@ -84,9 +94,10 @@ def breo_task_headers(token):
         "version": "3.2.1",
         "encrypt": "1",
         "Content-Type": "application/json; charset=UTF-8",
-        "Referer": "https://servicewechat.com/wx61457400e4212cec/390/page-frame.html",
+        "Referer": f"https://servicewechat.com/{MINI_APP_ID}/390/page-frame.html",
         "User-Agent": DEFAULT_UA,
     }
+
 
 def get_wx_code(account_id):
     if not WX_AUTH:
@@ -103,6 +114,7 @@ def get_wx_code(account_id):
     if not code:
         raise RuntimeError(f"wx_server未返回code: {data}")
     return code
+
 
 def login_with_code(account_id):
     code = get_wx_code(account_id)
@@ -142,19 +154,23 @@ def login_with_code(account_id):
         "updatedAt": int(time.time()),
     }
 
+
 def get_cached_token(account_id):
     return read_token_cache().get(account_id)
+
 
 def save_cached_token(account_id, auth_info):
     cache = read_token_cache()
     cache[account_id] = auth_info
     write_token_cache(cache)
 
+
 def remove_cached_token(account_id):
     cache = read_token_cache()
     if account_id in cache:
         del cache[account_id]
         write_token_cache(cache)
+
 
 def validate_token(token):
     try:
@@ -172,61 +188,40 @@ def validate_token(token):
     except Exception:
         return False
 
+
 def get_token_for_account(account_id, index):
     cached = get_cached_token(account_id)
     if cached and cached.get("token"):
-        print(f"账号 {index} 使用缓存token: {mask_token(cached['token'])}")
+        print(f"账号[{index}] 使用缓存token: {mask_token(cached['token'])}")
         if validate_token(cached["token"]):
             return cached["token"]
-        print(f"账号 {index} 缓存token失效，重新登录")
+        print(f"账号[{index}] 缓存token失效，重新登录")
         remove_cached_token(account_id)
 
     auth_info = login_with_code(account_id)
     save_cached_token(account_id, auth_info)
     user_info = auth_info.get("userInfo") or {}
-    print(f"账号 {index} code登录成功: {user_info.get('nickname') or user_info.get('telephone') or auth_info.get('uid')}")
+    print(f"账号[{index}] code登录成功: {user_info.get('nickname') or user_info.get('telephone') or auth_info.get('uid')}")
     return auth_info["token"]
 
-def get_random_one_word():
+
+def punch_in(token):
+    url = "https://breoplus.breo.cn/breo-app/user/po-task-info/punch"
+    headers = breo_task_headers(token)
     try:
-        response = requests.get("https://uapis.cn/api/say")
+        response = requests.post(url, headers=headers, timeout=30)
         if response.status_code == 200:
-            return response.text.strip()
+            result = response.json()
+            if result.get("success", False):
+                reward = result.get("result") or {}
+                print(f"✅ 签到成功! 点数:{reward.get('point', 0)} 成长值:{reward.get('grow', 0)}")
+            else:
+                print(f"❌ 签到失败: {result.get('message', '未知错误')}")
         else:
-            return "无法获取一言"
+            print(f"❌ 签到请求失败，状态码: {response.status_code}")
     except Exception as e:
-        print(f"获取一言时出错: {e}")
-        return "无法获取一言"
+        print(f"❌ 签到异常: {e}")
 
-def get_proclamation():
-    primary_url = "https://github.com/3288588344/toulu/raw/refs/heads/main/tl.txt"
-    backup_url = "https://tfapi.cn/TL/tl.json"
-    try:
-        response = requests.get(primary_url, timeout=10)
-        if response.status_code == 200:
-            print("\n" + "=" * 50)
-            print("📢 公告信息")
-            print("=" * 35)
-            print(response.text)
-            print("=" * 35 + "\n")
-            print("公告获取成功，开始执行任务...\n")
-            return
-    except requests.exceptions.RequestException as e:
-        print(f"获取公告时发生错误: {e}, 尝试备用链接...")
-
-    try:
-        response = requests.get(backup_url, timeout=10)
-        if response.status_code == 200:
-            print("\n" + "=" * 50)
-            print("📢 公告信息")
-            print("=" * 35)
-            print(response.text)
-            print("=" * 35 + "\n")
-            print("公告获取成功，开始执行任务...\n")
-        else:
-            print(f"⚠️ 获取公告失败，状态码: {response.status_code}")
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ 获取公告时发生错误: {e}, 可能是网络问题或链接无效。")
 
 def post_to_breo(token, content, title):
     url = "https://breoplus.breo.cn/breo-app/communityBaseInfo/releasePost"
@@ -241,153 +236,124 @@ def post_to_breo(token, content, title):
         "topicText": ""
     }
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
+        response = requests.post(url, headers=headers, data=json.dumps(data), timeout=30)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
-                print("✅ 发帖成功！")
-                print(f"帖子 ID: {result['result']['id']}")
-                print(f"帖子标题: {result['result']['title']}")
-                return result["result"]["id"]
+                post_id = result["result"]["id"]
+                print(f"✅ 发帖成功! ID:{post_id}")
+                return post_id
             else:
-                print(f"❌ 发帖失败，错误信息：{result.get('message', '未知错误')}")
-                return None
+                print(f"❌ 发帖失败: {result.get('message', '未知错误')}")
         else:
-            print(f"❌ 请求失败，状态码：{response.status_code}")
-            return None
+            print(f"❌ 发帖请求失败，状态码: {response.status_code}")
     except Exception as e:
-        print(f"❌ 请求错误: {e}")
-        return None
+        print(f"❌ 发帖异常: {e}")
+    return None
+
 
 def collect_post(token, post_id):
     url = "https://breoplus.breo.cn/breo-app/communityBaseInfo/collect"
     headers = breo_task_headers(token)
-    data = {
-        "postId": post_id
-    }
+    data = {"postId": post_id}
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
+        response = requests.post(url, headers=headers, data=json.dumps(data), timeout=30)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
-                print("✅ 收藏成功！")
                 reward = result.get("result") or {}
-                print(f"获得点数: {reward.get('point', 0)}")
-                print(f"成长值: {reward.get('grow', 0)}")
+                print(f"✅ 收藏成功! 点数:{reward.get('point', 0)} 成长值:{reward.get('grow', 0)}")
             else:
-                print(f"❌ 收藏失败，错误信息：{result.get('message', '未知错误')}")
+                print(f"❌ 收藏失败: {result.get('message', '未知错误')}")
         else:
-            print(f"❌ 请求失败，状态码：{response.status_code}")
+            print(f"❌ 收藏请求失败，状态码: {response.status_code}")
     except Exception as e:
-        print(f"❌ 请求错误: {e}")
+        print(f"❌ 收藏异常: {e}")
+
 
 def comment_post(token, post_id):
-    for _ in range(2):  # 评论2次
-        comment_content = get_random_one_word()  # 使用随机一言作为评论内容
+    for i in range(2):
+        content = random.choice(COMMENT_WORDS)
         url = "https://breoplus.breo.cn/breo-app/communityBaseInfo/comment"
         headers = breo_task_headers(token)
         data = {
             "anonymoused": 0,
-            "commentText": comment_content,
+            "commentText": content,
             "postId": post_id
         }
         try:
-            response = requests.post(url, headers=headers, data=json.dumps(data))
+            response = requests.post(url, headers=headers, data=json.dumps(data), timeout=30)
             if response.status_code == 200:
                 result = response.json()
                 if result.get("success", False):
-                    print("✅ 评论成功！")
                     reward = result.get("result") or {}
-                    root = reward.get("rootOutVO") or {}
-                    print(f"评论内容: {root.get('commentText', comment_content)}")
-                    print(f"获得点数: {reward.get('point', 0)}")
-                    print(f"成长值: {reward.get('grow', 0)}")
+                    print(f"✅ 评论{i+1}成功: {content} 点数:{reward.get('point', 0)}")
                 else:
-                    print(f"❌ 评论失败，错误信息：{result.get('message', '未知错误')}")
+                    print(f"❌ 评论{i+1}失败: {result.get('message', '未知错误')}")
             else:
-                print(f"❌ 请求失败，状态码：{response.status_code}")
+                print(f"❌ 评论{i+1}请求失败，状态码: {response.status_code}")
         except Exception as e:
-            print(f"❌ 请求错误: {e}")
-        time.sleep(1)  # 避免频繁请求
+            print(f"❌ 评论{i+1}异常: {e}")
+        time.sleep(1)
+
 
 def browse_mall(token):
     url = "https://breoplus.breo.cn/breo-app/user/po-task-info/mall"
     headers = breo_task_headers(token)
     try:
-        response = requests.post(url, headers=headers)
+        response = requests.post(url, headers=headers, timeout=30)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
-                print("✅ 浏览商城成功！")
                 reward = result.get("result") or {}
-                print(f"获得点数: {reward.get('point', 0)}")
-                print(f"成长值: {reward.get('grow', 0)}")
+                print(f"✅ 浏览商城成功! 点数:{reward.get('point', 0)} 成长值:{reward.get('grow', 0)}")
             else:
-                print(f"❌ 浏览商城失败，错误信息：{result.get('message', '未知错误')}")
+                print(f"❌ 浏览商城失败: {result.get('message', '未知错误')}")
         else:
-            print(f"❌ 请求失败，状态码：{response.status_code}")
+            print(f"❌ 浏览商城请求失败，状态码: {response.status_code}")
     except Exception as e:
-        print(f"❌ 请求错误: {e}")
+        print(f"❌ 浏览商城异常: {e}")
 
-def punch_in(token):
-    url = "https://breoplus.breo.cn/breo-app/user/po-task-info/punch"
-    headers = breo_task_headers(token)
-    try:
-        response = requests.post(url, headers=headers)
-        if response.status_code == 200:
-            result = response.json()
-            if result.get("success", False):
-                print("✅ 签到成功！")
-                reward = result.get("result") or {}
-                print(f"获得点数: {reward.get('point', 0)}")
-                print(f"成长值: {reward.get('grow', 0)}")
-            else:
-                print(f"❌ 签到失败，错误信息：{result.get('message', '未知错误')}")
-        else:
-            print(f"❌ 请求失败，状态码：{response.status_code}")
-    except Exception as e:
-        print(f"❌ 请求错误: {e}")
 
 if __name__ == "__main__":
-    # 获取公告
-    #get_proclamation()
-
-    # 从环境变量读取 wx_server 账号标识/openid
-    accounts = [item.strip() for item in os.getenv("BREO", "").replace("&", "\n").splitlines() if item.strip()]
+    accounts = [item.strip() for item in os.getenv("wx_opinion", "").replace("&", "\n").splitlines() if item.strip()]
 
     if not accounts:
-        print("❌ 未检测到 账号信息，退出脚本。")
+        print("❌ 未检测到wx_opinion账号信息，退出脚本。")
     else:
         skip_community = os.getenv("BREO_SKIP_COMMUNITY", "").lower() in ("1", "true", "yes")
-        print("=============== 开始执行任务 ===============")
+        print(f"🔔BREO倍轻松,开始! 共{len(accounts)}个账号")
+
         for i, account in enumerate(accounts, 1):
-            print(f"\n-------------- 账号 {i} 开始 --------------")
+            print(f"\n--- 账号[{i}] ---")
             try:
                 token = get_token_for_account(account, i)
             except Exception as e:
-                print(f"❌ 账号 {i} 登录失败: {e}")
+                print(f"❌ 账号[{i}] 登录失败: {e}")
                 continue
 
-            print("🚀 正在签到...")
+            print("🚀 签到...")
             punch_in(token)
 
             if skip_community:
-                print("\n📝 已跳过发帖/收藏/评论任务")
+                print("📝 跳过社区任务")
             else:
-                print("\n📝 正在发布帖子...")
-                post_id = post_to_breo(token, "这是一个自动发布的帖子", "自动化测试")
+                print("📝 发帖...")
+                post_id = post_to_breo(token, "今天天气真好，出去走走晒晒太阳，心情也变好了", "日常分享")
                 if post_id:
-                    print("\n⭐ 正在收藏帖子...")
+                    time.sleep(1)
+                    print("⭐ 收藏...")
                     collect_post(token, post_id)
-
-                    print("\n💬 正在评论帖子...")
+                    time.sleep(1)
+                    print("💬 评论...")
                     comment_post(token, post_id)
                 else:
-                    print("❌ 发帖失败，跳过后续操作。")
+                    print("❌ 发帖失败，跳过收藏评论")
 
-            print("\n🛒 正在浏览商城...")
+            time.sleep(1)
+            print("🛒 浏览商城...")
             browse_mall(token)
 
-            print(f"-------------- 账号 {i} 结束 --------------")
+            print(f"--- 账号[{i}] 完成 ---")
 
-        print("\n=============== 所有任务执行完毕 ===============")
+        print(f"\n🔔BREO倍轻松,结束!")

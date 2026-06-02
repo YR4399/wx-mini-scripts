@@ -26,7 +26,7 @@ const $ = new Env("植白说小程序");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
-const WeChatServer = require("../wxapp/wcs.js");
+const WeChatServer = require("./wcs.js");
 
 const ckName = "wx_opinion";
 const MINI_APP_ID = "wx6b6c5243359fe265";
