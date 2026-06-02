@@ -478,7 +478,7 @@ def parse_manual_account(raw):
         return [{'remark': o[:8], 'openid': o, 'mall_token': '', 'garden_token': ''} for o in raw.split('&') if o.strip()]
     parts = raw.strip().split('#')
     if len(parts) < 4:
-        raise ValueError(f'格式错误, 需要: 备注#openid#商城token#花园token, 实际: {raw}')
+        return None
     return {
         'remark':   parts[0],
         'openid':   parts[1],
@@ -497,6 +497,8 @@ def load_manual_accounts():
         line = line.strip()
         if line:
             result = parse_manual_account(line)
+            if result is None:
+                continue
             if isinstance(result, list):
                 accounts.extend(result)
             else:
