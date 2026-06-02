@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""君品荟签到 - 支持从宿主机或容器内运行
+"""君品荟签到+花园 - 支持从宿主机或容器内运行
 滑块验证码: 本地模板匹配 + AES-ECB 加密
+花园功能: 初始化、签到、浇水、施肥
 """
 import os, sys, subprocess
 # 清除代理（必须在 import 之前）
@@ -38,6 +39,7 @@ ACCOUNTS = [
     ('owNAX6vYHRZK81cK3dEFTonp9RzA', 'ww'),
 ]
 
+
 def get_wx_code(openid):
     body = {"openid": openid, "appid": APPID}
     body_str = json.dumps(body)
@@ -61,17 +63,23 @@ def get_wx_code(openid):
             return data['data']['code']
     except Exception:
         pass
-    # 方法3: wsl docker exec (宿主机备选)
+    return None
+
+
+def get_encryptkey(openid):
+    """获取微信加密密钥用于花园session"""
+    body = {"openid": openid, "appid": APPID}
     try:
-        cmd = f'wsl docker exec wechatserver wget -qO- --timeout=15 --post-data=\'{body_str}\' --header="auth: {WCS_AUTH}" --header="Content-Type: application/json" http://localhost:8787/wx/code'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60, encoding='utf-8', errors='replace')
-        if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout)
-            if data.get('status') and data.get('data', {}).get('code'):
-                return data['data']['code']
+        r = requests.post(f'{WCS_INTERNAL}/wx/encryptkey', json=body,
+                          headers={'auth': WCS_AUTH, 'Content-Type': 'application/json'},
+                          timeout=30, proxies={'http': None, 'https': None})
+        data = r.json()
+        if data.get('status') and data.get('data'):
+            return data['data']
     except Exception:
         pass
     return None
+
 
 def login(code):
     h = {'Content-Type': 'application/json', 'appid': APPID, 'authorization': AUTH_BASIC, 'app-version': '1.0.0'}
@@ -81,12 +89,15 @@ def login(code):
         return d['data']['token'], d['data'].get('phone', '')
     return None, None
 
+
 def make_h(token):
     return {'X-Access-Token': token, 'Content-Type': 'application/json', 'appid': APPID, 'authorization': AUTH_BASIC, 'app-version': '1.0.0'}
+
 
 def check_sign(token):
     r = requests.post(f'{BASE}/api/customer/daily/checkTodaySignIn', json={}, headers=make_h(token), timeout=15, verify=False)
     return r.json().get('data', False)
+
 
 def detect_gap(bg_b64, slider_b64):
     """本地模板匹配检测缺口 x 坐标"""
@@ -101,6 +112,7 @@ def detect_gap(bg_b64, slider_b64):
     edge = np.abs(ndimage.sobel(bg, axis=1)).mean(axis=0)
     edge[:50] = 0
     return int(np.argmax(edge))
+
 
 def solve_captcha(token):
     """获取验证码 → 本地检测缺口 → AES-ECB 加密 → 提交"""
@@ -122,6 +134,7 @@ def solve_captcha(token):
     print(f"  ❌ 验证码失败: {r2.json().get('data',{}).get('repMsg','')}")
     return None
 
+
 def do_sign(token, code):
     h = make_h(token)
     for i in range(3):
@@ -136,22 +149,170 @@ def do_sign(token, code):
         return False, d.get('message','未知')
     return False, '重试用完'
 
+
+# ==================== 花园功能 ====================
+
+def garden_init(token, session_key):
+    """花园系统初始化"""
+    h = make_h(token)
+    try:
+        r = requests.post(f'{BASE}/api/garden/init', json={'sessionKey': session_key}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            print("  ✅ 花园初始化成功")
+            return True
+        print(f"  ⚠️ 花园初始化: {d.get('message', '未知')}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 花园初始化异常: {e}")
+        return False
+
+
+def garden_info(token):
+    """获取花园信息"""
+    h = make_h(token)
+    try:
+        r = requests.post(f'{BASE}/api/garden/info', json={}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            info = d.get('data', {})
+            level = info.get('levelName', '未知')
+            points = info.get('points', 0)
+            water = info.get('waterCount', 0)
+            fert = info.get('fertilizeCount', 0)
+            sorghum = info.get('sorghum', 0)
+            wheat = info.get('wheat', 0)
+            print(f"  🌱 等级: {level}, 积分: {points}, 浇水: {water}, 施肥: {fert}, 高粱: {sorghum}, 小麦: {wheat}")
+            return info
+        print(f"  ⚠️ 花园信息: {d.get('message', '未知')}")
+        return None
+    except Exception as e:
+        print(f"  ❌ 花园信息异常: {e}")
+        return None
+
+
+def garden_sign(token):
+    """花园签到"""
+    h = make_h(token)
+    try:
+        r = requests.post(f'{BASE}/api/garden/sign', json={}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            reward = d.get('data', {})
+            print(f"  ✅ 花园签到成功! +{reward.get('points', 0)}积分")
+            return True
+        msg = d.get('message', '')
+        if '已签' in msg:
+            print("  ✅ 花园今日已签到")
+            return True
+        print(f"  ⚠️ 花园签到: {msg}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 花园签到异常: {e}")
+        return False
+
+
+def garden_water(token, count=1):
+    """浇水"""
+    h = make_h(token)
+    try:
+        r = requests.post(f'{BASE}/api/garden/water', json={'count': count}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            print(f"  ✅ 浇水{count}次成功")
+            return True
+        print(f"  ⚠️ 浇水: {d.get('message', '未知')}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 浇水异常: {e}")
+        return False
+
+
+def garden_fertilize(token, count=1):
+    """施肥"""
+    h = make_h(token)
+    try:
+        r = requests.post(f'{BASE}/api/garden/fertilize', json={'count': count}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            print(f"  ✅ 施肥{count}次成功")
+            return True
+        print(f"  ⚠️ 施肥: {d.get('message', '未知')}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 施肥异常: {e}")
+        return False
+
+
 def process(openid, remark):
     print(f"\n{'='*50}\n账号: {remark} ({openid[:12]}...)\n{'='*50}")
+
+    # 1. 获取code登录
     code = get_wx_code(openid)
-    if not code: print("  ❌ 获取 code 失败"); return False
+    if not code:
+        print("  ❌ 获取 code 失败")
+        return False
     print(f"  ✅ code: {code[:20]}...")
+
     token, phone = login(code)
-    if not token: print("  ❌ 登录失败"); return False
+    if not token:
+        print("  ❌ 登录失败")
+        return False
     print(f"  ✅ 登录成功 ({phone})")
-    if check_sign(token): print("  ✅ 今日已签到"); return True
-    print("  签到...")
-    ok, msg = do_sign(token, code)
-    if ok: print(f"  ✅ {msg}"); return True
-    print(f"  ❌ {msg}"); return False
+
+    # 2. 商城签到
+    print("\n  [商城签到]")
+    if check_sign(token):
+        print("  ✅ 今日已签到")
+    else:
+        print("  签到中...")
+        ok, msg = do_sign(token, code)
+        if ok:
+            print(f"  ✅ {msg}")
+        else:
+            print(f"  ❌ {msg}")
+
+    # 3. 花园功能
+    print("\n  [花园]")
+    enc_data = get_encryptkey(openid)
+    if enc_data:
+        session_key = enc_data.get('sessionKey', '')
+        iv = enc_data.get('iv', '')
+        print(f"  ✅ 加密密钥获取成功 (iv={iv[:16]}...)")
+
+        garden_init(token, session_key)
+        time.sleep(1)
+
+        garden_info(token)
+        time.sleep(1)
+
+        garden_sign(token)
+        time.sleep(1)
+
+        # 浇水（默认3次）
+        water_info = garden_info(token)
+        if water_info:
+            water_count = water_info.get('waterCount', 0)
+            if water_count > 0:
+                garden_water(token, min(water_count, 3))
+            else:
+                print("  💧 无可用浇水次数")
+            time.sleep(1)
+
+            # 施肥
+            fert_count = water_info.get('fertilizeCount', 0)
+            if fert_count > 0:
+                garden_fertilize(token, min(fert_count, 3))
+            else:
+                print("  🧪 无可用施肥次数")
+    else:
+        print("  ❌ 获取加密密钥失败，跳过花园")
+
+    return True
+
 
 def main():
-    print(f"{'='*50}\n君品荟 签到\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*50}")
+    print(f"{'='*50}\n君品荟 签到+花园\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*50}")
     ok = 0
     for oid, rm in ACCOUNTS:
         try:
@@ -160,6 +321,7 @@ def main():
             print(f"  ❌ {e}")
         time.sleep(3)
     print(f"\n完成: {ok}/{len(ACCOUNTS)} 成功")
+
 
 if __name__ == '__main__':
     main()
