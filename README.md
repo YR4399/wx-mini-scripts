@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-03 04:00
+> 🕐 最后同步：2026-06-03 06:00
 > 📦 脚本总数：**80** 个
 
 </div>
@@ -118,11 +118,11 @@
 | `wcs.js` | (无描述) | 06-02 | — | — |
 | `wugenvboshi.js` | 五个女博士微信小程序签到 | 06-02 | — | — |
 | `wx_midea.js` | (无描述) | 06-01 | 06-03 03:59 | ✨ |
-| `yingshujufeng.js` | 影视飓风小程序签到 | 06-01 | 06-02 04:15 | ✨ |
-| `ykb.js` | 盈客宝电玩小程序签到 | 06-01 | 06-02 04:23 | ✨ |
+| `yingshujufeng.js` | 影视飓风小程序签到 | 06-01 | 06-03 04:15 | ✨ |
+| `ykb.js` | 盈客宝电玩小程序签到 | 06-01 | 06-03 04:23 | ✨ |
 | `yunduodingding.js` | 云朵叮叮微信小程序签到 | 06-02 | — | — |
-| `yz19.js` | tuoluzhe 拓路者小程序签到 | 06-01 | 06-02 04:31 | ✨ |
-| `yz9d.js` | 戴可思小程序签到 | 06-01 | 06-02 04:39 | ✨ |
+| `yz19.js` | tuoluzhe 拓路者小程序签到 | 06-01 | 06-03 04:31 | ✨ |
+| `yz9d.js` | 戴可思小程序签到 | 06-01 | 06-03 04:39 | ✨ |
 | `zbs.js` | 植白说小程序 | 06-02 |  | 💥 |
 | `zhanma.js` | 战马能量星球签到 | 06-01 | — | — |
 
