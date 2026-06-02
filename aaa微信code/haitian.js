@@ -1,29 +1,12 @@
 /*
-------------------------------------------
-@Author: sm
-@Date: 2026.06.01
-@Description:  海天美味馆小程序
+@Description: ????????
 cron: 30 11 * * *
-------------------------------------------
-#Notice:
-变量名 haitian
-变量值：wx_server 里的 openid/账号标识，多账号&或换行
-需要配置：wx_server_url、wx_auth
-
-⚠️【免责声明】
-------------------------------------------
-1、此脚本仅用于学习研究，不保证其合法性、准确性、有效性，请根据情况自行判断，本人对此不承担任何保证责任。
-2、由于此脚本仅用于学习研究，您必须在下载后 24 小时内将所有内容从您的计算机或手机或任何存储设备中完全删除，若违反规定引起任何事件本人对此均不负责。
-3、请勿将此脚本用于任何商业或非法目的，若违反规定请自行对此负责。
-4、此脚本涉及应用与本人无关，本人对因此引起的任何隐私泄漏或其他后果不承担任何责任。
-5、本人对任何脚本引发的问题概不负责，包括但不限于由脚本错误引起的任何损失和损害。
-6、如果任何单位或个人认为此脚本可能涉嫌侵犯其权利，应及时通知并提供身份证明，所有权证明，我们将在收到认证文件确认后删除此脚本。
-7、所有直接或间接使用、查看此脚本的人均应该仔细阅读此声明。本人保留随时更改或补充此声明的权利。一旦您使用或复制了此免责声明。
 */
 
 const { Env } = require("../tools/env.js");
 const $ = new Env("海天美味馆小程序");
 const axios = require("axios");
+axios.defaults.proxy = false;
 const fs = require("fs");
 const path = require("path");
 
@@ -34,7 +17,7 @@ const PAGE_VERSION = "772";
 const API_BASE = "https://cmallapi.xkmm.cn/buyer-api";
 const BASE_API = "https://cmallapi.xkmm.cn/base-api";
 const TOKEN_CACHE_FILE = path.join(__dirname, "haitian_token_cache.json");
-const defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_15 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.70(0x1800462d) NetType/WIFI Language/zh_CN";
+const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/8.0.47.2560(0x28002F37) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) XWEB/9129";
 
 function readTokenCache() {
     try {
@@ -63,7 +46,7 @@ function maskPhone(phone = "") {
 }
 
 function randomUuid(len = 20) {
-    const chars = "abcdef0123456789";
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let value = "";
     for (let i = 0; i < len; i++) value += chars[Math.floor(Math.random() * chars.length)];
     return value;
@@ -82,7 +65,7 @@ class Task {
         this.token = "";
         this.refreshToken = "";
         this.communityToken = "";
-        this.uuid = randomUuid();
+        this.uuid = randomUuid(20);
         this.activity_code = "";
         this.userFlag = false;
         this.userInfo = {};
@@ -229,20 +212,19 @@ class Task {
     }
 
     async getArticleIds() {
-        try {
-            const result = await this.request("/pages/REGISTRATION_AGREEMENT,PRIVACY_PROTECTION_CLAUSE/articles/list", {
-                base: BASE_API,
-                auth: false,
-            });
-            const ids = Array.isArray(result) ? result.map(item => item.article_id).filter(Boolean) : [];
-            return ids.join(",");
-        } catch (e) {
-            $.log(`账号[${this.index}] 获取协议ID失败，继续登录: ${e.message || e}`);
-            return "";
-        }
-    }
+          // SunnyNet ????????? 230,232???????? 232??????????????
+          try {
+              await this.request("/pages/REGISTRATION_AGREEMENT,PRIVACY_PROTECTION_CLAUSE,USER_SELF_DISCIPLINE_AGREEMENT/articles/list", {
+                  base: BASE_API,
+                  auth: false,
+              });
+          } catch (e) {
+              $.log(`??[${this.index}] ????ID????????????: ${e.message || e}`);
+          }
+          return "230,232";
+      }
 
-    async loginByWxCode() {
+      async loginByWxCode() {
         try {
             const wxData = await this.getOperateData();
             const articleIds = await this.getArticleIds();
@@ -251,14 +233,15 @@ class Task {
                 iv: wxData.iv,
                 code: wxData.code,
                 uuid: this.uuid,
-                article_ids: articleIds,
-                app_versions: "1.0.0",
+                article_ids: articleIds || "230,232",
+                app_versions: "28.0.15",
             };
             const result = await this.request("/wechat/mini/phoneNew/login", {
-                method: "POST",
-                params,
-                auth: false,
-            });
+                  method: "POST",
+                  params,
+                  data: {},
+                  auth: false,
+              });
             const token = result?.access_token || result?.accessToken || "";
             if (!result?.success || !token) throw new Error(`登录响应未返回token: ${JSON.stringify(result)}`);
             this.token = token;
@@ -456,7 +439,6 @@ class Task {
 }
 
 !(async () => {
-    await getNotice();
     $.checkEnv(ckName);
     for (const user of $.userList) {
         await new Task(user).run();
@@ -464,15 +446,3 @@ class Task {
 })()
     .catch((e) => console.log(e))
     .finally(() => $.done());
-
-async function getNotice() {
-    try {
-        const { data: res } = await axios.request({
-            url: "https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json",
-            headers: { "User-Agent": defaultUserAgent },
-            timeout: 3000,
-        });
-        $.log(res);
-        return res;
-    } catch (e) {}
-}
