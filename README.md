@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-02 20:00
-> 📦 脚本总数：**87** 个
+> 🕐 最后同步：2026-06-02 22:00
+> 📦 脚本总数：**86** 个
 
 </div>
 
@@ -78,7 +78,6 @@
 | `campari.js` | 金巴厘杯中空间签到 | 06-01 | 06-02 00:23 | ✨ |
 | `casetify.js` | CASETiFY 签到 | 06-01 | 06-02 00:31 | ✨ |
 | `choubao.js` | 臭宝乐园签到 | 06-01 | 06-02 00:39 | ✨ |
-| `colorful.js` | 七彩虹微信小程序 签到&点赞 | 06-02 |  | 💥 |
 | `dasenlin.js` | 大参林小程序签到 | 06-01 | 06-02 00:47 | ✨ |
 | `fafa.js` | 发发藏宝洞 小程序签到 | 06-01 |  | 💥 |
 | `feihe.js` | 飞鹤微信小程序签到 | 06-02 | — | — |
@@ -119,7 +118,7 @@
 | `tnjy.js` | 天牛旧衣服回收签到 | 06-01 | 06-02 03:35 | ✨ |
 | `tslj.js` | 泰山小程序签到 | 06-01 | 06-02 03:43 | ✨ |
 | `wb.js` | 花生帮粉丝俱乐部签到任务 | 06-01 | 06-02 03:51 | ✨ |
-| `wcs.js` | (无描述) | 06-01 | — | — |
+| `wcs.js` | (无描述) | 06-02 | — | — |
 | `wugenvboshi.js` | 五个女博士微信小程序签到 | 06-02 |  | 💥 |
 | `wx_midea.js` | (无描述) | 06-01 | 06-02 03:59 | ✨ |
 | `yingshujufeng.js` | 影视飓风小程序签到 | 06-01 | 06-02 04:15 | ✨ |

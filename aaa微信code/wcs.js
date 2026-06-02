@@ -21,6 +21,22 @@ class WeChatCodeServer {
             });
         });
     }
+    getOperatedata(openid) {
+        console.log('等待获取operatedata:');
+        return new Promise((resolve, reject) => {
+            axios.post(this.serverUrl + '/wx/operatedata', { appid: this.appid, openid }, {
+                headers: {
+                    'auth': this.auth
+                },
+                timeout: 60 * 1000
+            }).then(res => {
+                console.log('获取operatedata成功:');
+                resolve(res);
+            }).catch(err => {
+                reject(err);
+            });
+        });
+    }
    
     cloudInit(openid) {
         console.log('等待云函数初始化:');
