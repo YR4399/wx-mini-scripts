@@ -1,7 +1,4 @@
 const axios = require("axios");
-const { SocksProxyAgent } = require('socks-proxy-agent');
-const { HttpsProxyAgent } = require('https-proxy-agent');
-const { HttpProxyAgent } = require('http-proxy-agent');
 const qs = require('querystring');
 
 // 强制全局禁用系统代理环境变量，避免干扰
@@ -14,7 +11,9 @@ delete process.env.https_proxy;
 // PushPlus 通知Token（青龙环境变量）
 const PLUSPLUS_TOKEN = process.env.PLUSPLUS_TOKEN || "";
 // 多端口服务器列表
-const SERVERS = ["IP:8088"];
+const WX_SERVER_URL = (process.env.wx_server_url || "http://127.0.0.1:8787").replace(/\/+$/, "");
+const WX_AUTH = process.env.wx_auth || "";
+const CK_NAME = "wx_opinion";
 // 品赞代理配置（青龙环境变量）
 const PROXY_API = process.env.PROXY_API || ""; // 代理提取API链接
 const PROXY_TYPE = process.env.PROXY_TYPE || "http"; // 代理类型: http 或 socks5
@@ -212,25 +211,29 @@ async function sendPlusPlusNotification(title, content) {
 
 // ===================== 业务逻辑函数 =====================
 // 获取code 【强制直连，不走代理】
-async function getCode(server) {
-    const requestUrl = `http://${server}/login`;
-    console.log(`📡 [${server}] 正在请求登录服务：${requestUrl}`);
+async function getCode(openid) {
+    const label = openid.slice(0, 10) + "...";
+    console.log(`?? [${label}] ????WCS??code`);
     try {
-        const response = await axios.get(requestUrl, {
-            params: { appId: APPID },
-            timeout: 20000,
+        const response = await axios.post(`${WX_SERVER_URL}/wx/code`, {
+            appid: APPID,
+            openid: openid
+        }, {
+            headers: { auth: WX_AUTH },
+            timeout: 60000,
             proxy: false
         });
         const res = response.data;
-        debugLog("获取code响应", res);
-        if (res.err !== 0 || !res.code) {
-            console.log(`❌ [${server}] 返回异常: ${JSON.stringify(res)}`);
+        debugLog("??code??", res);
+        const code = (res.data && res.data.code) || res.code;
+        if (!code) {
+            console.log(`? [${label}] WCS???code?`, JSON.stringify(res).slice(0, 100));
             return null;
         }
-        console.log(`✅ [${server}] 获取code成功`);
-        return res.code;
+        console.log(`? [${label}] ??code??`);
+        return code;
     } catch (e) {
-        console.log(`❌ [${server}] 请求异常: ${e.message}`);
+        console.log(`? [${label}] ??code???`, e.message);
         return null;
     }
 }
@@ -304,7 +307,7 @@ async function commonPost(url, body, token, UA, proxyAgent, server) {
             'device-version': 'Windows 10 x64',
             'User-Agent': UA,
             'xweb_xhr': '1',
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
             'device-model': 'microsoft',
             'Accept': '*/*',
             'Sec-Fetch-Site': 'cross-site',
@@ -315,7 +318,7 @@ async function commonPost(url, body, token, UA, proxyAgent, server) {
             'Accept-Language': 'zh-CN,zh;q=0.9',
             'authorization': `Bearer ${token}`
         },
-        data: body,
+        data: typeof body === 'object' ? Object.keys(body).map(k => `${k}=${encodeURIComponent(body[k])}`).join('&') : body,
         timeout: 20000
     };
     
@@ -346,7 +349,8 @@ async function commonPost(url, body, token, UA, proxyAgent, server) {
 }
 
 // 单个账号执行逻辑 【已修复错误处理并添加多路径token提取】
-async function runAccount(server, globalProxyAgent) {
+async function runAccount(openid, globalProxyAgent) {
+    const server = openid.slice(0, 10) + "...";
     let result = {
         server: server,
         success: false,
@@ -369,7 +373,7 @@ async function runAccount(server, globalProxyAgent) {
         await sleep(startDelay);
         
         // 1️⃣ 获取code
-        let code = await getCode(server);
+        let code = await getCode(openid);
         if (!code) {
             result.error = "获取code失败";
             return result;
@@ -471,8 +475,13 @@ async function runAccount(server, globalProxyAgent) {
         globalProxyAgent = await getValidProxy("全局共用");
     }
     const results = [];
-    for (const server of SERVERS) {
-        const res = await runAccount(server, globalProxyAgent);
+    const accounts = (process.env[CK_NAME] || "").replace(/&/g, "\n").split(/\n/).map(x => x.trim()).filter(Boolean);
+    if (accounts.length === 0) {
+        console.log("? ???? wx_opinion ?????");
+        return;
+    }
+    for (const openid of accounts) {
+        const res = await runAccount(openid, globalProxyAgent);
         results.push(res);
         await sleep(2000);
     }

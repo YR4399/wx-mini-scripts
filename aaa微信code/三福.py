@@ -264,6 +264,7 @@ async def runAccount(openid, globalProxyAgent):
         "error": "",
         "proxyStatus": "未使用代理"
     }
+    server = result["server"]
     print(f"\n===== 三福 - {server} 账号 =====")
     UA = getUA()
     proxyAgent = globalProxyAgent
@@ -343,15 +344,12 @@ async def runAccount(openid, globalProxyAgent):
 
 # ===================== 主程序 =====================
 async def main():
-    print("===== 三福签到（WCS版）=====
-")
+    print("===== 三福签到（WCS版）=====\n")
     globalProxyAgent = None
     if not ENABLE_PER_ACCOUNT_PROXY:
         globalProxyAgent = await getValidProxy("全局共用")
-    
-    results = []
-    accounts = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "
-").splitlines() if x.strip()]
+
+    accounts = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "\n").splitlines() if x.strip()]
     if not accounts:
         print("❌ 未检测到 wx_opinion 账号，退出")
         return
@@ -361,8 +359,8 @@ async def main():
         res = await runAccount(openid, globalProxyAgent)
         results.append(res)
         await sleep(2000)
-    
-    notifyContent = "### 三福双账号任务执行结果\n"
+
+    notifyContent = "### 三福账号任务执行结果\n"
     for res in results:
         notifyContent += f"\n#### {res['server']}\n"
         notifyContent += f"- 代理状态：{res['proxyStatus']}\n"
@@ -372,8 +370,8 @@ async def main():
             notifyContent += f"- 福币信息：{res['scoreMsg']}\n"
         else:
             notifyContent += f"- 失败原因：{res['error']}\n"
-    
-    sendPlusPlusNotification("三福双账号任务完成", notifyContent)
+
+    sendPlusPlusNotification("三福账号任务完成", notifyContent)
     print('\n===== 所有账号执行完成 =====')
 
 if __name__ == "__main__":

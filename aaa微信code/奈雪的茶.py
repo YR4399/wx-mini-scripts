@@ -31,7 +31,11 @@ import requests
 # ===================== 配置项 =====================
 
 APPID = "wxab7430e6e8b9a4ab"
-SERVERS = ["IP:8088"]
+
+# WCS 配置
+WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_AUTH = os.getenv("wx_auth", "")
+CK_NAME = "wx_opinion"
 
 PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 
@@ -295,12 +299,31 @@ def request_with_proxy(method: str, url: str, *, proxies: dict | None = None, se
                 raise
             print(f"[{server}] 切换直连重试")
 
+    kwargs.setdefault("proxies", {"http": None, "https": None})
     return requests.request(method, url, **kwargs)
 
 
-def get_code(server: str) -> str | None:
-    url = f"http://{server}/login"
-    print(f"[{server}] 请求本地登录服务：{url}")
+def get_code(openid: str) -> str | None:
+    print(f"[{openid[:10]}] 通过WCS获取code")
+    try:
+        res = requests.post(
+            f"{WX_SERVER_URL}/wx/code",
+            json={"appid": APPID, "openid": openid},
+            headers={"auth": WX_AUTH},
+            timeout=60,
+            proxies={"http": None, "https": None},
+        )
+        data = res.json()
+        code = (data.get("data") or {}).get("code") or data.get("code")
+        if code:
+            print(f"[{openid[:10]}] 获取 code 成功")
+            return code
+        print(f"[{openid[:10]}] WCS未返回 code: {json.dumps(data, ensure_ascii=False)[:100]}")
+    except Exception as exc:
+        print(f"[{openid[:10]}] 获取 code 异常：{exc}")
+    return None
+    url = f"{WX_SERVER_URL}/wx/code"
+    print(f"[{openid[:10]}] 请求本地登录服务：{url}")
 
     try:
         res = requests.get(
@@ -312,13 +335,13 @@ def get_code(server: str) -> str | None:
         data = res.json()
 
         if data.get("err") != 0 or not data.get("code"):
-            print(f"[{server}] 获取 code 失败：{json.dumps(data, ensure_ascii=False)}")
+            print(f"[{openid[:10]}] 获取 code 失败：{json.dumps(data, ensure_ascii=False)}")
             return None
 
-        print(f"[{server}] 获取 code 成功")
+        print(f"[{openid[:10]}] 获取 code 成功")
         return data["code"]
     except Exception as exc:
-        print(f"[{server}] 获取 code 异常：{exc}")
+        print(f"[{openid[:10]}] 获取 code 异常：{exc}")
         return None
 
 
@@ -368,7 +391,7 @@ def extract_token(data) -> str | None:
     return None
 
 
-def login_by_code(code: str, ua: str, proxies: dict | None, server: str) -> tuple[str | None, dict | None]:
+def login_by_code(code: str, ua: str, proxies: dict | None, openid: str) -> tuple[str | None, dict | None]:
     headers = {
         "Host": "tm-api.pin-dao.cn",
         "Connection": "keep-alive",
@@ -401,7 +424,7 @@ def login_by_code(code: str, ua: str, proxies: dict | None, server: str) -> tupl
             headers=headers,
             data=json.dumps(body, separators=(",", ":"), ensure_ascii=False),
             proxies=proxies,
-            server=server,
+            server=openid,
         )
 
         try:
@@ -411,17 +434,17 @@ def login_by_code(code: str, ua: str, proxies: dict | None, server: str) -> tupl
 
         token = extract_token(data)
         if token:
-            print(f"[{server}] 登录成功，已获取 token")
+            print(f"[{openid[:10]}] 登录成功，已获取 token")
             return token, data
 
-        print(f"[{server}] 登录成功但未识别 token 字段：{json.dumps(data, ensure_ascii=False)[:800]}")
+        print(f"[{openid[:10]}] 登录成功但未识别 token 字段：{json.dumps(data, ensure_ascii=False)[:800]}")
         return None, data
     except Exception as exc:
-        print(f"[{server}] 登录异常：{exc}")
+        print(f"[{openid[:10]}] 登录异常：{exc}")
         return None, None
 
 
-def call_api(url: str, token: str, ua: str, proxies: dict | None, server: str, body: dict | None = None) -> dict:
+def call_api(url: str, token: str, ua: str, proxies: dict | None, openid: str, body: dict | None = None) -> dict:
     headers = {
         "User-Agent": ua,
         "Authorization": f"Bearer {token}",
@@ -439,7 +462,7 @@ def call_api(url: str, token: str, ua: str, proxies: dict | None, server: str, b
             headers=headers,
             data=json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
             proxies=proxies,
-            server=server,
+            server=openid,
         )
         return res.json()
     except Exception as exc:
@@ -451,9 +474,9 @@ def call_api(url: str, token: str, ua: str, proxies: dict | None, server: str, b
 
 # ===================== 业务逻辑 =====================
 
-def run_account(server: str, global_proxy: dict | None = None) -> dict:
+def run_account(openid: str, global_proxy: dict | None = None) -> dict:
     result = {
-        "server": server,
+        "openid": openid[:10]+"...",
         "success": False,
         "proxy_status": "未使用代理",
         "login_msg": "",
@@ -462,26 +485,26 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
         "error": "",
     }
 
-    print(f"\n===== 奈雪点单 - {server} 账号 =====")
+    print(f"\n===== 奈雪点单 - {openid[:10]} 账号 =====")
     ua = get_ua()
 
     proxies = global_proxy
     if ENABLE_PER_ACCOUNT_PROXY:
-        proxies = get_valid_proxy(server)
+        proxies = get_valid_proxy(openid[:10])
         result["proxy_status"] = "使用专属代理" if proxies else "使用直连"
         sleep(PROXY_FETCH_INTERVAL)
 
     try:
         delay = random.randint(2, 6)
-        print(f"[{server}] 启动延迟 {delay}s")
+        print(f"[{openid[:10]}] 启动延迟 {delay}s")
         sleep(delay)
 
-        code = get_code(server)
+        code = get_code(openid)
         if not code:
             result["error"] = "获取 code 失败"
             return result
 
-        token, login_raw = login_by_code(code, ua, proxies, server)
+        token, login_raw = login_by_code(code, ua, proxies, openid[:10])
         if not token:
             result["error"] = "登录失败或未识别 token 字段"
             return result
@@ -494,7 +517,7 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
             token,
             ua,
             proxies,
-            server,
+            openid[:10],
             {},
         )
 
@@ -503,7 +526,7 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
             return result
 
         phone = userinfo.get("data", {}).get("phone", "")
-        print(f"[{server}] 登录账号：{mask_phone(phone)}")
+        print(f"[{openid[:10]}] 登录账号：{mask_phone(phone)}")
 
         year, month, day = china_date_parts()
         sign_date = f"{year}-{month:02d}-01"
@@ -514,7 +537,7 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
             token,
             ua,
             proxies,
-            server,
+            openid[:10],
             {
                 "signDate": sign_date,
                 "startDate": today,
@@ -523,11 +546,11 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
 
         if sign_records.get("code") != 0:
             result["sign_msg"] = f"查询签到失败：{sign_records.get('message') or '未知错误'}"
-            print(f"[{server}] {result['sign_msg']}")
+            print(f"[{openid[:10]}] {result['sign_msg']}")
         else:
             status = bool(sign_records.get("data", {}).get("status"))
             count = sign_records.get("data", {}).get("signCount", "-")
-            print(f"[{server}] 今天{'已' if status else '未'}签到，已签到 {count} 天")
+            print(f"[{openid[:10]}] 今天{'已' if status else '未'}签到，已签到 {count} 天")
 
             if status:
                 result["sign_msg"] = f"今日已签到，累计 {count} 天"
@@ -537,7 +560,7 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
                     token,
                     ua,
                     proxies,
-                    server,
+                    openid[:10],
                     {
                         "signDate": today,
                     },
@@ -545,10 +568,10 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
 
                 if sign_save.get("code") == 0 and sign_save.get("data", {}).get("flag"):
                     result["sign_msg"] = "签到成功"
-                    print(f"[{server}] 签到成功")
+                    print(f"[{openid[:10]}] 签到成功")
                 else:
                     result["sign_msg"] = f"签到失败：{sign_save.get('message') or '未知错误'}"
-                    print(f"[{server}] {result['sign_msg']}")
+                    print(f"[{openid[:10]}] {result['sign_msg']}")
 
         rand_sleep(2, 5)
 
@@ -557,22 +580,22 @@ def run_account(server: str, global_proxy: dict | None = None) -> dict:
             token,
             ua,
             proxies,
-            server,
+            openid[:10],
             {},
         )
 
         if account.get("code") == 0:
             result["coin"] = account.get("data", {}).get("coin", "-")
-            print(f"[{server}] 当前奈雪币：{result['coin']}")
+            print(f"[{openid[:10]}] 当前奈雪币：{result['coin']}")
         else:
-            print(f"[{server}] 查询奈雪币失败：{account.get('message') or '未知错误'}")
+            print(f"[{openid[:10]}] 查询奈雪币失败：{account.get('message') or '未知错误'}")
 
         result["success"] = True
         return result
 
     except Exception as exc:
         result["error"] = str(exc)
-        print(f"[{server}] 执行异常：{exc}")
+        print(f"[{openid[:10]}] 执行异常：{exc}")
         return result
 
 
@@ -585,18 +608,23 @@ def main() -> None:
 
     results = []
 
-    for index, server in enumerate(SERVERS, 1):
-        res = run_account(server, global_proxy)
+    accounts = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "\n").splitlines() if x.strip()]
+    if not accounts:
+        print("❌ 未检测到 wx_opinion 账号，退出")
+        return
+
+    for index, openid in enumerate(accounts, 1):
+        res = run_account(openid, global_proxy)
         results.append(res)
 
-        if index < len(SERVERS):
+        if index < len(accounts):
             sleep(2)
 
     notify = "### 奈雪点单双账号任务执行结果\n"
 
     for res in results:
         notify += f"""
-#### {res["server"]}
+#### {res["openid"]}
 - 代理状态：{res["proxy_status"]}
 - 执行状态：{"成功" if res["success"] else "失败"}
 """

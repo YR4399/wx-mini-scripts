@@ -41,9 +41,9 @@ import requests
 APP_NAME = "铛铛一下旧衣服回收小程序"
 APPID = "wxe378d2d7636c180e"
 
-SERVERS = [
-    "IP:8088",
-]
+WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_AUTH = os.getenv("wx_auth", "")
+CK_NAME = "wx_opinion"
 
 CHANNEL_ID = os.getenv("DD1X_CHANNEL_ID", "154")
 
@@ -111,11 +111,12 @@ def log_title() -> None:
     print("╔" + "═" * 50 + "╗")
     print("║ ♻️ 铛铛一下旧衣服回收动态 code 版             ║")
     print(f"║ 🕒 启动时间: {now_text():<32}║")
-    print(f"║ 🔢 账号数量: {len(SERVERS):<34}║")
+    _acc = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "\n").splitlines() if x.strip()]
+    print(f"║ 🔢 账号数量: {len(_acc):<34}║")
     print("╚" + "═" * 50 + "╝")
 
 
-def log_account_header(index: int, total: int, server: str) -> None:
+def log_account_header(index: int, total: int, server: str = "") -> None:
     print()
     print("┌" + "─" * 50 + "┐")
     print(f"│ 🧩 账号 {index} / {total:<37}│")
@@ -267,7 +268,7 @@ def request_with_proxy(
         try:
             return requests.request(method, url, proxies=proxies, **kwargs)
         except Exception as exc:
-            print(f"⚠️ [代理] {server} 代理请求失败: {exc}")
+            print(f"⚠️ [代理] {openid[:10]} 代理请求失败: {exc}")
             if not ENABLE_DIRECT_FALLBACK:
                 raise
             print("🔁 [兜底] 切换直连重试")
@@ -297,28 +298,25 @@ def send_pushplus(title: str, content: str) -> None:
         print(f"❌ [PushPlus] 推送失败: {exc}")
 
 
-def get_code(server: str) -> str | None:
-    url = f"http://{server}/login"
-    print(f"🔐 [授权] 请求本地 code 服务: {url}")
-
+def get_code(openid: str) -> str | None:
+    print(f"🔐 [授权] 通过WCS获取code: {openid[:10]}...")
     try:
-        response = direct_session().get(
-            url,
-            params={"appId": APPID},
-            timeout=20,
+        response = requests.post(
+            f"{WX_SERVER_URL}/wx/code",
+            json={"appid": APPID, "openid": openid},
+            headers={"auth": WX_AUTH},
+            timeout=60,
+            proxies={"http": None, "https": None},
         )
         data = response.json()
-
-        if data.get("err") != 0 or not data.get("code"):
-            print(f"❌ [授权] code 获取失败: {json_preview(data)}")
-            return None
-
-        print("✅ [授权] code 获取成功")
-        return data["code"]
+        code = (data.get("data") or {}).get("code") or data.get("code")
+        if code:
+            print(f"✅ [授权] code 获取成功")
+            return code
+        print(f"❌ [授权] WCS未返回 code: {str(data)[:100]}")
     except Exception as exc:
         print(f"❌ [授权] code 获取异常: {exc}")
-        return None
-
+    return None
 
 def common_headers(token: str | None = None) -> Dict[str, str]:
     headers = {
@@ -490,9 +488,10 @@ def build_withdraw_payload(trade_resp: Any) -> Tuple[Dict[str, Any] | None, str]
     }, f"可提现订单 {len(available)} 个，合计 {total_money:.2f} 元"
 
 
-def run_account(index: int, total: int, server: str) -> Dict[str, Any]:
+def run_account(index: int, total: int, openid: str) -> Dict[str, Any]:
+    server = openid[:10]+"..."
     result = {
-        "server": server,
+        "openid": openid[:10]+"...",
         "success": False,
         "proxyStatus": "未使用代理",
         "proxyIp": "-",
@@ -506,7 +505,7 @@ def run_account(index: int, total: int, server: str) -> Dict[str, Any]:
 
     log_account_header(index, total, server)
 
-    proxies, proxy_ip = get_valid_proxy(server)
+    proxies, proxy_ip = get_valid_proxy(openid[:10])
     result["proxyStatus"] = "使用专属代理" if proxies else "使用直连"
     result["proxyIp"] = proxy_ip or "-"
 
@@ -516,12 +515,12 @@ def run_account(index: int, total: int, server: str) -> Dict[str, Any]:
     print(f"⏳ [延迟] 启动延迟 {delay}s")
     sleep(delay)
 
-    code = get_code(server)
+    code = get_code(openid)
     if not code:
         result["error"] = "获取 code 失败"
         return result
 
-    token, raw_login = login_by_code(server, code, proxies)
+    token, raw_login = login_by_code(openid[:10], code, proxies)
     if not token:
         result["error"] = f"登录失败: {json_preview(raw_login)}"
         return result
@@ -627,7 +626,7 @@ def build_notify(results: List[Dict[str, Any]]) -> str:
 
         content += f"""
 🧩 账号 {idx}
-🌍 来源：{res["server"]}
+🌍 来源：{res["openid"]}
 🌐 代理：{res["proxyStatus"]}
 📡 出口IP：{res["proxyIp"]}
 🔐 Token：{res["token"]}
@@ -651,14 +650,19 @@ def main() -> None:
 
     results: List[Dict[str, Any]] = []
 
-    for index, server in enumerate(SERVERS, 1):
+    accounts = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "\n").splitlines() if x.strip()]
+    if not accounts:
+        print("❌ 未检测到 wx_opinion 账号，退出")
+        return
+
+    for index, openid in enumerate(accounts, 1):
         try:
-            result = run_account(index, len(SERVERS), server)
+            result = run_account(index, len(accounts), openid)
             results.append(result)
         except Exception as exc:
-            print(f"❌ [主程序] {server} 执行异常: {exc}")
+            print(f"❌ [主程序] {openid[:10]} 执行异常: {exc}")
             results.append({
-                "server": server,
+                "openid": openid[:10]+"...",
                 "success": False,
                 "proxyStatus": "-",
                 "proxyIp": "-",
@@ -670,7 +674,7 @@ def main() -> None:
                 "error": traceback.format_exc().strip(),
             })
 
-        if index < len(SERVERS):
+        if index < len(accounts):
             print("⏳ [间隔] 等待 2s 后处理下一个账号")
             sleep(2)
 
