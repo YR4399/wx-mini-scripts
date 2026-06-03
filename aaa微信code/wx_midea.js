@@ -1,9 +1,16 @@
 /**
+ * cron 27 19 * * *  wx_midea.js
+ * Show:每天运行一次
+ * @author:https://github.com/smallfawn/QLScriptPublic
+ * 变量名:wx_midea
+ * 变量值:https://mvip.midea.cn/next/mucuserinfo/getmucuserinfo headers中的COOKIE  只写uid=xxxx;sukey=yyyy;#headers 中 ucAccessToken的值
+ * 具体示例   uid=xxxx;sukey=yyyy;#7895566asa  多账号&分开 或者换行
+ * scriptVersionNow = "0.0.1";
  */
 
 const $ = new Env("微信小程序 - 美的会员");
 const notify = $.isNode() ? require('../sendNotify') : '';
-let ckName = "wx_opinion";
+let ckName = "wx_midea";
 let envSplitor = ["&", "\n"]; //多账号分隔符
 let strSplitor = "#"; //多变量分隔符
 let userIdx = 0;
@@ -147,6 +154,12 @@ class UserInfo {
             msg += `✅${options.fn}成功🎉\n` + JSON.stringify(result);
             console.log(JSON.stringify(result));
             /*if (result["errcode"] == 0) {
+                console.log(`✅${options.fn}成功🎉`);
+                msg += `✅${options.fn}成功🎉\n`;
+            } else {
+                console.log(`❌${options.fn}失败`);
+                msg += `❌${options.fn}失败\n`;
+                console.log(JSON.stringify(result));
             }*/
         } catch (e) {
             console.log(e);
@@ -159,6 +172,11 @@ async function start() {
     await Promise.all(tasks);
     notify.sendNotify($.name, msg);
     /*let taskall = [];
+    for (let user of userList) {
+        if (user.ckStatus) {
+            taskall.push(await user.main());
+        }
+    }
     await Promise.all(taskall);*/
 }
 
@@ -173,6 +191,8 @@ async function start() {
 
 //********************************************************
 /**
+ * 变量检查与处理
+ * @returns
  */
 async function checkEnv() {
     let userCookie = ($.isNode() ? process.env[ckName] : $.getdata(ckName)) || "";
