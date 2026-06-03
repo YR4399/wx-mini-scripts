@@ -15,10 +15,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 APP_ID = "wx51a2021dd921f747"
 PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 
-# 双登录接口（两个账号对应两个接口）
-CODE_URL_LIST = [
-    "http://IP:8088/login"
-]
+# WCS 配置（从环境变量读取）
+WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_AUTH = os.getenv("wx_auth", "")
+CK_NAME = "wx_opinion"
 
 # 品赞代理配置（青龙环境变量）
 PROXY_API = os.getenv("PROXY_API", "")  # 代理提取API链接
@@ -180,26 +180,29 @@ def get_valid_proxy(account_name):
     return None
 # ======================================================
 
-def get_wx_code(code_url):
-    """获取对应接口的Code【强制直连，不走代理】"""
+def get_wx_code(openid):
+    """通过 WCS 获取 wx.login code"""
     try:
-        res = requests.get(
-            code_url,
-            params={"appId": APP_ID},
-            timeout=20,
-            proxies={"http": None, "https": None}  # 核心：强制直连
+        res = requests.post(
+            f"{WX_SERVER_URL}/wx/code",
+            json={"appid": APP_ID, "openid": openid},
+            headers={"auth": WX_AUTH},
+            timeout=60,
+            proxies={"http": None, "https": None}
         )
         data = res.json()
-        if data.get("err") == 0:
+        code = (data.get("data") or {}).get("code") or data.get("code")
+        if code:
             print("✅ 获取Code成功")
-            return data["code"]
+            return code
+        print(f"❌ WCS未返回code: {data}")
     except Exception as e:
         print(f"❌ 获取Code失败：{str(e)}")
     return None
 
-def refresh_token(code_url, proxy_config, account_name):
-    """通过对应接口刷新Token【支持代理+直连兜底】"""
-    code = get_wx_code(code_url)
+def refresh_token(openid, proxy_config, account_name):
+    """通过 WCS 获取 code 后刷新Token【支持代理+直连兜底】"""
+    code = get_wx_code(openid)
     if not code:
         return None, None
 
@@ -464,20 +467,21 @@ def run_account(code_url, index, global_proxy_config):
         }
 
 if __name__ == "__main__":
-    print('===== DT生活签到（双端口+每个账号独立代理版）=====\n')
+    print('===== DT生活签到（WCS版）=====\n')
 
     # 兼容旧逻辑：如果关闭了单账号代理，就全局获取一个共用代理
     global_proxy_config = None
     if not ENABLE_PER_ACCOUNT_PROXY:
         global_proxy_config = get_valid_proxy("全局共用")
 
-    # 循环执行双接口双账号
+    accounts = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "\n").splitlines() if x.strip()]
+    if not accounts:
+        print("❌ 未检测到 wx_opinion 账号，退出")
+        exit(0)
+
     all_results = []
-    for i, url in enumerate(CODE_URL_LIST, 1):
-        result = run_account(url, i, global_proxy_config)
+    for i, openid in enumerate(accounts, 1):
+        result = run_account(openid, i, global_proxy_config)
         all_results.append(result)
         # 账号间间隔2秒
         time.sleep(2)
-
-    # 汇总结果（可选，这里已经单个推送了，也可以汇总推送）
-    print("\n🎉 所有账号执行完毕！")

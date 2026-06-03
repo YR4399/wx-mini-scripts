@@ -19,7 +19,7 @@ const GROUP_ID = "317964";
 const MEMBER_SYSTEM_ID = "21";
 const PLACE_ID = "7600036286420";
 const APP_KEY = "hdzy_scsxzyqyglzxyxgs_pfaeyg";
-const SIGN_SECRET = "uh3$Hg&^HK876%gbxVG7f$%p=0M~>s1x";
+const SIGN_SECRET = 'uh3$Hg&^HK876%gbxVG7f$%p=0M~>s1x';
 
 const UA = "Mozilla/5.0 (Linux; Android 16; M2012K11AC Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/146.0.7680.178 Mobile Safari/537.36 XWEB/1460149 MMWEBSDK/20260502 MMWEBID/6067 MicroMessenger/8.0.72.3100(0x28004850) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 miniProgram/wx2804355dbf8d15c3";
 
@@ -62,6 +62,9 @@ class Task {
         this.csession = null;
         this.userId = null;
         this.consumerId = null;
+        this.ls = null;
+        this.gardenUserId = null;
+        this.xmToken = null;
         this.treeId = null;
     }
 
@@ -93,7 +96,7 @@ class Task {
             "Referer": `https://servicewechat.com/${MINI_APP_ID}/1154/page-frame.html`,
             "Host": GARDEN_BASE.replace("https://", ""),
             "xmSign": xmSign,
-            "xmToken": "",
+            "xmToken": this.xmToken || "",
             "functionId": String(extraParams.functionId || 0),
             "nonceStr": nonceStr,
             "xmTimestamp": String(xmTimestamp),
@@ -104,7 +107,55 @@ class Task {
     }
 
     getCookies() {
-        return `loginTime=${APP_KEY}=${Date.now()};userId=${APP_KEY}=${this.userId};ls=${APP_KEY}=${this.userId}-1;appKey=${APP_KEY};consumerId=${APP_KEY}=${this.consumerId};placeId=${APP_KEY}=${PLACE_ID};openId=${APP_KEY}=${this.consumerId};unionId=${APP_KEY}=`;
+        const uid = this.gardenUserId || this.userId;
+        return `loginTime=${APP_KEY}=${Date.now()}; userId=${APP_KEY}=${uid}; ls=${APP_KEY}=${uid}-1; appKey=${APP_KEY}; consumerId=${APP_KEY}=${this.consumerId}; placeId=${APP_KEY}=${PLACE_ID}; openId=${APP_KEY}=${this.consumerId}; unionId=${APP_KEY}=`;
+    }
+
+    async initGardenSession() {
+        // 调用 redirectLandingPage 获取 Cookies
+        const resp = await axios.get(`${GARDEN_BASE}/xm/activity/redirectLandingPage`, {
+            params: { params: `xmps:lg_redirect_params:${this.ls}` },
+            headers: {
+                "User-Agent": UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "X-Requested-With": "com.tencent.mm",
+            },
+            timeout: 30000,
+            validateStatus: () => true,
+            maxRedirects: 0,
+        });
+        
+        // 从 Set-Cookie 中提取 userId
+        const setCookies = resp.headers["set-cookie"] || [];
+        for (const cookie of setCookies) {
+            const match = cookie.match(/userId=([^;]+)/);
+            if (match) {
+                const val = match[1];
+                if (val.includes("=")) {
+                    this.gardenUserId = val.split("=")[1];
+                }
+            }
+        }
+        if (this.gardenUserId) {
+            $.log(`账号[${this.index}] 获取花园userId: ${this.gardenUserId}`);
+        }
+    }
+
+    async getUserToken() {
+        const nonceStr = genNonce();
+        const xmTimestamp = Date.now();
+        const tokenSign = crypto.createHash("md5").update(this.userId + nonceStr + xmTimestamp + "J7h8&^Bgs5#bn*7hn%!=kh308*bv2!s^").digest("hex");
+        const resp = await axios.get(`${GARDEN_BASE}/xm/token/getUserToken`, {
+            params: { timestamp: xmTimestamp, nonceStr, tokenSign },
+            headers: this.getGardenHeaders("GET", {}),
+            timeout: 30000, validateStatus: () => true
+        });
+        if (resp.data?.code === "0" && resp.data?.data) {
+            const parts = resp.data.data.split("@");
+            this.gardenUserId = parts[0];
+            this.xmToken = resp.data.data;
+            $.log(`账号[${this.index}] 获取花园token成功`);
+        }
     }
 
     async login(wechat, openid) {
@@ -125,8 +176,8 @@ class Task {
             throw new Error(`首次登录失败: ${JSON.stringify(resp1.data)}`);
         }
         this.csession = resp1.data.data.token;
-        this.userId = resp1.data.data.userId;
-        this.consumerId = resp1.data.data.openId;
+        this.userId = resp1.data.data.userId; // 1804775164696027136
+        this.consumerId = resp1.data.data.openId; // oQ0H85TL6MCz_6-hcMrVbaVd6cLI
 
         // Step 2: 刷新登录
         await $.wait(800 + Math.random() * 500);
@@ -142,9 +193,18 @@ class Task {
             });
             if (resp2.data?.code === "000" && resp2.data?.data?.token) {
                 this.csession = resp2.data.data.token;
-                $.log(`账号[${this.index}] 登录成功`);
             }
         }
+
+        // Step 3: 初始化花园会话
+        await $.wait(500);
+        this.ls = this.userId; // ls 使用登录返回的 userId
+        await this.initGardenSession();
+
+        // Step 4: 获取花园token
+        await $.wait(500);
+        await this.getUserToken();
+        $.log(`账号[${this.index}] 登录成功`);
     }
 
     async gardenRequest(path, method = "GET", params = {}, body = null) {

@@ -11,7 +11,10 @@ for env_key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
 
 # ===================== 配置项 =====================
 PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
-SERVERS = ["IP:8088"]
+# WCS 配置
+WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_AUTH = os.getenv("wx_auth", "")
+CK_NAME = "wx_opinion"
 PROXY_API = os.getenv("PROXY_API", "")
 PROXY_TYPE = os.getenv("PROXY_TYPE", "http")
 PROXY_RETRY_TIMES = 3
@@ -156,25 +159,25 @@ def sendPlusPlusNotification(title, content):
         print(f"❌ 通知推送失败：{str(e)}")
 
 # ===================== 业务函数 =====================
-def getCode(server):
-    requestUrl = f"http://{server}/login"
-    print(f"📡 [{server}] 正在请求登录服务：{requestUrl}")
+def getCode(openid):
+    print(f"📡 [{openid[:10]}...] 正在通过WCS获取code")
     try:
-        res = requests.get(
-            requestUrl,
-            params={"appId": APPID},
-            timeout=20,
+        res = requests.post(
+            f"{WX_SERVER_URL}/wx/code",
+            json={"appid": APPID, "openid": openid},
+            headers={"auth": WX_AUTH},
+            timeout=60,
             proxies={}
         )
-        res_data = res.json()
-        if res_data.get("err") != 0 or not res_data.get("code"):
-            print(f"❌ [{server}] 返回异常: {res.text[:100]}")
-            return None
-        print(f"✅ [{server}] 获取code成功")
-        return res_data["code"]
+        data = res.json()
+        code = (data.get("data") or {}).get("code") or data.get("code")
+        if code:
+            print(f"✅ [{openid[:10]}...] 获取code成功")
+            return code
+        print(f"❌ [{openid[:10]}...] WCS未返回code: {str(data)[:100]}")
     except Exception as e:
-        print(f"❌ [{server}] 请求异常: {str(e)[:60]}")
-        return None
+        print(f"❌ [{openid[:10]}...] 获取code异常: {str(e)[:60]}")
+    return None
 
 def wxLogin(jsCode, UA, proxies, server):
     headers = {
@@ -252,9 +255,9 @@ def commonRequest(url, method="GET", body=None, sid="", UA="", proxies=None, ser
         return None
 
 # ===================== 单个账号执行 =====================
-async def runAccount(server, globalProxyAgent):
+async def runAccount(openid, globalProxyAgent):
     result = {
-        "server": server,
+        "server": openid[:10]+"...",
         "success": False,
         "signMsg": "",
         "scoreMsg": "",
@@ -265,7 +268,7 @@ async def runAccount(server, globalProxyAgent):
     UA = getUA()
     proxyAgent = globalProxyAgent
     if ENABLE_PER_ACCOUNT_PROXY:
-        proxyAgent = await getValidProxy(server)
+        proxyAgent = await getValidProxy(openid[:10])
         result["proxyStatus"] = "使用专属代理" if proxyAgent else "使用直连"
         await sleep(PROXY_FETCH_INTERVAL)
     
@@ -275,14 +278,14 @@ async def runAccount(server, globalProxyAgent):
         await sleep(startDelay)
         
         # 1. 获取code
-        code = getCode(server)
+        code = getCode(openid)
         if not code:
             result["error"] = "获取code失败"
             print(f"❌ [{server}] 获取code失败")
             return result
         
         # 2. 登录获取sid
-        login_data = wxLogin(code, UA, proxyAgent, server)
+        login_data = wxLogin(code, UA, proxyAgent, openid[:10])
         if not login_data or login_data.get("code") != 200:
             result["error"] = login_data.get("msg", "登录失败") if login_data else "登录无响应"
             print(f"❌ [{server}] 登录失败：{result['error']}")
@@ -340,14 +343,22 @@ async def runAccount(server, globalProxyAgent):
 
 # ===================== 主程序 =====================
 async def main():
-    print('===== 三福动态code签到（双端口+品赞代理+sid鉴权修复版）=====\n')
+    print("===== 三福签到（WCS版）=====
+")
     globalProxyAgent = None
     if not ENABLE_PER_ACCOUNT_PROXY:
         globalProxyAgent = await getValidProxy("全局共用")
     
     results = []
-    for server in SERVERS:
-        res = await runAccount(server, globalProxyAgent)
+    accounts = [x.strip() for x in os.getenv(CK_NAME, "").replace("&", "
+").splitlines() if x.strip()]
+    if not accounts:
+        print("❌ 未检测到 wx_opinion 账号，退出")
+        return
+
+    results = []
+    for openid in accounts:
+        res = await runAccount(openid, globalProxyAgent)
         results.append(res)
         await sleep(2000)
     
