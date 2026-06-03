@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-03 20:00
+> 🕐 最后同步：2026-06-03 22:00
 > 📦 脚本总数：**85** 个
 
 </div>
@@ -106,7 +106,7 @@
 | `nice.js` | 纳爱斯品质生活签到 | 06-01 | 06-03 02:31 | ✨ |
 | `nissin.js` | 日清食品小程序签到 | 06-01 | 06-03 02:39 | ✨ |
 | `niuniuduanju.js` | 牛牛短剧微信小程序签到 | 06-02 | 06-02 09:49 | 💥 |
-| `parkson.js` | parkson 呼啦圈小程序签到 | 06-01 | 06-03 02:55 | ✨ |
+| `parkson.js` | parkson 呼啦圈小程序签到 | 06-01 | 06-03 20:36 | ✨ |
 | `qianjinjiankang.js` | 千金健康生活微信小程序签到 | 06-02 |  | 💥 |
 | `qiaqia.js` | 洽洽会员俱乐部签到 | 06-01 | 06-03 03:03 | ✨ |
 | `roki.js` | 老板电器 ROKI 小程序签到 | 06-01 | 06-03 03:11 | ✨ |
