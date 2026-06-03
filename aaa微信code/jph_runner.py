@@ -82,9 +82,10 @@ def check_sign(token):
 
 
 def detect_gap(bg_b64, slider_b64):
-    bg = np.array(Image.open(io.BytesIO(bytes.fromhex(bg_b64))).convert('L'))
+    import base64 as b64
+    bg = np.array(Image.open(io.BytesIO(b64.b64decode(bg_b64))).convert('L'))
     if slider_b64:
-        sl = np.array(Image.open(io.BytesIO(bytes.fromhex(slider_b64))).convert('L'))
+        sl = np.array(Image.open(io.BytesIO(b64.b64decode(slider_b64))).convert('L'))
         bg_n = (bg - bg.mean()) / (bg.std() + 1e-6)
         sl_n = (sl - sl.mean()) / (sl.std() + 1e-6)
         corr = correlate2d(bg_n, sl_n, mode='valid')
