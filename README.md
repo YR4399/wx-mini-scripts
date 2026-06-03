@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-03 06:00
+> 🕐 最后同步：2026-06-03 08:00
 > 📦 脚本总数：**80** 个
 
 </div>
@@ -27,12 +27,12 @@
 |:-----|:-----|:----:|:----:|:----:|
 | `angel_sign.py` | (无描述) | 06-01 | — | — |
 | `dd1x_sign.js` | 铛铛一下 签到+抽奖 | 06-02 | — | — |
-| `glico_sign.py` | (无描述) | 06-01 | 06-02 08:00 | ✨ |
+| `glico_sign.py` | (无描述) | 06-01 | — | — |
 | `haishibao_sign.py` | (无描述) | 06-01 | 06-02 10:00 | ✨ |
 | `jlc_sign.js` | 嘉立创金豆商城签到 | 06-02 | — | — |
 | `lj_sign.py` | (无描述) | 06-01 | 06-03 00:30 | ✨ |
 | `小紫_sign.py` | (无描述) | 06-01 | 06-03 00:00 | ✨ |
-| `袋鼠mama_sign.py` | (无描述) | 06-01 | 06-02 08:00 | ✨ |
+| `袋鼠mama_sign.py` | (无描述) | 06-01 | — | — |
 
 <div align="center">
 
@@ -137,7 +137,7 @@
 | `BREO.py` | (无描述) | 06-02 | — | — |
 | `ljg_ad_watcher.py` | (无描述) | 06-01 | 06-03 00:00 | ✨ |
 | `quechao.py` | (无描述) | 06-01 | 06-02 10:00 | ✨ |
-| `tpy_lyb.py` | (无描述) | 06-01 | 06-02 07:00 | ✨ |
+| `tpy_lyb.py` | (无描述) | 06-01 | 06-03 07:00 | ✨ |
 | `微信支付优惠券每日领取.py` | (无描述) | 06-02 |  | 💥 |
 | `浓五的酒馆 (2).py` | (无描述) | 06-01 | 06-03 00:50 | ✨ |
 | `溪云严选.py` | (无描述) | 06-01 | 06-02 09:30 | ✨ |
