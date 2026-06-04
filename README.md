@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-04 06:00
+> 🕐 最后同步：2026-06-04 08:00
 > 📦 脚本总数：**84** 个
 
 </div>
@@ -28,12 +28,12 @@
 | `angel_sign.py` | (无描述) | 06-01 |  | 💥 |
 | `cbd_sign.js` | 茶百道签到 | 06-03 |  | 💥 |
 | `dt生活签到.py` | (无描述) | 06-03 |  | 💥 |
-| `glico_sign.py` | (无描述) | 06-01 | 06-03 08:00 | ✨ |
+| `glico_sign.py` | (无描述) | 06-01 | — | — |
 | `haishibao_sign.py` | (无描述) | 06-01 | 06-03 10:00 | ✨ |
 | `jlc_sign.js` | 嘉立创金豆商城签到 | 06-02 | 06-03 00:16 | ✨ |
 | `lj_sign.py` | (无描述) | 06-01 | 06-04 00:30 | ✨ |
 | `小紫_sign.py` | (无描述) | 06-01 | — | — |
-| `袋鼠mama_sign.py` | (无描述) | 06-01 | 06-03 08:00 | ✨ |
+| `袋鼠mama_sign.py` | (无描述) | 06-01 | — | — |
 
 <div align="center">
 
