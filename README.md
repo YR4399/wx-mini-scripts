@@ -2,15 +2,15 @@
 
 <img src="banner.svg" width="100%" />
 
-# ✨ 微信小程序自动化脚本合集 ✨
+# 🌲 微信小程序自动化脚本合集 🦊
 
-**「 每天自动签到，把时间留给二次元 」**
+**「 在数字森林里，让小动物们帮你自动签到 」**
 
 [![WeChat](https://img.shields.io/badge/WeChat-MiniProgram-07C160?style=for-the-badge&logo=wechat&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-04 13:04
+> 🕐 最后同步：2026-06-04 13:13
 > 📦 脚本总数：**84** 个
 
 </div>
@@ -19,7 +19,7 @@
 
 <div align="center">
 
-### 🎀 签到类
+### 🦌 签到类 - 森林居民每日打卡
 
 </div>
 
@@ -37,7 +37,7 @@
 
 <div align="center">
 
-### 🌸 综合自动化类
+### 🐻 综合自动化类 - 森林守护者的日常
 
 </div>
 
@@ -52,7 +52,7 @@
 
 <div align="center">
 
-### 🍼 伊利系列
+### 🍼 伊利系列 - 森林幼儿园
 
 </div>
 
@@ -65,7 +65,7 @@
 
 <div align="center">
 
-### 📱 小程序签到类
+### 🐿️ 小程序签到类 - 森林小动物们
 
 </div>
 
@@ -128,7 +128,7 @@
 
 <div align="center">
 
-### 🏠 其他
+### 🦉 其他 - 森林边缘的守护者
 
 </div>
 
