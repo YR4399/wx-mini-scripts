@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-04 16:03
+> 🕐 最后同步：2026-06-04 18:00
 > 📦 脚本总数：**84** 个
 
 </div>
@@ -33,7 +33,7 @@
 | `jlc_sign.js` | 嘉立创金豆商城 | 06-02 | 06-04 08:30 | 🌸 |
 | `lj_sign.py` | 联家超市 | 06-01 | 06-04 00:30 | 🌸 |
 | `小紫_sign.py` | 小紫有约 | 06-01 | — | 🌱 |
-| `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-01 | 06-04 08:00 | 🌸 |
+| `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-01 | 06-04 16:12 | 🌸 |
 
 <div align="center">
 
@@ -100,7 +100,7 @@
 | `mengxiangjia.js` | 梦想家 | 06-02 |  | 🥀 |
 | `mfd.js` | 麦富迪 | 06-01 | 06-04 01:51 | 🌸 |
 | `mifengjingxishe.js` | 蜜蜂惊喜社 | 06-02 | 06-04 14:36 | 🌸 |
-| `miqilin.js` | 米麒麟 | 06-04 | 06-04 02:07 | 🌸 |
+| `miqilin.js` | 米麒麟 | 06-04 | 06-04 16:28 | 🌸 |
 | `musi.js` | 慕斯 | 06-04 | 06-04 02:15 | 🌸 |
 | `mxbc.js` | 蜜雪冰城 | 06-04 | 06-04 02:23 | 🌸 |
 | `nice.js` | 纳爱斯 | 06-01 | 06-04 02:31 | 🌸 |
@@ -110,7 +110,7 @@
 | `qianjinjiankang.js` | 千金健康 | 06-02 |  | 🥀 |
 | `qiaqia.js` | 洽洽 | 06-01 | 06-04 03:03 | 🌸 |
 | `roki.js` | 老板电器ROKI | 06-01 | 06-04 03:11 | 🌸 |
-| `sinsin.js` | SINSIN | 06-02 |  | 🥀 |
+| `sinsin.js` | SINSIN | 06-02 | 06-04 16:20 | 🌸 |
 | `stokke.js` | Stokke | 06-04 | 06-04 03:19 | 🌸 |
 | `tmj.js` | 谭木匠 | 06-01 | 06-04 03:27 | 🌸 |
 | `tnjy.js` | 天牛旧衣回收 | 06-01 | 06-04 03:35 | 🌸 |
