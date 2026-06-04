@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-04 14:47
+> 🕐 最后同步：2026-06-04 16:00
 > 📦 脚本总数：**84** 个
 
 </div>
@@ -124,7 +124,7 @@
 | `yz19.js` | 拓路者 | 06-01 | 06-04 04:31 | 🌸 |
 | `yz9d.js` | 戴可思 | 06-01 | 06-04 04:39 | 🌸 |
 | `zbs.js` | 植白说 | 06-02 | 06-04 00:22 | 🌸 |
-| `飞蚂蚁旧衣回收.js` | 飞蚂蚁旧衣回收 | 06-03 | 06-04 09:29 | 🌸 |
+| `飞蚂蚁旧衣回收.js` | 飞蚂蚁旧衣回收 | 06-03 | 06-04 15:40 | 🌸 |
 
 <div align="center">
 
