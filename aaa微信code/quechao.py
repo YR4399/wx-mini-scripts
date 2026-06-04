@@ -15,6 +15,19 @@ import random
 import time
 import os
 
+# ========== 推送通知 ==========
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _push_helper import push_notify
+except ImportError:
+    def push_notify(title, content):
+        print(f'⚠️ 推送模块未加载')
+        return False
+# ========== 推送通知结束 ==========
+
+
 # ==================== 配置区域（从环境变量读取） ====================
 _ws_url = os.environ.get('wx_server_url', 'http://127.0.0.1:8787')
 WS_AUTH = os.environ.get('wx_auth', '')
@@ -459,4 +472,28 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import io
+    _log_capture = io.StringIO()
+    _old_stdout = sys.stdout
+    _old_stderr = sys.stderr
+    sys.stdout = _log_capture
+    sys.stderr = _log_capture
+    try:
+        main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f'脚本异常: {e}')
+    finally:
+        sys.stdout = _old_stdout
+        sys.stderr = _old_stderr
+    _logs = _log_capture.getvalue()
+    if _logs.strip():
+        print(_logs)
+        try:
+            push_notify('签到结果', _logs[-2000:])
+        except:
+            pass
+
+
+

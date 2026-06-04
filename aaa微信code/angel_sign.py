@@ -23,6 +23,19 @@ import hashlib
 import logging
 from datetime import datetime
 
+# ========== 推送通知 ==========
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _push_helper import push_notify
+except ImportError:
+    def push_notify(title, content):
+        print(f'⚠️ 推送模块未加载')
+        return False
+# ========== 推送通知结束 ==========
+
+
 # ==== 自动安装依赖 ====
 try:
     import requests
@@ -555,5 +568,31 @@ def main():
     return 0 if success_count > 0 else 1
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    import io
+    _log_capture = io.StringIO()
+    _old_stdout = sys.stdout
+    _old_stderr = sys.stderr
+    sys.stdout = _log_capture
+    sys.stderr = _log_capture
+    try:
+        result = main()
+    except SystemExit as e:
+        result = e.code
+    except Exception as e:
+        print(f'脚本异常: {e}')
+        result = 1
+    finally:
+        sys.stdout = _old_stdout
+        sys.stderr = _old_stderr
+    _logs = _log_capture.getvalue()
+    if _logs.strip():
+        print(_logs)
+        try:
+            push_notify('签到结果', _logs[-2000:])
+        except:
+            pass
+    sys.exit(result or 0)
+
+
+

@@ -1,3 +1,7 @@
+// ========== 推送通知 ==========
+const { sendPushNotify } = require("./_push_helper");
+// ========== 推送通知结束 ==========
+
 /*
 爱玛会员俱乐部 - 自动签到脚本
 变量名：aima
@@ -279,3 +283,16 @@ async function signIn(account, index) {
 })()
   .catch((e) => console.log(e))
   .finally(() => $.done());
+
+
+
+// ========== 自动推送 ==========
+process.on("beforeExit", async () => {
+    try {
+        const logs = global._pushLogs || [];
+        if (logs.length > 0) {
+            await sendPushNotify("aima 签到结果", logs.join("\n"));
+        }
+    } catch(e) {}
+});
+// ========== 自动推送结束 ==========

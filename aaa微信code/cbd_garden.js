@@ -1,3 +1,7 @@
+// ========== 推送通知 ==========
+const { sendPushNotify } = require("./_push_helper");
+// ========== 推送通知结束 ==========
+
 /*
 @Description: 茶百道果园签到+浇水+做任务
 cron: 30 10 * * *
@@ -350,3 +354,16 @@ class Task {
 })()
     .catch((e) => console.log(e))
     .finally(() => $.done());
+
+
+
+// ========== 自动推送 ==========
+process.on("beforeExit", async () => {
+    try {
+        const logs = global._pushLogs || [];
+        if (logs.length > 0) {
+            await sendPushNotify("cbd_garden 签到结果", logs.join("\n"));
+        }
+    } catch(e) {}
+});
+// ========== 自动推送结束 ==========

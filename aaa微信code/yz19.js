@@ -1,3 +1,7 @@
+// ========== 推送通知 ==========
+const { sendPushNotify } = require("./_push_helper");
+// ========== 推送通知结束 ==========
+
 /*
 @Description: tuoluzhe 拓路者小程序签到
 cron: 27 8 * * *
@@ -265,3 +269,16 @@ class Task {
 })()
     .catch((e) => $.log(e.message || e))
     .finally(() => $.done());
+
+
+
+// ========== 自动推送 ==========
+process.on("beforeExit", async () => {
+    try {
+        const logs = global._pushLogs || [];
+        if (logs.length > 0) {
+            await sendPushNotify("yz19 签到结果", logs.join("\n"));
+        }
+    } catch(e) {}
+});
+// ========== 自动推送结束 ==========

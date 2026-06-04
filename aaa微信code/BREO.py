@@ -14,6 +14,19 @@ import sys
 import time
 from pathlib import Path
 
+# ========== 推送通知 ==========
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _push_helper import push_notify
+except ImportError:
+    def push_notify(title, content):
+        print(f'⚠️ 推送模块未加载')
+        return False
+# ========== 推送通知结束 ==========
+
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -391,3 +404,27 @@ if __name__ == "__main__":
             print(f"-------------- 账号 {i} 结束 --------------")
 
         print("\n=============== 所有任务执行完毕 ===============")
+
+if __name__ == "__main__":
+    import io
+    _log_capture = io.StringIO()
+    _old_stdout = sys.stdout
+    _old_stderr = sys.stderr
+    sys.stdout = _log_capture
+    sys.stderr = _log_capture
+    try:
+        main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f'脚本异常: {e}')
+    finally:
+        sys.stdout = _old_stdout
+        sys.stderr = _old_stderr
+    _logs = _log_capture.getvalue()
+    if _logs.strip():
+        print(_logs)
+        try:
+            push_notify('签到结果', _logs[-2000:])
+        except:
+            pass

@@ -1,3 +1,7 @@
+// ========== 推送通知 ==========
+const { sendPushNotify } = require("./_push_helper");
+// ========== 推送通知结束 ==========
+
 /*
 @Description: 戴可思小程序签到
 cron: 25 8 * * *
@@ -261,3 +265,16 @@ class Task {
 })()
     .catch((e) => $.log(e.message || e))
     .finally(() => $.done());
+
+
+
+// ========== 自动推送 ==========
+process.on("beforeExit", async () => {
+    try {
+        const logs = global._pushLogs || [];
+        if (logs.length > 0) {
+            await sendPushNotify("yz9d 签到结果", logs.join("\n"));
+        }
+    } catch(e) {}
+});
+// ========== 自动推送结束 ==========

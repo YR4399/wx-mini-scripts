@@ -1,3 +1,15 @@
+# ========== 推送通知 ==========
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _push_helper import push_notify
+except ImportError:
+    def push_notify(title, content):
+        print(f'⚠️ 推送模块未加载')
+        return False
+# ========== 推送通知结束 ==========
+
 '''
 本脚本仅供学习研究使用，严禁用于任何商业、刷量、违规获利等行为。
 使用本脚本所产生的一切风险、账号封禁、法律责任及后果，均由使用者自行承担。
@@ -164,3 +176,27 @@ if __name__ == "__main__":
     print("小程序链接:http://mx.qrurl.net/h5/wxa/link?sid=26308RmwS5t")
     print("你转存了嘛！https://pan.quark.cn/s/c6416fe69380")
     main()
+
+if __name__ == "__main__":
+    import io
+    _log_capture = io.StringIO()
+    _old_stdout = sys.stdout
+    _old_stderr = sys.stderr
+    sys.stdout = _log_capture
+    sys.stderr = _log_capture
+    try:
+        main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f'脚本异常: {e}')
+    finally:
+        sys.stdout = _old_stdout
+        sys.stderr = _old_stderr
+    _logs = _log_capture.getvalue()
+    if _logs.strip():
+        print(_logs)
+        try:
+            push_notify('签到结果', _logs[-2000:])
+        except:
+            pass
