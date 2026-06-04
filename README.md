@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-04 13:45
+> 🕐 最后同步：2026-06-04 14:00
 > 📦 脚本总数：**84** 个
 
 </div>
@@ -46,7 +46,7 @@
 | `jph_runner.py` | 君品荟 | 06-04 | 06-04 01:31 | 🟢 |
 | `mcyx_wechatserver.py` | 名创优品 | 06-01 | 06-04 09:00 | 🟢 |
 | `monalisa_wechatserver.py` | 蒙娜丽莎 | 06-01 | 06-04 09:00 | 🟢 |
-| `wps小程序.py` | WPS | 06-01 | 06-03 18:58 | 🟢 |
+| `wps小程序.py` | WPS | 06-01 | — | ⚪ |
 | `xmyx_auto_wcs.py` | 小米有品 | 06-01 | 06-04 01:00 | 🟢 |
 | `牛牛短剧.py` | 牛牛短剧 | 06-01 | — | ⚪ |
 
