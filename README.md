@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-05 00:03
+> 🕐 最后同步：2026-06-05 02:00
 > 📦 脚本总数：**86** 个
 
 </div>
@@ -48,7 +48,7 @@
 | `monalisa_wechatserver.py` | 蒙娜丽莎 | 06-04 | 06-04 09:00 | 🌸 |
 | `wps小程序.py` | WPS | 06-04 | 06-04 14:00 | 🌸 |
 | `xmyx_auto_wcs.py` | 小米有品 | 06-04 | 06-04 01:00 | 🌸 |
-| `牛牛短剧.py` | 牛牛短剧 | 06-04 | — | 🌱 |
+| `牛牛短剧.py` | 牛牛短剧 | 06-04 | 06-04 09:09 | 🌸 |
 
 <div align="center">
 
@@ -137,12 +137,12 @@
 |:-----|:-----|:----:|:----:|:----:|
 | `BREO.py` | 倍轻松 | 06-04 | 06-04 01:43 | 🌸 |
 | `_push_helper.py` | (无描述) | 06-04 | — | 🌱 |
-| `ljg_ad_watcher.py` | 乐购 | 06-04 | 06-04 00:00 | 🌸 |
+| `ljg_ad_watcher.py` | 乐购 | 06-04 | 06-05 00:22 | 🌸 |
 | `quechao.py` | 雀巢 | 06-04 | 06-04 10:00 | 🌸 |
 | `tpy_lyb.py` | 太平洋蓝医保 | 06-04 | 06-04 08:48 | 🌸 |
 | `三福.py` | 三福 | 06-04 |  | 🥀 |
 | `优智云家.py` | 优智云家 | 06-04 |  | 🥀 |
-| `奈雪的茶.py` | 奈雪的茶 | 06-04 |  | 🥀 |
+| `奈雪的茶.py` | 奈雪的茶 | 06-04 | 06-05 00:05 | 🌸 |
 | `微信支付优惠券每日领取.py` | 微信支付优惠券 | 06-04 | 06-04 00:00 | 🌸 |
 | `浓五的酒馆 (2).py` | 浓五的酒馆 | 06-04 | 06-04 00:50 | 🌸 |
 | `溪云严选.py` | 溪云严选 | 06-04 | 06-04 09:30 | 🌸 |
