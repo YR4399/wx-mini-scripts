@@ -570,7 +570,7 @@ if __name__ == '__main__':
     if _logs.strip():
         print(_logs)
         try:
-            push_notify('签到结果', _logs[-2000:])
+            push_notify('haishibao_sign 签到结果', _logs[-2000:])
         except:
             pass
 

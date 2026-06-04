@@ -860,7 +860,7 @@ if __name__ == '__main__':
     if _logs.strip():
         print(_logs)
         try:
-            push_notify('签到结果', _logs[-2000:])
+            push_notify('tpy_lyb 签到结果', _logs[-2000:])
         except:
             pass
 

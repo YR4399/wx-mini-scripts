@@ -197,6 +197,6 @@ if __name__ == "__main__":
     if _logs.strip():
         print(_logs)
         try:
-            push_notify('签到结果', _logs[-2000:])
+            push_notify('星韵每小时抽奖0.2配合主脚本运行 签到结果', _logs[-2000:])
         except:
             pass

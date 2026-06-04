@@ -1,14 +1,3 @@
-# ========== 推送通知 ==========
-import sys as _sys
-import os as _os
-_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
 
 # 伊利QQ星 - 多账号自动每日任务（带青龙推送）
 # 环境变量：
@@ -855,27 +844,5 @@ def main():
     print(f"✅ 执行完毕！成功账号数: {success_accounts}/{total_accounts}")
     print("="*40)
 
-
 if __name__ == "__main__":
-    import io
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
-    try:
-        main()
-    except SystemExit:
-        pass
-    except Exception as e:
-        print(f'脚本异常: {e}')
-    finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
-    if _logs.strip():
-        print(_logs)
-        try:
-            push_notify('签到结果', _logs[-2000:])
-        except:
-            pass
+    main()

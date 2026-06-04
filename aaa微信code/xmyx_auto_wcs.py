@@ -690,7 +690,7 @@ if __name__ == "__main__":
     if _logs.strip():
         print(_logs)
         try:
-            push_notify('签到结果', _logs[-2000:])
+            push_notify('xmyx_auto_wcs 签到结果', _logs[-2000:])
         except:
             pass
 
@@ -706,7 +706,7 @@ try:
             if line.strip():
                 push_content.append(line)
     if push_content:
-        push_notify('签到结果', chr(10).join(push_content[-20:]))
+        push_notify('xmyx_auto_wcs 签到结果', chr(10).join(push_content[-20:]))
 except:
     pass
 # ========== 自动推送结束 ==========

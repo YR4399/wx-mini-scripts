@@ -1,14 +1,3 @@
-# ========== 推送通知 ==========
-import sys as _sys
-import os as _os
-_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
 
 """
 星韵(舞心传媒) wechatserver 自动化脚本
@@ -445,27 +434,5 @@ def main():
     send_notify(f"星韵任务完成 {len(results)}个账号", summary)
     log_global("通知发送完成")
 
-
 if __name__ == "__main__":
-    import io
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
-    try:
-        main()
-    except SystemExit:
-        pass
-    except Exception as e:
-        print(f'脚本异常: {e}')
-    finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
-    if _logs.strip():
-        print(_logs)
-        try:
-            push_notify('签到结果', _logs[-2000:])
-        except:
-            pass
+    main()
