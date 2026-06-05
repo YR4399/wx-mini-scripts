@@ -186,29 +186,3 @@ if __name__ == "__main__":
     print("小程序链接:http://mx.qrurl.net/h5/wxa/link?sid=26308RmwS5t")
     print("你转存了嘛！https://pan.quark.cn/s/c6416fe69380")
     main()
-
-if __name__ == "__main__":
-    import io
-
-
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
-    try:
-        main()
-    except SystemExit:
-        pass
-    except Exception as e:
-        print(f'脚本异常: {e}')
-    finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
-    if _logs.strip():
-        print(_logs)
-        try:
-            push_notify('星韵每小时抽奖0.2配合主脚本运行 签到结果', _logs[-2000:])
-        except:
-            pass

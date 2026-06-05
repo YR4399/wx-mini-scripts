@@ -342,7 +342,7 @@ def login_via_wcs(openid, user_key=None):
                 'kdtId': KDT_ID,
                 'extraBizData': {
                     'enterOptions': {
-                        'extKdtId': int(KDT_ID, verify=False),
+                        'extKdtId': int(KDT_ID),
                         'path': 'pages/home/dashboard/index',
                         'query': {},
                         'scene': 1005,

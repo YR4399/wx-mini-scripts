@@ -376,4 +376,4 @@ async def main():
     print('\n===== 所有账号执行完成 =====')
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

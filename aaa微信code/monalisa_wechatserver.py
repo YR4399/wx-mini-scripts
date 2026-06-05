@@ -428,11 +428,12 @@ class MonalisaSign:
                 timeout=30,
             verify=False)
 
-            if submit.get("status") != 1:
-                LOG.error("2captcha 提交失败: %s", submit.get("request", "未知错误"))
+            submit_data = submit.json()
+            if submit_data.get("status") != 1:
+                LOG.error("2captcha 提交失败: %s", submit_data.get("request", "未知错误"))
                 return None
 
-            task_id = submit["request"]
+            task_id = submit_data["request"]
             LOG.debug("2captcha 任务提交成功: %s", task_id)
 
             # 2. 轮询结果（最多120秒）
@@ -444,14 +445,15 @@ class MonalisaSign:
                     timeout=30,
                 verify=False)
 
-                if resp.get("status") == 1:
-                    answer = resp["request"].strip()
+                resp_data = resp.json()
+                if resp_data.get("status") == 1:
+                    answer = resp_data["request"].strip()
                     LOG.debug("2captcha 原始结果: %s", answer)
                     answer = _solve_math_captcha(answer)
                     return answer
 
-                if resp.get("request") != "CAPCHA_NOT_READY":
-                    LOG.error("2captcha 识别失败: %s", resp.get("request", ""))
+                if resp_data.get("request") != "CAPCHA_NOT_READY":
+                    LOG.error("2captcha 识别失败: %s", resp_data.get("request", ""))
                     return None
 
             LOG.error("2captcha 轮询超时 (120s)")
