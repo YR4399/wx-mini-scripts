@@ -271,7 +271,7 @@ self.verify = False
                     json=payload,
                     headers={"auth": self.code_server_auth},
                     timeout=30
-                , verify=False)
+                verify=False)
 
                 if resp.status_code == 200:
                     try:
@@ -456,7 +456,7 @@ self.verify = False
                 json=payload,
                 headers={"auth": self.code_server_auth, "AUTH": self.code_server_auth},
                 timeout=30
-            , verify=False)
+            verify=False)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") and data.get("data", {}).get("encryptKey") and data.get("data", {}).get("iv"):

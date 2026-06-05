@@ -90,7 +90,7 @@ def get_wx_code(openid: str) -> str | None:
                 "Content-Type": "application/json"
             },
             timeout=CODE_TIMEOUT
-        , verify=False)
+        verify=False)
         
         if response.status_code == 200:
             data = response.json()

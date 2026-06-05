@@ -282,7 +282,7 @@ class YouzanClient:
         params.setdefault('access_token', self.access_token)
 
         url = f'{API_BASE}{path}'
-        resp = requests.get(url, params=params, headers=self._make_headers(, verify=False), timeout=15)
+        resp = requests.get(url, params=params, headers=self._make_headers(), timeout=15)
         return resp.json()
 
     def get_checkin_info(self):

@@ -174,7 +174,7 @@ def login_wcs_get_token(openid, user_key=None):
         f'{BASE_URL}/api.php/Login/loginWxXcx',
         params={'code': login_code, 'deviceId': device_id},
         headers={
-            'User-Agent': random_ua(, verify=False),
+            'User-Agent': random_ua(),
             'Referer': f'https://servicewechat.com/{WX_APPID}/2/page-frame.html',
         },
         timeout=15

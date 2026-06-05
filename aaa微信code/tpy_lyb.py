@@ -187,7 +187,7 @@ def ask_deepseek(question_text, options):
                 'max_tokens': 1000,  # r1-distill 需要足够 token 完成推理链
             },
             timeout=30,
-        , verify=False)
+        verify=False)
         data = resp.json()
 
         # 检查 API 错误（402 余额不足、401 鉴权失败等）
@@ -450,7 +450,7 @@ def login_via_wcs(openid, user_key=None):
             resp = requests.post(
                 url,
                 json={'code': login_code},
-                headers=make_headers(, verify=False),
+                headers=make_headers(),
                 timeout=15,
             )
             data = resp.json()

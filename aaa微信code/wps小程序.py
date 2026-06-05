@@ -98,7 +98,7 @@ def get_wx_code(user_key, appid=APPID, retries=3, timeout=60):
                 json={"appid": appid, "openid": user_key},
                 headers={"AUTH": WX_AUTH, "Content-Type": "application/json"},
                 timeout=timeout
-            , verify=False)
+            verify=False)
             data = resp.json()
             if data.get("status") and data.get("data", {}).get("code"):
                 return data["data"]["code"], None

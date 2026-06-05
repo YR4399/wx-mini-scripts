@@ -292,7 +292,7 @@ def send_pushplus(title: str, content: str) -> None:
                 "template": "txt",
             },
             timeout=10,
-        , verify=False)
+        verify=False)
         print("PushPlus 推送成功")
     except Exception as exc:
         print(f"PushPlus 推送失败：{exc}")
@@ -325,7 +325,7 @@ def get_code(openid: str) -> str | None:
             headers={"auth": WX_AUTH},
             timeout=60,
             proxies={"http": None, "https": None},
-        , verify=False)
+        verify=False)
         data = res.json()
         code = (data.get("data") or {}).get("code") or data.get("code")
         if code:
@@ -344,7 +344,7 @@ def get_code(openid: str) -> str | None:
             params={"appId": APPID},
             timeout=20,
             proxies={"http": None, "https": None},
-        , verify=False)
+        verify=False)
         data = res.json()
 
         if data.get("err") != 0 or not data.get("code"):

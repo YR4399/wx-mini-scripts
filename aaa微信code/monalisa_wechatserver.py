@@ -398,7 +398,7 @@ self.verify = False
                 DDDDOCR_API_URL,
                 json={"image": base64_image},
                 timeout=10,
-            , verify=False)
+            verify=False)
             if resp.status_code == 200:
                 data = resp.json()
                 answer = data.get("result") or data.get("data") or data.get("text")
@@ -426,7 +426,7 @@ self.verify = False
                     "json": 1,
                 },
                 timeout=30,
-            , verify=False).json()
+            verify=False)
 
             if submit.get("status") != 1:
                 LOG.error("2captcha 提交失败: %s", submit.get("request", "未知错误"))
@@ -442,7 +442,7 @@ self.verify = False
                     "https://api.2captcha.com/res.php",
                     params={"key": TWOCAPTCHA_API_KEY, "action": "get", "id": task_id, "json": 1},
                     timeout=30,
-                , verify=False).json()
+                verify=False)
 
                 if resp.get("status") == 1:
                     answer = resp["request"].strip()

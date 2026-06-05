@@ -274,13 +274,13 @@ class GlicoClient:
 
     def _post(self, path, data=None, params=None):
         url = f'{API_BASE}{path}'
-        resp = requests.post(url, json=(data or {}, verify=False), params=params,
+        resp = requests.post(url, json=(data or {}), params=params,
                              headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _put(self, path, data=None):
         url = f'{API_BASE}{path}'
-        resp = requests.put(url, json=(data or {}, verify=False),
+        resp = requests.put(url, json=(data or {}),
                             headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
@@ -340,7 +340,7 @@ def login_with_code(code):
     resp = requests.post(
         f'{API_BASE}/auth/signin_oauth_weixin_mp',
         json={'code': code},
-        headers=make_headers(, verify=False),
+        headers=make_headers(),
         timeout=15,
     )
     data = resp.json()

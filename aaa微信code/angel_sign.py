@@ -220,7 +220,7 @@ class WCSClient:
             f'{self.base}{path}',
             headers={'AUTH': self.auth},
             timeout=timeout,
-        , verify=False)
+        verify=False)
         return r.json()
 
     def _post(self, path, data, timeout=60):
@@ -229,7 +229,7 @@ class WCSClient:
             json=data,
             headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
             timeout=timeout,
-        , verify=False)
+        verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -299,7 +299,7 @@ def login_via_wcs(openid, user_key=None):
         resp = requests.post(
             f'{API_BASE}/api/member/app/wxLogin',
             json={'sourceType': 1, 'code': login_code},
-            headers=make_headers(, verify=False),
+            headers=make_headers(),
             timeout=15,
         )
     except requests.RequestException as e:

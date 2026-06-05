@@ -443,7 +443,7 @@ def login_via_wcs(wcs, openid, user_key):
             params={"code": login_code},
             headers=headers,
             timeout=15,
-        , verify=False)
+        verify=False)
         data = resp.json()
     except Exception as e:
         log.error(f"getUserToken 请求失败: {e}")
