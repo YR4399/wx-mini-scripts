@@ -220,7 +220,7 @@ class AdWatcher:
         self.uid = uid
         self.device_id = device_id or _gen_device_id()
         self.rs = requests.Session()
-self.verify = False
+        self.rs.verify = False
         self.total_reward = 0.0
         self.success_count = 0
 

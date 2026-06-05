@@ -120,7 +120,7 @@ def log_account_header(index: int, total: int, server: str) -> None:
 
 def direct_session() -> requests.Session:
     session = requests.Session()
-self.verify = False
+    session.verify = False
     session.trust_env = False
     return session
 

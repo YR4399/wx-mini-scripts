@@ -287,7 +287,7 @@ class WCSClient:
         self.base = WCS_BASE.rstrip("/")
         self.auth = WCS_AUTH
         self.session = requests.Session()
-self.verify = False
+        self.session.verify = False
 
     def get_accounts(self):
         """获取 WCS 中已配置的账号列表"""
@@ -339,7 +339,7 @@ class XingMaHuiClient:
         self.token = token
         self.openid = openid
         self.session = requests.Session()
-self.verify = False
+        self.session.verify = False
 
     def get_sign_info(self):
         """GET /api/member/signin/getSignInfo?signType=1"""

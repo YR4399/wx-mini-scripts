@@ -150,7 +150,7 @@ def check_token_valid(data: dict) -> Tuple[bool, str]:
 
 def create_session() -> requests.Session:
     session = requests.Session()
-self.verify = False
+    session.verify = False
     retry = Retry(total=MAX_RETRIES, backoff_factor=1,
                   status_forcelist=[429, 500, 502, 503, 504],
                   allowed_methods=["GET", "POST"])

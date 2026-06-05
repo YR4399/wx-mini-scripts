@@ -1,4 +1,6 @@
+from __future__ import annotations
 # ========== SSL和代理修复 ==========
+from __future__ import annotations
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -12,7 +14,6 @@ os.environ['https_proxy'] = ''
 """
 微信支付优惠券每日领取脚本 - 修正 APPID
 """
-from __future__ import annotations
 
 import json
 import os
@@ -89,8 +90,8 @@ def get_wx_code(openid: str) -> str | None:
                 "auth": WX_AUTH,
                 "Content-Type": "application/json"
             },
-            timeout=CODE_TIMEOUT
-        verify=False)
+            timeout=CODE_TIMEOUT,
+            verify=False)
         
         if response.status_code == 200:
             data = response.json()
@@ -166,7 +167,7 @@ def main() -> int:
 def run_account(openid: str) -> dict[str, Any]:
     track_id = make_track_id()
     session = requests.Session()
-self.verify = False
+    session.verify = False
 
     # 获取微信小程序 code（使用微信支付 APPID）
     code = get_wx_code(openid)

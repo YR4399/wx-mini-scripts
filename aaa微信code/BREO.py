@@ -51,7 +51,7 @@ APP_BASE = "https://breoplus.breo.cn/breo-app"
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF"
 
 session = requests.Session()
-self.verify = False
+session.verify = False
 
 def read_token_cache():
     try:

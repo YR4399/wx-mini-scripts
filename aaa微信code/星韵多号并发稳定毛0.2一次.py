@@ -81,8 +81,8 @@ def get_wx_code(user_key):
             f"{WX_SERVER}/wx/code",
             json={"appid": APPID, "openid": user_key},
             headers={"AUTH": WX_AUTH, "Content-Type": "application/json"},
-            timeout=20
-        verify=False)
+            timeout=20,
+            verify=False)
         data = resp.json()
         if data.get("status") and data.get("data", {}).get("code"):
             return data["data"]["code"], None
@@ -124,7 +124,7 @@ class XingYunAccount:
         self.index = index
         self.ua = generate_bound_ua(token)
         self.session = requests.Session()
-self.verify = False
+        self.session.verify = False
         self.session.headers.update({
             "Host": "gzpengru.weimbo.com",
             "Connection": "keep-alive",

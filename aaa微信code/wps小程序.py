@@ -97,8 +97,8 @@ def get_wx_code(user_key, appid=APPID, retries=3, timeout=60):
                 f"{WX_SERVER}/wx/code",
                 json={"appid": appid, "openid": user_key},
                 headers={"AUTH": WX_AUTH, "Content-Type": "application/json"},
-                timeout=timeout
-            verify=False)
+                timeout=timeout,
+                verify=False)
             data = resp.json()
             if data.get("status") and data.get("data", {}).get("code"):
                 return data["data"]["code"], None
@@ -164,7 +164,7 @@ class WPSAccount:
         self.uid = ""
         self.nickname = ""
         self.session = requests.Session()
-self.verify = False
+        self.session.verify = False
         self.session.headers.update({
             "User-Agent": UA,
             "Content-Type": "application/json",

@@ -344,7 +344,7 @@ class AngelClient:
         self.user_id = user_id
         self.name    = name
         self.session = requests.Session()
-self.verify = False
+    self.rs.verify = False
 
     def _headers(self):
         h = make_headers()

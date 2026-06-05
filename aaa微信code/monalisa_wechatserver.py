@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ========== SSL和代理修复 ==========
 import urllib3
 urllib3.disable_warnings()
@@ -22,7 +23,6 @@ os.environ['https_proxy'] = ''
   MONALISA_DEBUG   - 设为 1 开启调试日志
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging
@@ -230,7 +230,7 @@ class MonalisaSign:
     def __init__(self, user_key: str):
         self.user_key = user_key
         self.session = requests.Session()
-self.verify = False
+        self.session.verify = False
         self.session.headers.update(HEADERS)
 
         self.token_str = None

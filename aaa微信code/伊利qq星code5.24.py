@@ -231,7 +231,7 @@ class YiLiQQStar:
 
         for i in range(retry):
             s = requests.Session()
-self.verify = False
+            s.verify = False
             try:
                 r = s.post(
                     self.base_url, headers=self.headers,
@@ -270,7 +270,7 @@ self.verify = False
                     f"{self.code_server_url}/wx/code",
                     json=payload,
                     headers={"auth": self.code_server_auth},
-                    timeout=30
+                    timeout=30,
                 verify=False)
 
                 if resp.status_code == 200:
@@ -426,9 +426,9 @@ self.verify = False
             resp = requests.post(
                 f"{base_url}{url}",
                 headers=headers,
-                data=json.dumps({"RequestPack": json.dumps(request_pack, separators=(',', ':', verify=False), ensure_ascii=False)}, separators=(',', ':'), ensure_ascii=False),
-                timeout=30
-            )
+                data=json.dumps({"RequestPack": json.dumps(request_pack, separators=(',', ':'), ensure_ascii=False)}, separators=(',', ':'), ensure_ascii=False),
+                timeout=30,
+                verify=False)
             if resp.status_code == 200:
                 text = resp.text.strip()
                 if text.startswith('<?xml') or text.startswith('<string'):
@@ -455,7 +455,7 @@ self.verify = False
                 f"{self.code_server_url}/wx/encrypt",
                 json=payload,
                 headers={"auth": self.code_server_auth, "AUTH": self.code_server_auth},
-                timeout=30
+                timeout=30,
             verify=False)
             if resp.status_code == 200:
                 data = resp.json()

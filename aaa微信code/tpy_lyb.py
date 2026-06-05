@@ -500,7 +500,7 @@ class LybClient:
         self.unionid = unionid
         self.remark  = remark
         self.rs      = requests.Session()
-self.verify = False
+        self.rs.verify = False
         self.total_score = 0
 
     def _auth_headers(self):

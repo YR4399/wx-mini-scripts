@@ -162,7 +162,7 @@ class ZhenXiClient:
         self.access_token = access_token
         self.mobile = mobile
         self.rs = requests.Session()
-self.verify = False
+        self.rs.verify = False
         self.user_info = None
         # 统计
         self.draw_results = []
