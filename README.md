@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-05 22:03
-> 📦 脚本总数：**88** 个
+> 🕐 最后同步：2026-06-06 00:00
+> 📦 脚本总数：**90** 个
 
 </div>
 
@@ -92,6 +92,7 @@
 | `hezj.js` | 海尔智家 | 06-05 | 06-05 07:48 | 🌸 |
 | `hrj.js` | 好人家 | 06-05 | 06-05 10:20 | 🌸 |
 | `iqoo.js` | iQOO社区 | 06-05 | — | 🌱 |
+| `jingjianx_all.js` | jingjianx 小程序统一登录查询签到 | 06-06 | — | 🌱 |
 | `jingyoujia.js` | 劲友家 | 06-05 | 06-05 09:00 | 🌸 |
 | `juziyingtao.js` | 橘子樱桃 | 06-05 | 06-05 10:20 | 🌸 |
 | `jyxe.js` | 旧衣小二 | 06-05 | 06-05 15:08 | 🌸 |
@@ -122,6 +123,7 @@
 | `wugenvboshi.js` | 五个女博士 | 06-05 | 06-05 15:16 | 🌸 |
 | `yingshujufeng.js` | 影视飓风 | 06-05 | 06-05 12:04 | 🌸 |
 | `ykb.js` | 盈客宝 | 06-05 | 06-05 13:16 | 🌸 |
+| `ykb_all.js` | ykb_huiyuan 小程序统一登录查询签到 | 06-06 | — | 🌱 |
 | `yunduodingding.js` | 云朵叮叮 | 06-05 | 06-05 17:53 | 🌸 |
 | `yz19.js` | 拓路者 | 06-05 | 06-05 13:48 | 🌸 |
 | `yz9d.js` | 戴可思 | 06-05 | 06-05 14:44 | 🌸 |
