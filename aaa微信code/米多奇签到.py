@@ -20,6 +20,7 @@ os.environ['https_proxy'] = ''
 
 import sys
 import json
+import time
 import requests
 
 # ========== 推送通知 ==========
@@ -35,6 +36,7 @@ except ImportError:
 APPID = 'wx876a1475cd1778ed'
 KDT_ID = '184183627'
 CHECKIN_ID = '6878521'
+API_BASE = 'https://mxa.miduoqi.com/api'  # 米多奇API域名
 
 WX_SERVER_URL = os.environ.get('wx_server_url', '')
 WX_AUTH = os.environ.get('wx_auth', '')
@@ -70,49 +72,52 @@ def get_code(openid):
         return None
 
 
-def get_operatedata(openid):
-    """从WCS获取手机号授权数据"""
+def login(code):
+    """有赞平台登录 - 使用 /passport/general/auth.json（不需要encryptedData）"""
     try:
-        resp = requests.post(
-            f'{WX_SERVER_URL}/wx/operatedata',
-            json={'appid': APPID, 'openid': openid},
-            headers={'auth': WX_AUTH},
-            timeout=60,
-            proxies={'http': None, 'https': None},
-            verify=False
-        )
-        data = resp.json()
-        if data.get('status') is True or data.get('code') == 0:
-            return data.get('data', {})
-        return None
-    except Exception as e:
-        print(f'[WCS] 获取operatedata异常: {e}')
-        return None
-
-
-def login(code, encrypted_data, iv):
-    """有赞平台登录"""
-    try:
+        import uuid as _uuid
         headers = {
             'User-Agent': UA,
             'Content-Type': 'application/json',
             'Accept': '*/*',
+            'xweb_xhr': '1',
+            'Referer': f'https://servicewechat.com/{APPID}/39/page-frame.html',
+            'Sec-Fetch-Site': 'cross-site',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'Extra-Data': json.dumps({
+                'sid': '',
+                'version': '2.232.5.101',
+                'clientType': 'weapp-miniprogram',
+                'client': 'weapp',
+                'bizEnv': '',
+                'uuid': str(_uuid.uuid4()).replace('-', '')[:24],
+                'ftime': int(time.time() * 1000),
+            }),
         }
         payload = {
-            'errMsg': 'getPhoneNumber:ok',
-            'encryptedData': encrypted_data,
-            'iv': iv,
-            'code': code,
-            'downgrade': False,
-            'bizDataMap': {'from_params': ''},
-            'platformName': 'weapp',
-            'source': 2,
-            'signed': True,
             'appId': APPID,
-            'kdtId': int(KDT_ID),
+            'code': code,
+            'platformName': 'weapp',
+            'signature': 'windows',
+            'clientBiz': 'weapp_wsc',
+            'inWsc': True,
+            'kdtId': KDT_ID,
+            'extraBizData': {
+                'enterOptions': {
+                    'extKdtId': int(KDT_ID),
+                    'path': 'pages/home/dashboard/index',
+                    'query': {},
+                    'scene': 1005,
+                    'referrerInfo': {},
+                    'apiCategory': 'default',
+                },
+                'guideBizDataMap': {'from_params': ''},
+                'sceneData': {},
+            },
         }
         resp = requests.post(
-            f'https://uic.youzan.com/passport/general/login/auth.json?kdt_id={KDT_ID}&app_id={APPID}',
+            f'https://uic.youzan.com/passport/general/auth.json?kdt_id={KDT_ID}&app_id={APPID}',
             json=payload,
             headers=headers,
             timeout=20,
@@ -120,23 +125,35 @@ def login(code, encrypted_data, iv):
             verify=False
         )
         data = resp.json()
-        if data.get('code') == 0:
-            d = data.get('data', {})
-            return d.get('accessToken'), d.get('nickname', ''), d.get('mobile', '')
-        print(f'[登录] 失败: {data.get("msg", data)}')
-        return None, None, None
+        if data.get('code') == 0 and data.get('data'):
+            d = data['data']
+            return d.get('accessToken'), d.get('sessionId', '')
+        print(f'[登录] 失败: code={data.get("code")} msg={data.get("msg", data)}')
+        return None, None
     except Exception as e:
         print(f'[登录] 异常: {e}')
-        return None, None, None
+        return None, None
 
 
-def checkin(access_token):
+def checkin(access_token, session_id=''):
     """签到"""
     try:
+        import uuid as _uuid
         headers = {
             'User-Agent': UA,
             'Accept': '*/*',
+            'xweb_xhr': '1',
+            'Referer': f'https://servicewechat.com/{APPID}/39/page-frame.html',
         }
+        if session_id:
+            headers['Extra-Data'] = json.dumps({
+                'sid': session_id,
+                'version': '2.232.5.101',
+                'client': 'weapp',
+                'bizEnv': 'wsc',
+                'uuid': str(_uuid.uuid4()).replace('-', '')[:24],
+                'ftime': int(time.time() * 1000),
+            })
         resp = requests.get(
             f'https://h5.youzan.com/wscump/checkin/checkinV2.json',
             params={
@@ -162,7 +179,7 @@ def checkin(access_token):
                 print(f'签到: {d.get("desc", "未知结果")}')
                 return False
         # 已签到
-        if '已签到' in str(data.get('msg', '')) or data.get('code') == 1:
+        if '已达最大参与次数' in str(data.get('msg', '')) or '已签到' in str(data.get('msg', '')):
             print('今日已签到')
             return True
         print(f'签到失败: {data.get("msg", data)}')
@@ -205,33 +222,20 @@ def run_account(openid):
         return
     print(f'[WCS] 获取code成功: {mask_str(code)}')
     
-    # 2. 获取手机号授权数据
-    op_data = get_operatedata(openid)
-    if not op_data:
-        print('❌ 获取手机号授权数据失败')
-        return
-    
-    encrypted_data = op_data.get('encryptedData', '')
-    iv = op_data.get('iv', '')
-    if not encrypted_data or not iv:
-        print('❌ 授权数据不完整')
-        return
-    print(f'[WCS] 获取授权数据成功')
-    
-    # 3. 登录
-    access_token, nickname, mobile = login(code, encrypted_data, iv)
+    # 2. 登录（不需要encryptedData）
+    access_token, session_id = login(code)
     if not access_token:
         print('❌ 登录失败')
         return
-    print(f'[登录] 成功: {nickname} {mask_str(mobile)}')
+    print(f'[登录] 成功')
     
-    # 4. 获取签到信息
+    # 3. 获取签到信息
     info = get_checkin_info(access_token)
     if info:
         print(f'[签到] 活动ID: {info.get("checkInId")}')
     
-    # 5. 签到
-    checkin(access_token)
+    # 4. 签到（需要session_id）
+    checkin(access_token, session_id)
 
 
 def main():
