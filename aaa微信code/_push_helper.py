@@ -22,11 +22,6 @@ def push_notify(title, content):
     # 尝试使用 PushPlus
     if PLUSPLUS_TOKEN:
         try:
-            # 清除代理
-            env = os.environ.copy()
-            for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
-                env.pop(k, None)
-            
             resp = requests.post('https://www.pushplus.plus/send', json={
                 'token': PLUSPLUS_TOKEN,
                 'title': title,

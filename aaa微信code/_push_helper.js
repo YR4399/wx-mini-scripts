@@ -17,7 +17,7 @@ async function sendPushNotify(title, content) {
             template: 'txt'
         }, { 
             timeout: 10000,
-            proxy: false  // 禁用代理
+            proxy: false
         });
         console.log('✅ PushPlus推送成功: ' + title);
         return true;
