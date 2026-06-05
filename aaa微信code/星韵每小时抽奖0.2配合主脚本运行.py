@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # ========== 推送通知 ==========
 import sys
 import os
@@ -83,7 +93,7 @@ class SingleLottery:
                 headers=self.headers, 
                 json=payload, 
                 timeout=10
-            )
+            , verify=False)
             return response.json() if response.status_code == 200 else None
         except Exception as e:
             self.log(f"请求异常: {str(e)}")
@@ -179,6 +189,8 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

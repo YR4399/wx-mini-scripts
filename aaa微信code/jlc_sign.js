@@ -24,6 +24,15 @@ let ckName = "wx_opinion";
 
 // ====== WCS 初始化 ======
 const WeChatServer = require("./wcs.js");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
     appid: MINI_APP_ID,

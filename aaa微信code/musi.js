@@ -112,6 +112,15 @@ class Task {
 
     MD5_Encrypt(str) {
         const crypto = require("crypto")
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
         return crypto.createHash('md5').update(str).digest('hex');
     }
     async getUserInfo() {

@@ -14,6 +14,15 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 
 const MINI_APP_ID = "wxba70fb8e3eb3aab9";
 const API_BASE = process.env.roki_api_base || "https://aio.myroki.com/api/v1/mini-app";

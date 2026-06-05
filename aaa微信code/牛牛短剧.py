@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # ========== 推送通知 ==========
 import sys
 import os
@@ -140,6 +150,7 @@ def check_token_valid(data: dict) -> Tuple[bool, str]:
 
 def create_session() -> requests.Session:
     session = requests.Session()
+self.verify = False
     retry = Retry(total=MAX_RETRIES, backoff_factor=1,
                   status_forcelist=[429, 500, 502, 503, 504],
                   allowed_methods=["GET", "POST"])
@@ -240,7 +251,7 @@ def get_wx_code(userkey: str, account: AccountConfig) -> Optional[str]:
     for attempt in range(3):
         try:
             resp = requests.post(url, json=payload, headers=headers,
-                                 timeout=REQUEST_TIMEOUT)
+                                 timeout=REQUEST_TIMEOUT, verify=False)
             data = resp.json()
             code = data.get("data", {}).get("code") or data.get("code")
             if code and code != "":
@@ -1078,6 +1089,8 @@ def main():
 
 if __name__ == "__main__":
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

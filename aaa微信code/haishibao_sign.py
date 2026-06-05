@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 #!/usr/bin/env python3
 """
 孩视宝签到脚本 (有赞零售平台)
@@ -180,12 +190,12 @@ class WCSClient:
     def _post(self, path, data, timeout=60):
         r = requests.post(f'{self.base}{path}', json=data,
                           headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
-                          timeout=timeout)
+                          timeout=timeout, verify=False)
         return r.json()
 
     def _get(self, path, timeout=30):
         r = requests.get(f'{self.base}{path}',
-                         headers={'AUTH': self.auth}, timeout=timeout)
+                         headers={'AUTH': self.auth}, timeout=timeout, verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -272,7 +282,7 @@ class YouzanClient:
         params.setdefault('access_token', self.access_token)
 
         url = f'{API_BASE}{path}'
-        resp = requests.get(url, params=params, headers=self._make_headers(), timeout=15)
+        resp = requests.get(url, params=params, headers=self._make_headers(, verify=False), timeout=15)
         return resp.json()
 
     def get_checkin_info(self):
@@ -334,7 +344,7 @@ def login_via_wcs(openid, user_key=None):
                 'kdtId': KDT_ID,
                 'extraBizData': {
                     'enterOptions': {
-                        'extKdtId': int(KDT_ID),
+                        'extKdtId': int(KDT_ID, verify=False),
                         'path': 'pages/home/dashboard/index',
                         'query': {},
                         'scene': 1005,
@@ -552,6 +562,8 @@ access_token 从抓包数据中获取:
 
 if __name__ == '__main__':
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

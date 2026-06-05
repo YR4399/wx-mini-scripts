@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # ========== 推送通知 ==========
 import sys
 import os
@@ -107,13 +117,13 @@ class WCSClient:
 
     def _get(self, path, timeout=30):
         r = requests.get(f'{self.base}{path}',
-                         headers={'AUTH': self.auth}, timeout=timeout)
+                         headers={'AUTH': self.auth}, timeout=timeout, verify=False)
         return r.json()
 
     def _post(self, path, data, timeout=60):
         r = requests.post(f'{self.base}{path}', json=data,
                           headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
-                          timeout=timeout)
+                          timeout=timeout, verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -164,7 +174,7 @@ def login_wcs_get_token(openid, user_key=None):
         f'{BASE_URL}/api.php/Login/loginWxXcx',
         params={'code': login_code, 'deviceId': device_id},
         headers={
-            'User-Agent': random_ua(),
+            'User-Agent': random_ua(, verify=False),
             'Referer': f'https://servicewechat.com/{WX_APPID}/2/page-frame.html',
         },
         timeout=15
@@ -210,6 +220,7 @@ class AdWatcher:
         self.uid = uid
         self.device_id = device_id or _gen_device_id()
         self.rs = requests.Session()
+self.verify = False
         self.total_reward = 0.0
         self.success_count = 0
 
@@ -468,6 +479,8 @@ def main():
 
 if __name__ == '__main__':
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

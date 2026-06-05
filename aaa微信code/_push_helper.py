@@ -32,7 +32,7 @@ def push_notify(title, content):
                 'title': title,
                 'content': content,
                 'template': 'txt'
-            }, timeout=10, proxies={'http': None, 'https': None})
+            }, timeout=10, proxies={'http': None, 'https': None}, verify=False)
             result = resp.json()
             if result.get('code') == 200:
                 print(f'✅ PushPlus推送成功: {title}')

@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 #!/usr/bin/env python3
 """
 微信支付优惠券每日领取脚本 - 修正 APPID
@@ -80,7 +90,7 @@ def get_wx_code(openid: str) -> str | None:
                 "Content-Type": "application/json"
             },
             timeout=CODE_TIMEOUT
-        )
+        , verify=False)
         
         if response.status_code == 200:
             data = response.json()
@@ -156,6 +166,7 @@ def main() -> int:
 def run_account(openid: str) -> dict[str, Any]:
     track_id = make_track_id()
     session = requests.Session()
+self.verify = False
 
     # 获取微信小程序 code（使用微信支付 APPID）
     code = get_wx_code(openid)
@@ -404,6 +415,8 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

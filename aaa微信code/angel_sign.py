@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 #!/usr/bin/env python3
 """
 安吉尔 (Angel) 小程序自动签到脚本
@@ -210,7 +220,7 @@ class WCSClient:
             f'{self.base}{path}',
             headers={'AUTH': self.auth},
             timeout=timeout,
-        )
+        , verify=False)
         return r.json()
 
     def _post(self, path, data, timeout=60):
@@ -219,7 +229,7 @@ class WCSClient:
             json=data,
             headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
             timeout=timeout,
-        )
+        , verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -289,7 +299,7 @@ def login_via_wcs(openid, user_key=None):
         resp = requests.post(
             f'{API_BASE}/api/member/app/wxLogin',
             json={'sourceType': 1, 'code': login_code},
-            headers=make_headers(),
+            headers=make_headers(, verify=False),
             timeout=15,
         )
     except requests.RequestException as e:
@@ -334,6 +344,7 @@ class AngelClient:
         self.user_id = user_id
         self.name    = name
         self.session = requests.Session()
+self.verify = False
 
     def _headers(self):
         h = make_headers()
@@ -570,6 +581,8 @@ def main():
 
 if __name__ == "__main__":
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

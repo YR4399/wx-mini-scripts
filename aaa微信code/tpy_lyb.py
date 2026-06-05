@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # -*- coding: utf-8 -*-
 """
 太平洋蓝医保 (cpic.com.cn) - 每日签到 & 健康问答自动化脚本
@@ -177,7 +187,7 @@ def ask_deepseek(question_text, options):
                 'max_tokens': 1000,  # r1-distill 需要足够 token 完成推理链
             },
             timeout=30,
-        )
+        , verify=False)
         data = resp.json()
 
         # 检查 API 错误（402 余额不足、401 鉴权失败等）
@@ -305,14 +315,14 @@ class WCSClient:
 
     def _get(self, path, timeout=30):
         r = requests.get(f'{self.base}{path}',
-                         headers={'AUTH': self.auth}, timeout=timeout)
+                         headers={'AUTH': self.auth}, timeout=timeout, verify=False)
         return r.json()
 
     def _post(self, path, data, timeout=60):
         r = requests.post(f'{self.base}{path}', json=data,
                           headers={'AUTH': self.auth,
                                    'Content-Type': 'application/json'},
-                          timeout=timeout)
+                          timeout=timeout, verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -440,7 +450,7 @@ def login_via_wcs(openid, user_key=None):
             resp = requests.post(
                 url,
                 json={'code': login_code},
-                headers=make_headers(),
+                headers=make_headers(, verify=False),
                 timeout=15,
             )
             data = resp.json()
@@ -490,6 +500,7 @@ class LybClient:
         self.unionid = unionid
         self.remark  = remark
         self.rs      = requests.Session()
+self.verify = False
         self.total_score = 0
 
     def _auth_headers(self):
@@ -737,7 +748,7 @@ def main():
     # 心跳（与原 Node 版一致）
     try:
         requests.get('http://yu.lihailong.top:38000/file.txt',
-                     timeout=5)
+                     timeout=5, verify=False)
     except Exception:
         pass
 
@@ -842,6 +853,8 @@ def main():
 
 if __name__ == '__main__':
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

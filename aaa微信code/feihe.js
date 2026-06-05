@@ -21,6 +21,15 @@ const axios = require("axios");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 
 const MINI_APP_ID = "wx4205ec55b793245e";
 const API_BASE = "https://www.feihevip.com";

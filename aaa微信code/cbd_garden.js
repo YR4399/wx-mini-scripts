@@ -11,6 +11,15 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Env } = require("../tools/env.js");
 const axios = require("axios");
 const crypto = require("crypto");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 axios.defaults.proxy = false;
 
 const $ = new Env("茶百道果园");

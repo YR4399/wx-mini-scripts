@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 #by:哆啦A梦
 #入口:http://mx.qrurl.net/h5/wxa/link?sid=26407uif5Oq
 #wx_opinion变量填写wx_server里的openid/账号标识，多账号换行分割
@@ -41,6 +51,7 @@ APP_BASE = "https://breoplus.breo.cn/breo-app"
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF"
 
 session = requests.Session()
+self.verify = False
 
 def read_token_cache():
     try:
@@ -202,7 +213,7 @@ def get_token_for_account(account_id, index):
 
 def get_random_one_word():
     try:
-        response = requests.get("https://uapis.cn/api/say")
+        response = requests.get("https://uapis.cn/api/say", verify=False)
         if response.status_code == 200:
             return response.text.strip()
         else:
@@ -215,7 +226,7 @@ def get_proclamation():
     primary_url = "https://github.com/3288588344/toulu/raw/refs/heads/main/tl.txt"
     backup_url = "https://tfapi.cn/TL/tl.json"
     try:
-        response = requests.get(primary_url, timeout=10)
+        response = requests.get(primary_url, timeout=10, verify=False)
         if response.status_code == 200:
             print("\n" + "=" * 50)
             print("📢 公告信息")
@@ -228,7 +239,7 @@ def get_proclamation():
         print(f"获取公告时发生错误: {e}, 尝试备用链接...")
 
     try:
-        response = requests.get(backup_url, timeout=10)
+        response = requests.get(backup_url, timeout=10, verify=False)
         if response.status_code == 200:
             print("\n" + "=" * 50)
             print("📢 公告信息")
@@ -254,7 +265,7 @@ def post_to_breo(token, content, title):
         "topicText": ""
     }
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
+        response = requests.post(url, headers=headers, data=json.dumps(data, verify=False))
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
@@ -279,7 +290,7 @@ def collect_post(token, post_id):
         "postId": post_id
     }
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
+        response = requests.post(url, headers=headers, data=json.dumps(data, verify=False))
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
@@ -305,7 +316,7 @@ def comment_post(token, post_id):
             "postId": post_id
         }
         try:
-            response = requests.post(url, headers=headers, data=json.dumps(data))
+            response = requests.post(url, headers=headers, data=json.dumps(data, verify=False))
             if response.status_code == 200:
                 result = response.json()
                 if result.get("success", False):
@@ -327,7 +338,7 @@ def browse_mall(token):
     url = "https://breoplus.breo.cn/breo-app/user/po-task-info/mall"
     headers = breo_task_headers(token)
     try:
-        response = requests.post(url, headers=headers)
+        response = requests.post(url, headers=headers, verify=False)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
@@ -346,7 +357,7 @@ def punch_in(token):
     url = "https://breoplus.breo.cn/breo-app/user/po-task-info/punch"
     headers = breo_task_headers(token)
     try:
-        response = requests.post(url, headers=headers)
+        response = requests.post(url, headers=headers, verify=False)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
@@ -407,6 +418,8 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

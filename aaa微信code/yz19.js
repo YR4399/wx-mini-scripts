@@ -13,6 +13,15 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 
 const MINI_APP_ID = "wx19afe76fc30d5c37";
 const CLIENT_BIZ = "weapp_wsc";

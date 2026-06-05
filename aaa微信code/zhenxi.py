@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # -*- coding: utf-8 -*-
 """
 伊利甄稀冰淇淋 - 免单券/会员券自动抽奖 & 领取脚本 v2
@@ -115,13 +125,13 @@ class WCSClient:
 
     def _get(self, path, timeout=30):
         r = requests.get(f'{self.base}{path}',
-                         headers={'AUTH': self.auth}, timeout=timeout)
+                         headers={'AUTH': self.auth}, timeout=timeout, verify=False)
         return r.json()
 
     def _post(self, path, data, timeout=60):
         r = requests.post(f'{self.base}{path}', json=data,
                           headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
-                          timeout=timeout)
+                          timeout=timeout, verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -152,6 +162,7 @@ class ZhenXiClient:
         self.access_token = access_token
         self.mobile = mobile
         self.rs = requests.Session()
+self.verify = False
         self.user_info = None
         # 统计
         self.draw_results = []
@@ -465,6 +476,8 @@ def main():
 
 if __name__ == '__main__':
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

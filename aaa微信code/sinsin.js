@@ -21,6 +21,15 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const querystring = require("querystring");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 
 const MINI_APP_ID = "wxdc40acf03fc92e6f";
 const KDT_ID = "126240508";

@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # ========== 推送通知 ==========
 import sys
 import os
@@ -277,6 +287,7 @@ class WCSClient:
         self.base = WCS_BASE.rstrip("/")
         self.auth = WCS_AUTH
         self.session = requests.Session()
+self.verify = False
 
     def get_accounts(self):
         """获取 WCS 中已配置的账号列表"""
@@ -328,6 +339,7 @@ class XingMaHuiClient:
         self.token = token
         self.openid = openid
         self.session = requests.Session()
+self.verify = False
 
     def get_sign_info(self):
         """GET /api/member/signin/getSignInfo?signType=1"""
@@ -431,7 +443,7 @@ def login_via_wcs(wcs, openid, user_key):
             params={"code": login_code},
             headers=headers,
             timeout=15,
-        )
+        , verify=False)
         data = resp.json()
     except Exception as e:
         log.error(f"getUserToken 请求失败: {e}")
@@ -454,21 +466,21 @@ def login_via_wcs(wcs, openid, user_key):
         requests.post(
             f"{CRM_BASE}/saveUserInfo",
             json={"openId": user_openid, "unionId": user_unionid},
-            headers=_make_crm_headers(token, body_data={"openId": user_openid, "unionId": user_unionid}),
+            headers=_make_crm_headers(token, body_data={"openId": user_openid, "unionId": user_unionid}, verify=False),
             timeout=10,
         )
         # findIsAuthorized
         requests.post(
             f"{CRM_BASE}/findIsAuthorized",
             json={},
-            headers=_make_crm_headers(token, body_data={}),
+            headers=_make_crm_headers(token, body_data={}, verify=False),
             timeout=10,
         )
         # memberQuery
         requests.post(
             f"{CRM_BASE}/memberQuery",
             json={"wxCode": login_code, "querySource": "0"},
-            headers=_make_crm_headers(token, body_data={"wxCode": login_code, "querySource": "0"}),
+            headers=_make_crm_headers(token, body_data={"wxCode": login_code, "querySource": "0"}, verify=False),
             timeout=10,
         )
     except Exception as e:
@@ -479,7 +491,7 @@ def login_via_wcs(wcs, openid, user_key):
         requests.post(
             f"{API_BASE}/miniProgram/refreshMemberInfo",
             json={},
-            headers=_make_biz_headers(token, body_data={}),
+            headers=_make_biz_headers(token, body_data={}, verify=False),
             timeout=10,
         )
     except Exception:
@@ -672,6 +684,8 @@ def main():
 
 if __name__ == "__main__":
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

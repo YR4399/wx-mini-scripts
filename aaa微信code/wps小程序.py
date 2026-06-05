@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 
 """
 WPS小程序签到+浏览任务+抽奖自动化脚本
@@ -34,6 +44,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+
 
 # ==================== 配置 ====================
 MAX_WORKERS = 1
@@ -86,7 +98,7 @@ def get_wx_code(user_key, appid=APPID, retries=3, timeout=60):
                 json={"appid": appid, "openid": user_key},
                 headers={"AUTH": WX_AUTH, "Content-Type": "application/json"},
                 timeout=timeout
-            )
+            , verify=False)
             data = resp.json()
             if data.get("status") and data.get("data", {}).get("code"):
                 return data["data"]["code"], None
@@ -152,6 +164,7 @@ class WPSAccount:
         self.uid = ""
         self.nickname = ""
         self.session = requests.Session()
+self.verify = False
         self.session.headers.update({
             "User-Agent": UA,
             "Content-Type": "application/json",
@@ -460,7 +473,7 @@ def send_notify(title, content):
     if not notify_url:
         return
     try:
-        requests.post(notify_url, json={"title": title, "content": content}, timeout=10)
+        requests.post(notify_url, json={"title": title, "content": content}, timeout=10, verify=False)
     except Exception:
         pass
 

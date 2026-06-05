@@ -20,6 +20,15 @@ const $ = new Env("牛牛短剧微信小程序签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 
 const MINI_APP_ID = "wxcb95401f250e9a53";
 const API_BASE = "https://api.tianjinzhitongdaohe.com/sqx_fast";

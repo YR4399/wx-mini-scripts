@@ -14,6 +14,15 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
+// ========== SSL和代理修复 ==========
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+// ========== SSL和代理修复结束 ==========
+
+
 
 const MINI_APP_ID = "wxc6f9e3b38b25b840";
 const PAGE_VERSION = "44";

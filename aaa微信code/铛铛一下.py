@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -37,6 +47,8 @@ from typing import Any, Dict, List, Tuple
 from urllib.parse import quote
 
 import requests
+
+
 
 
 APP_NAME = "铛铛一下旧衣服回收小程序"
@@ -127,6 +139,7 @@ def log_account_header(index: int, total: int, server: str = "") -> None:
 
 def direct_session() -> requests.Session:
     session = requests.Session()
+self.verify = False
     session.trust_env = False
     return session
 
@@ -207,7 +220,7 @@ def validate_proxy(proxies: Dict[str, str] | None) -> Tuple[bool, str]:
         return False, ""
 
     try:
-        response = requests.get(PROXY_VALIDATE_URL, proxies=proxies, timeout=15)
+        response = requests.get(PROXY_VALIDATE_URL, proxies=proxies, timeout=15, verify=False)
         if response.status_code == 200:
             try:
                 ip = response.json().get("origin", "未知")
@@ -293,7 +306,7 @@ def send_pushplus(title: str, content: str) -> None:
                 "template": "txt",
             },
             timeout=10,
-        )
+        , verify=False)
         print("✅ [PushPlus] 推送成功")
     except Exception as exc:
         print(f"❌ [PushPlus] 推送失败: {exc}")
@@ -308,7 +321,7 @@ def get_code(openid: str) -> str | None:
             headers={"auth": WX_AUTH},
             timeout=60,
             proxies={"http": None, "https": None},
-        )
+        , verify=False)
         data = response.json()
         code = (data.get("data") or {}).get("code") or data.get("code")
         if code:

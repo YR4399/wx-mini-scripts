@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 
 """
 星韵(舞心传媒) wechatserver 自动化脚本
@@ -20,6 +30,8 @@ import sys
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
 
 # ==================== 配置 ====================
 MAX_WORKERS = 5
@@ -70,7 +82,7 @@ def get_wx_code(user_key):
             json={"appid": APPID, "openid": user_key},
             headers={"AUTH": WX_AUTH, "Content-Type": "application/json"},
             timeout=20
-        )
+        , verify=False)
         data = resp.json()
         if data.get("status") and data.get("data", {}).get("code"):
             return data["data"]["code"], None
@@ -112,6 +124,7 @@ class XingYunAccount:
         self.index = index
         self.ua = generate_bound_ua(token)
         self.session = requests.Session()
+self.verify = False
         self.session.headers.update({
             "Host": "gzpengru.weimbo.com",
             "Connection": "keep-alive",
@@ -370,7 +383,7 @@ def send_notify(title, content):
     if not notify_url:
         return
     try:
-        requests.post(notify_url, json={"title": title, "content": content}, timeout=10)
+        requests.post(notify_url, json={"title": title, "content": content}, timeout=10, verify=False)
     except Exception:
         pass
 

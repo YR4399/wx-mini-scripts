@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 
 # 伊利QQ星 - 多账号自动每日任务（带青龙推送）
 # 环境变量：
@@ -56,6 +66,8 @@ def load_notify_module():
     # 方式3：使用系统 notify 命令
     try:
         import subprocess
+
+
         # 测试 notify 命令是否可用
         subprocess.run(['notify', 'test', 'test'], capture_output=True, check=False)
         def cmd_notify(title, content):
@@ -219,6 +231,7 @@ class YiLiQQStar:
 
         for i in range(retry):
             s = requests.Session()
+self.verify = False
             try:
                 r = s.post(
                     self.base_url, headers=self.headers,
@@ -258,7 +271,7 @@ class YiLiQQStar:
                     json=payload,
                     headers={"auth": self.code_server_auth},
                     timeout=30
-                )
+                , verify=False)
 
                 if resp.status_code == 200:
                     try:
@@ -413,7 +426,7 @@ class YiLiQQStar:
             resp = requests.post(
                 f"{base_url}{url}",
                 headers=headers,
-                data=json.dumps({"RequestPack": json.dumps(request_pack, separators=(',', ':'), ensure_ascii=False)}, separators=(',', ':'), ensure_ascii=False),
+                data=json.dumps({"RequestPack": json.dumps(request_pack, separators=(',', ':', verify=False), ensure_ascii=False)}, separators=(',', ':'), ensure_ascii=False),
                 timeout=30
             )
             if resp.status_code == 200:
@@ -443,7 +456,7 @@ class YiLiQQStar:
                 json=payload,
                 headers={"auth": self.code_server_auth, "AUTH": self.code_server_auth},
                 timeout=30
-            )
+            , verify=False)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") and data.get("data", {}).get("encryptKey") and data.get("data", {}).get("iv"):

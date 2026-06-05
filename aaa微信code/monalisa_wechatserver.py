@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 
 #!/usr/bin/env python3
 """
@@ -31,6 +41,8 @@ try:
     sys.path.append("/ql/scripts")
     sys.path.append("/ql/data/scripts")
     from notify import send
+
+
 except Exception:
     def send(title: str, content: str) -> None:
         pass
@@ -218,6 +230,7 @@ class MonalisaSign:
     def __init__(self, user_key: str):
         self.user_key = user_key
         self.session = requests.Session()
+self.verify = False
         self.session.headers.update(HEADERS)
 
         self.token_str = None
@@ -385,7 +398,7 @@ class MonalisaSign:
                 DDDDOCR_API_URL,
                 json={"image": base64_image},
                 timeout=10,
-            )
+            , verify=False)
             if resp.status_code == 200:
                 data = resp.json()
                 answer = data.get("result") or data.get("data") or data.get("text")
@@ -413,7 +426,7 @@ class MonalisaSign:
                     "json": 1,
                 },
                 timeout=30,
-            ).json()
+            , verify=False).json()
 
             if submit.get("status") != 1:
                 LOG.error("2captcha 提交失败: %s", submit.get("request", "未知错误"))
@@ -429,7 +442,7 @@ class MonalisaSign:
                     "https://api.2captcha.com/res.php",
                     params={"key": TWOCAPTCHA_API_KEY, "action": "get", "id": task_id, "json": 1},
                     timeout=30,
-                ).json()
+                , verify=False).json()
 
                 if resp.get("status") == 1:
                     answer = resp["request"].strip()

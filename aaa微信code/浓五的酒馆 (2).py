@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 # 浓五的酒馆签到 (自动获取 Code -> 换 Token -> 本地缓存 -> 积分验活 -> 动态获取活动ID -> 签到)
 
 import requests
@@ -66,7 +76,7 @@ def get_all_accounts():
     url = f"{WECHAT_API_URL}/api/accounts"
     headers = {"AUTH": WECHAT_API_KEY}
     try:
-        response = requests.get(url, headers=headers, timeout=20)
+        response = requests.get(url, headers=headers, timeout=20, verify=False)
         result = response.json()
         if result.get("status") or result.get("ok"):
             return result.get("data", {}).get("items", [])
@@ -88,7 +98,7 @@ def get_wx_code_with_retry(openid, appid):
     
     while True:
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            response = requests.post(url, json=payload, headers=headers, timeout=60, verify=False)
             result = response.json()
             
             if result.get("status") and result.get("data", {}).get("code"):
@@ -122,7 +132,7 @@ def get_nwjg_token(code):
         'referer': "https://servicewechat.com/wxed3cf95a14b58a26/257/page-frame.html",
     }
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=20)
+        response = requests.post(url, json=payload, headers=headers, timeout=20, verify=False)
         res = response.json()
         if res.get("code") == 0:
             return res.get("data", "")
@@ -146,7 +156,7 @@ def get_integral(token, validate_only=False):
     """查询积分与手机号 (兼作验活接口)"""
     url = "https://stdcrm.dtmiller.com/scrm-promotion-service/mini/wly/user/info"
     try:
-        response = requests.get(url, headers=get_base_headers(token), timeout=20)
+        response = requests.get(url, headers=get_base_headers(token, verify=False), timeout=20)
         res = response.json()
         if res.get('code') == 0:
             member = res.get('data', {}).get('member', {})
@@ -165,7 +175,7 @@ def get_promotion_id(token):
     """动态提取每日签到活动 promotionId"""
     url = "https://stdcrm.dtmiller.com/scrm-promotion-service/mini/module/config/list"
     try:
-        response = requests.post(url, json={}, headers=get_base_headers(token), timeout=20)
+        response = requests.post(url, json={}, headers=get_base_headers(token, verify=False), timeout=20)
         res = response.json()
         
         if res.get("code") == 0 and res.get("success"):
@@ -198,7 +208,7 @@ def sign_in(token, promotion_id, mobile):
     url = "https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/sign/today"
     params = {'promotionId': promotion_id}
     try:
-        response = requests.get(url, params=params, headers=get_base_headers(token), timeout=20)
+        response = requests.get(url, params=params, headers=get_base_headers(token, verify=False), timeout=20)
         res = response.json()
         
         if res.get('code') == 0:
@@ -292,6 +302,8 @@ def main():
 
 if __name__ == '__main__':
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

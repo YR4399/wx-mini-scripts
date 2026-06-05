@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -220,14 +230,14 @@ class WCSClient:
 
     def _get(self, path, timeout=30):
         r = requests.get(f'{self.base}{path}',
-                         headers={'AUTH': self.auth}, timeout=timeout)
+                         headers={'AUTH': self.auth}, timeout=timeout, verify=False)
         return r.json()
 
     def _post(self, path, data, timeout=60):
         r = requests.post(f'{self.base}{path}', json=data,
                           headers={'AUTH': self.auth,
                                    'Content-Type': 'application/json'},
-                          timeout=timeout)
+                          timeout=timeout, verify=False)
         return r.json()
 
     def get_accounts(self):
@@ -259,18 +269,18 @@ class GlicoClient:
     def _get(self, path, params=None):
         url = f'{API_BASE}{path}'
         resp = requests.get(url, params=params,
-                            headers=make_headers(self.token), timeout=15)
+                            headers=make_headers(self.token, verify=False), timeout=15)
         return self._handle_resp(resp)
 
     def _post(self, path, data=None, params=None):
         url = f'{API_BASE}{path}'
-        resp = requests.post(url, json=(data or {}), params=params,
+        resp = requests.post(url, json=(data or {}, verify=False), params=params,
                              headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _put(self, path, data=None):
         url = f'{API_BASE}{path}'
-        resp = requests.put(url, json=(data or {}),
+        resp = requests.put(url, json=(data or {}, verify=False),
                             headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
@@ -330,7 +340,7 @@ def login_with_code(code):
     resp = requests.post(
         f'{API_BASE}/auth/signin_oauth_weixin_mp',
         json={'code': code},
-        headers=make_headers(),
+        headers=make_headers(, verify=False),
         timeout=15,
     )
     data = resp.json()
@@ -348,7 +358,7 @@ def login_with_code(code):
     time.sleep(random.uniform(0.3, 0.8))
     profile_resp = requests.get(
         f'{API_BASE}/profile',
-        headers=make_headers(token),
+        headers=make_headers(token, verify=False),
         timeout=15,
     )
     profile = profile_resp.json()
@@ -594,6 +604,8 @@ def main():
 
 if __name__ == '__main__':
     import io
+
+
     _log_capture = io.StringIO()
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr

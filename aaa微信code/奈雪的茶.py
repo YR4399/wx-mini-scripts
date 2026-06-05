@@ -1,3 +1,13 @@
+# ========== SSL和代理修复 ==========
+import urllib3
+urllib3.disable_warnings()
+import os
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+# ========== SSL和代理修复结束 ==========
+
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -27,6 +37,8 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 
 import requests
+
+
 
 
 # ===================== 配置项 =====================
@@ -217,7 +229,7 @@ def validate_proxy(proxies: dict | None) -> bool:
         return False
 
     try:
-        res = requests.get(PROXY_VALIDATE_URL, proxies=proxies, timeout=15)
+        res = requests.get(PROXY_VALIDATE_URL, proxies=proxies, timeout=15, verify=False)
         if res.status_code == 200:
             try:
                 ip = res.json().get("origin", "未知")
@@ -240,7 +252,7 @@ def get_valid_proxy(account_name: str) -> dict | None:
 
     for index in range(1, PROXY_RETRY_TIMES + 1):
         try:
-            res = requests.get(PROXY_API, timeout=15)
+            res = requests.get(PROXY_API, timeout=15, verify=False)
             proxy_info = parse_proxy_response(res.text)
 
             if not proxy_info:
@@ -280,7 +292,7 @@ def send_pushplus(title: str, content: str) -> None:
                 "template": "txt",
             },
             timeout=10,
-        )
+        , verify=False)
         print("PushPlus 推送成功")
     except Exception as exc:
         print(f"PushPlus 推送失败：{exc}")
@@ -313,7 +325,7 @@ def get_code(openid: str) -> str | None:
             headers={"auth": WX_AUTH},
             timeout=60,
             proxies={"http": None, "https": None},
-        )
+        , verify=False)
         data = res.json()
         code = (data.get("data") or {}).get("code") or data.get("code")
         if code:
@@ -332,7 +344,7 @@ def get_code(openid: str) -> str | None:
             params={"appId": APPID},
             timeout=20,
             proxies={"http": None, "https": None},
-        )
+        , verify=False)
         data = res.json()
 
         if data.get("err") != 0 or not data.get("code"):
