@@ -254,16 +254,97 @@ def garden_harvest(token, session_key, field_id):
         print("  ❌ 加密失败")
         return False
     try:
-        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/harvest', json={'id': field_id, 'ts': ts, 'encryptData': enc, 'version': 8}, headers=h, timeout=15, verify=False)
+        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/harvest', json={'id': field_id, 'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
         d = r.json()
         if d.get('success'):
-            print("  ✅ 收获成功!")
+            data = d.get('data', {})
+            print(f"  ✅ 收获成功! 高粱+{data.get('sorghum', 0)} 小麦+{data.get('wheat', 0)}")
             return True
         print(f"  ⚠️ 收获: {d.get('message', '未知')}")
         return False
     except Exception as e:
         print(f"  ❌ 收获异常: {e}")
         return False
+
+
+def garden_seed(token, session_key, field_id, crop_type=1):
+    """种植 - type: 1=高粱, 2=小麦"""
+    h = garden_make_h(token)
+    ts, enc = garden_encrypt_data(session_key)
+    if not enc:
+        print("  ❌ 加密失败")
+        return False
+    try:
+        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/seed', json={'id': field_id, 'type': crop_type, 'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            crop_name = '高粱' if crop_type == 1 else '小麦'
+            print(f"  ✅ 种植{crop_name}成功!")
+            return True
+        print(f"  ⚠️ 种植: {d.get('message', '未知')}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 种植异常: {e}")
+        return False
+
+
+def garden_watering(token, session_key, field_id):
+    """浇水"""
+    h = garden_make_h(token)
+    ts, enc = garden_encrypt_data(session_key)
+    if not enc:
+        print("  ❌ 加密失败")
+        return False
+    try:
+        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/watering', json={'id': field_id, 'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            print(f"  💧 浇水成功!")
+            return True
+        print(f"  ⚠️ 浇水: {d.get('message', '未知')}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 浇水异常: {e}")
+        return False
+
+
+def garden_share(token, session_key):
+    """每日分享"""
+    h = garden_make_h(token)
+    ts, enc = garden_encrypt_data(session_key)
+    if not enc:
+        print("  ❌ 加密失败")
+        return False
+    try:
+        r = requests.post(f'{GARDEN_BASE}/garden/gardenmemberinfo/dailyShare', json={'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            data = d.get('data', {})
+            if data.get('isTodayFirstShare'):
+                print(f"  ✅ 分享成功! 水+{data.get('water', 0)} 肥料+{data.get('manure', 0)}")
+            else:
+                print(f"  ✅ 今日已分享")
+            return True
+        print(f"  ⚠️ 分享: {d.get('message', '未知')}")
+        return False
+    except Exception as e:
+        print(f"  ❌ 分享异常: {e}")
+        return False
+
+
+def garden_get_tasks(token):
+    """获取任务列表"""
+    h = garden_make_h(token)
+    try:
+        r = requests.get(f'{GARDEN_BASE}/garden/tasks/index', headers=h, timeout=15, verify=False)
+        d = r.json()
+        if d.get('success'):
+            tasks = d.get('data', {})
+            return tasks
+        return {}
+    except Exception as e:
+        print(f"  ❌ 任务列表异常: {e}")
+        return {}
 
 
 def process(openid, remark):
@@ -301,17 +382,65 @@ def process(openid, remark):
     member_info = garden_get_member_info(token)
     time.sleep(1)
 
-    sorghum_fields = garden_get_sorghum_index(token)
+    # 花园签到
+    print("\n  [花园签到]")
+    garden_sign(token, code)
     time.sleep(1)
 
-    garden_sign(token, code)
+    # 每日分享
+    print("\n  [每日分享]")
+    garden_share(token, code)
+    time.sleep(1)
+
+    # 任务列表
+    print("\n  [任务]")
+    tasks = garden_get_tasks(token)
+    if tasks:
+        for task_id, task in tasks.items():
+            status = "✅" if task.get('status') == 1 else "⏳"
+            print(f"  {status} {task.get('name', '未知')}: {task.get('reward', '')}")
+    time.sleep(1)
+
+    # 获取地块信息
+    print("\n  [种植管理]")
+    sorghum_fields = garden_get_sorghum_index(token)
     time.sleep(1)
 
     if sorghum_fields:
         for field in sorghum_fields:
-            if field.get('status') == 2:
-                garden_harvest(token, code, field['id'])
+            field_id = field.get('id')
+            status = field.get('status', -1)
+            serial = field.get('serial_number', '?')
+            water_num = field.get('water_num', 0)
+            manure_num = field.get('manure_num', 0)
+            volumn = field.get('volumn', 0)
+
+            if status == -1:
+                # 未开垦，跳过
+                continue
+            elif status == 0:
+                # 空地，种植高粱
+                print(f"  地块{serial}: 空地，开始种植...")
+                garden_seed(token, code, field_id, crop_type=1)
                 time.sleep(1)
+            elif status == 10:
+                # 种植中，浇水
+                print(f"  地块{serial}: 种植中 (浇水{water_num}/{volumn})")
+                if member_info and member_info.get('water', 0) > 0:
+                    garden_watering(token, code, field_id)
+                    time.sleep(1)
+            elif status == 2:
+                # 可收获
+                print(f"  地块{serial}: 可收获!")
+                garden_harvest(token, code, field_id)
+                time.sleep(1)
+                # 收获后种植
+                garden_seed(token, code, field_id, crop_type=1)
+                time.sleep(1)
+
+    # 再次获取会员信息显示最终状态
+    print("\n  [最终状态]")
+    garden_get_member_info(token)
 
     return True
 
