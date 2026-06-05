@@ -139,7 +139,7 @@ def log_account_header(index: int, total: int, server: str = "") -> None:
 
 def direct_session() -> requests.Session:
     session = requests.Session()
-self.verify = False
+    session.verify = False
     session.trust_env = False
     return session
 
@@ -306,7 +306,7 @@ def send_pushplus(title: str, content: str) -> None:
                 "template": "txt",
             },
             timeout=10,
-        , verify=False)
+            verify=False)
         print("✅ [PushPlus] 推送成功")
     except Exception as exc:
         print(f"❌ [PushPlus] 推送失败: {exc}")
@@ -321,7 +321,7 @@ def get_code(openid: str) -> str | None:
             headers={"auth": WX_AUTH},
             timeout=60,
             proxies={"http": None, "https": None},
-        , verify=False)
+            verify=False)
         data = response.json()
         code = (data.get("data") or {}).get("code") or data.get("code")
         if code:

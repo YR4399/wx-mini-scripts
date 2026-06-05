@@ -231,7 +231,7 @@ def garden_sign(token, session_key):
         print("  ❌ 加密失败")
         return False
     try:
-        r = requests.post(f'{GARDEN_BASE}/garden/sign/dailySign', json={'ts': ts, 'encryptData': enc, 'version': 8}, headers=h, timeout=15, verify=False)
+        r = requests.post(f'{GARDEN_BASE}/garden/sign/dailySign', json={'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
         d = r.json()
         if d.get('success'):
             print("  ✅ 花园签到成功!")
@@ -374,15 +374,21 @@ def process(openid, remark):
         else:
             print(f"  ❌ {msg}")
 
-    # 花园功能
+    # 花园功能 — 需要单独获取一次 code，避免被商城登录消费过
     print("\n  [花园]")
-    garden_save_session_key(token, code)
+    code2 = get_wx_code(openid)
+    if code2:
+        print(f"  ✅ 花园code: {code2[:20]}...")
+        garden_save_session_key(token, code2)
+    else:
+        print("  ⚠️ 花园code获取失败")
+        garden_save_session_key(token, code)
     time.sleep(1)
 
     member_info = garden_get_member_info(token)
     time.sleep(1)
 
-    # 花园签到
+    # 花园签到 — 需要 session_key 加密，标记为跳过
     print("\n  [花园签到]")
     garden_sign(token, code)
     time.sleep(1)
