@@ -10,15 +10,19 @@
 # WCS 适配:
 #   WCS /wx/code → shortvideo.yjypjy.top/api/user/getOpenid → 业务 openid
 #   业务 openid 缓存在 xxs_user_cache.json，24h 失效后自动刷新。
+#
+# 并发: 多账号通过 ThreadPoolExecutor 并行执行，max_workers=3。
 
 import os
 import sys
 import time
 import json
+import random
 import hashlib
 import urllib.request
 import urllib.parse
 import ssl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ========== WCS 配置 ==========
 WCS_URL = os.getenv("wx_server_url", "http://172.17.0.3:8787")
@@ -35,9 +39,8 @@ CTX.verify_mode = ssl.CERT_NONE
 VIDEOAIP = "https://videoaip.wentuyun.com"
 WEBURL = "https://shortvideo.wentuyun.com"
 
-VIDEO_MAX_ROUNDS = 90
-AD_MAX_ROUNDS = 50
-ACCOUNT_GAP = 30
+VIDEO_MAX_ROUNDS = 53
+AD_MAX_ROUNDS = 35
 
 UA_POOL = [
     "Mozilla/5.0 (Linux; Android 13; PFEM10 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5075 MMWEBSDK/20230701 MMWEBID/8888 MicroMessenger/8.0.40.2420(0x28002837) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android",
@@ -100,7 +103,6 @@ def write_user_cache(cache):
 
 
 def get_wx_code(wcs_openid):
-    """通过 WCS 获取 wx.login code"""
     body = json.dumps({"appid": XXS_APPID, "openid": wcs_openid}).encode()
     r = urllib.request.Request(f"{WCS_URL}/wx/code", data=body, method="POST")
     r.add_header("AUTH", WCS_AUTH)
@@ -114,7 +116,6 @@ def get_wx_code(wcs_openid):
 
 
 def get_business_openid(wx_code):
-    """用 wx.login code 换取业务 openid"""
     r = urllib.request.Request(f"{LOGIN_URL}?code={wx_code}&pid=0")
     r.add_header("User-Agent", UA_POOL[0])
     resp = urllib.request.urlopen(r, timeout=15, context=CTX)
@@ -128,24 +129,18 @@ def get_business_openid(wx_code):
 
 
 def refresh_business_openid(wcs_openid):
-    """通过 WCS 刷新业务 openid 并缓存"""
     log(f"  WCS 获取 wx.login code...")
     code = get_wx_code(wcs_openid)
     log(f"  用 code 换取业务 openid...")
     biz_openid = get_business_openid(code)
     cache = read_user_cache()
-    cache[wcs_openid] = {
-        "biz_openid": biz_openid,
-        "ts": time.time(),
-    }
+    cache[wcs_openid] = {"biz_openid": biz_openid, "ts": time.time()}
     write_user_cache(cache)
     log(f"  业务 openid 已缓存: {mask(biz_openid)}")
     return biz_openid
 
 
 def load_openids():
-    """加载业务 openid：优先缓存 → WCS 刷新 → 手动兜底"""
-    # 读取 WCS openid 列表
     wcs_raw = os.getenv("wx_opinion", "")
     if not wcs_raw:
         wcs_raw = os.getenv("WECHAT_ACCOUNTS", "")
@@ -159,7 +154,6 @@ def load_openids():
         cached = cache.get(wcs_oid, {})
         biz = cached.get("biz_openid", "")
         ts = cached.get("ts", 0)
-        # 缓存 24h 有效
         if biz and time.time() - ts < 86400:
             log(f"[WCS] 使用缓存: {mask(biz)}")
             result.append(biz)
@@ -173,7 +167,6 @@ def load_openids():
         else:
             log(f"[WCS] 未配置 wx_server_url,跳过 {mask(wcs_oid)}")
 
-    # 兜底: 手动 xxs_openid
     if not result:
         manual = os.getenv("xxs_openid", "").strip()
         if manual:
@@ -293,13 +286,9 @@ def task_checkin(openid, uid):
             skipped += 1
             continue
         e = post(
-            "/api/activity/taskEnd",
-            openid,
-            id=t["id"],
-            user_id=t.get("user_id", uid),
-            type=t["type"],
-            createday=t["createday"],
-            activity_id=t["activity_id"],
+            "/api/activity/taskEnd", openid,
+            id=t["id"], user_id=t.get("user_id", uid),
+            type=t["type"], createday=t["createday"], activity_id=t["activity_id"],
         )
         if e.get("code") == 1:
             done += 1
@@ -317,41 +306,55 @@ def task_exchange(openid):
     inner = r.get("data") if isinstance(r.get("data"), dict) else {}
     if r.get("code") == 1 and inner.get("code") == 1:
         d = inner.get("data") or {}
-        log(
-            "  [兑换] 兑出 %s 金币 -> +%s 元,余 %s 金币,账户 %s 元"
-            % (d.get("coin_change"), d.get("pay_money_increase"), d.get("coins_after"), d.get("money_after"))
-        )
+        log("  [兑换] 兑出 %s 金币 -> +%s 元,余 %s 金币,账户 %s 元"
+            % (d.get("coin_change"), d.get("pay_money_increase"), d.get("coins_after"), d.get("money_after")))
     else:
         log("  [兑换] 失败: %s" % (inner.get("msg") or r.get("msg")))
 
 
-def run_account(openid):
-    uid, coins = get_user(openid)
-    if not uid:
-        log("[%s] openid 无效(查不到用户),跳过" % mask(openid))
-        return
-    log("[%s] uid=%s 当前金币=%s" % (mask(openid), uid, coins))
-    task_sign(openid)
-    task_video(openid)
-    task_ad(openid)
-    task_checkin(openid, uid)
-    task_exchange(openid)
+def run_account(openid, idx, total):
+    tag = mask(openid)
+    delay = random.uniform(20, 35)
+    log("账号 %d/%d [%s] 延迟 %.0fs 后启动" % (idx + 1, total, tag, delay))
+    time.sleep(delay)
+    log("=" * 32)
+    log("账号 %d/%d [%s] 开始执行" % (idx + 1, total, tag))
+    try:
+        uid, coins = get_user(openid)
+        if not uid:
+            log("[%s] openid 无效(查不到用户),跳过" % tag)
+            return tag, "失败", "openid无效"
+        log("[%s] uid=%s 当前金币=%s" % (tag, uid, coins))
+        task_sign(openid)
+        task_video(openid)
+        task_ad(openid)
+        task_checkin(openid, uid)
+        task_exchange(openid)
+        return tag, "成功", "金币=%s" % coins
+    except Exception as e:
+        err("[%s] 异常: %s" % (tag, e))
+        return tag, "异常", str(e)
 
 
 def main():
     openids = load_openids()
-    log("小喜柿任务开始,共 %d 个账号" % len(openids))
-    for idx, openid in enumerate(openids):
-        log("=" * 32)
-        log("账号 %d/%d" % (idx + 1, len(openids)))
-        try:
-            run_account(openid)
-        except Exception as e:
-            err("[%s] 异常跳过: %s" % (mask(openid), e))
-        if idx < len(openids) - 1:
-            time.sleep(ACCOUNT_GAP)
+    log("小喜柿任务开始,共 %d 个账号,并发执行" % len(openids))
+
+    results = []
+    max_workers = min(len(openids), 3)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(run_account, oid, idx, len(openids)): oid
+            for idx, oid in enumerate(openids)
+        }
+        for future in as_completed(futures):
+            tag, status, info = future.result()
+            results.append((tag, status, info))
+
     log("=" * 32)
     log("全部账号执行完毕")
+    for tag, status, info in results:
+        log("  %s: %s (%s)" % (tag, status, info))
 
 
 if __name__ == "__main__":
