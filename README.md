@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-06 10:03
+> 🕐 最后同步：2026-06-06 10:04
 > 📦 脚本总数：**90** 个
 
 </div>
@@ -104,7 +104,7 @@
 | `mfd.js` | 麦富迪 | 06-05 | 06-05 12:12 | 🌸 |
 | `mifengjingxishe.js` | 蜜蜂惊喜社 | 06-05 | 06-05 11:48 | 🌸 |
 | `miqilin.js` | 米麒麟 | 06-05 | 06-05 16:28 | 🌸 |
-| `musi.js` | 慕斯 | 06-05 | 06-05 10:04 | 🌸 |
+| `musi.js` | 慕斯 | 06-05 | — | 🌱 |
 | `mxbc.js` | 蜜雪冰城 | 06-05 | 06-06 08:12 | 🌸 |
 | `nice.js` | 纳爱斯 | 06-05 | 06-06 01:37 | 🌸 |
 | `nissin.js` | 日清食品 | 06-05 | 06-05 11:56 | 🌸 |
