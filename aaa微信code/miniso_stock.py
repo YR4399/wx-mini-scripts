@@ -7,7 +7,7 @@
   wx_server_url / wx_auth - WCS 服务配置
   wx_opinion / WECHAT_ACCOUNTS - WCS openid
   PLUSPLUS_TOKEN - PushPlus 推送 token
-  MINISO_INTERVAL - 检查间隔秒数（默认 300）
+  MINISO_INTERVAL - 检查间隔秒数（默认 1200，即 20 分钟）
 """
 import os
 import sys
@@ -252,6 +252,7 @@ def check_once():
     new_stock = {}
     restocked = []
     new_items = []
+    silent_new_items = []
 
     for item in items:
         item_id = str(item.get("id", ""))
@@ -269,15 +270,18 @@ def check_once():
             "quantity": quantity,
         }
 
-        # 判断是否有补货：allStock > 0 且之前是 0 或 -1 或不存在
+        # 判断是否有补货：已有商品从无货变为有货才推送；首次出现的商品交给新增逻辑，避免重复推送
         old = old_stock.get(item_id, {})
         old_all = old.get("allStock", -999)
-        if all_stock > 0 and old_all in (0, -1, -999):
+        if item_id in old_stock and all_stock > 0 and old_all <= 0:
             restocked.append(f"  {name}: 库存 {all_stock} | 积分 {quantity}")
 
-        # 新增商品
+        # 新增商品：只有 allStock > 0 才推送；无货新品只静默记录缓存，避免频繁打扰
         if item_id not in old_stock:
-            new_items.append(f"  {name}: 库存 {'有货' if all_stock > 0 else '无货'} | 积分 {quantity}")
+            if all_stock > 0:
+                new_items.append(f"  {name}: 库存 {all_stock} | 积分 {quantity}")
+            else:
+                silent_new_items.append(name)
 
     # 更新缓存
     cache["stock"] = new_stock
@@ -297,9 +301,13 @@ def check_once():
         push("名创优品补货提醒", msg)
 
     if new_items:
-        msg = "名创优品新增兑换商品\n\n" + "\n".join(new_items)
-        log(f"新增商品: {len(new_items)} 个")
-        push("名创优品新商品", msg)
+        msg = "名创优品新增兑换商品（有货）\n\n" + "\n".join(new_items)
+        msg += chr(10) + chr(10) + "点击进入兑换页面:" + chr(10) + "https://mp.miniso.com/pages-v2/member/pointsMall/index"
+        log(f"发现有货新品: {len(new_items)} 个，推送通知")
+        push("名创优品新商品上架", msg)
+
+    if silent_new_items:
+        log(f"静默记录 {len(silent_new_items)} 个无货新品（不推送）: {', '.join(silent_new_items[:5])}{'...' if len(silent_new_items) > 5 else ''}")
 
 
 def main():
