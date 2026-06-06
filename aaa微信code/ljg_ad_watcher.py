@@ -500,7 +500,7 @@ if __name__ == '__main__':
         print(_logs)
         try:
             push_notify('ljg_ad_watcher 签到结果', _logs[-2000:])
-        except:
-            pass
+        except Exception as _push_e:
+            print(f'推送异常: {_push_e}')
 
 
