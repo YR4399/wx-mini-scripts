@@ -583,8 +583,8 @@ if __name__ == '__main__':
         print(_logs)
         try:
             push_notify('haishibao_sign 签到结果', _logs[-2000:])
-        except:
-            pass
+        except Exception as _e:
+            print(f'推送异常: {_e}')
 
 
 

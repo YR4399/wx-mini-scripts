@@ -86,11 +86,12 @@ EAT_TIME_SLOTS = [
     {"name": "夜宵", "start": 21, "end": 24},
 ]
 
-VIDEO_WATCH_DURATION = (15, 25)
+VIDEO_WATCH_DURATION = (15.1, 20.5)
 VIDEO_INTERVAL = (25, 35)
 TASK_INTERVAL = (2, 5)
 LIKE_INTERVAL = (3, 6)
 REWARD_TARGETS = [1, 5, 9, 15, 20]
+VIDEO_DURATION_STEPS = [60, 300, 900, 1800, 3600, 7200, 9000]  # 最长150分钟
 
 # ============================================================================
 # 启动检查
@@ -834,6 +835,80 @@ def check_and_claim_eat_gold(token: str, account: AccountConfig, cache: TaskCach
 # 日常任务总入口
 # ============================================================================
 
+def watch_duration(token: str, account: AccountConfig, cache: TaskCache) -> int:
+    """模拟观看时长任务，完成全部步骤直到150分钟"""
+    if cache.is_daily_task_done(account.account_id, "duration_completed"):
+        log("今日时长任务已完成", "SKIP", account.display_name)
+        return 0
+    try:
+        user_info = get_user_info(token, account, cache)
+        next_step = int(user_info.get("okLookVideoSec", 0) or 0)
+        if next_step < 1:
+            next_step = 1
+        if next_step > len(VIDEO_DURATION_STEPS):
+            cache.mark_daily_task_done(account.account_id, "duration_completed", True)
+            log("今日时长任务全部完成", "SKIP", account.display_name)
+            return len(VIDEO_DURATION_STEPS)
+
+        completed = 0
+        for step in range(next_step, len(VIDEO_DURATION_STEPS) + 1):
+            if not account.is_runnable():
+                break
+            video_sec = VIDEO_DURATION_STEPS[step - 1]
+            # 更新用户观看时长
+            update_user_watch_duration(token, account, video_sec, step)
+            random_sleep((15.1, 20.5), "模拟观看时长")
+            # 领取时长奖励
+            try:
+                resp = safe_request("GET", f"{BUSINESS_API_BASE}/app/integral/lookVideoSec",
+                                    headers=make_headers(token))
+                ok, data = check_response(resp, account, cache)
+                if ok and data and data.get("code") == 0:
+                    min_dur = video_sec // 60
+                    log(f"时长任务[{step}/{len(VIDEO_DURATION_STEPS)}] {min_dur}分钟: {data.get('msg', 'success')}",
+                        "SUCCESS", account.display_name)
+                    completed += 1
+                elif data:
+                    msg = str(data.get("msg", ""))
+                    if "已领取" in msg or "已完成" in msg:
+                        log(f"时长任务[{step}/{len(VIDEO_DURATION_STEPS)}]: 今日已完成", "SKIP", account.display_name)
+                        break
+                    log(f"时长任务[{step}/{len(VIDEO_DURATION_STEPS)}]: {msg}", "WARN", account.display_name)
+                    if data.get("code") == 401:
+                        account.set_status(AccountStatus.TOKEN_EXPIRED, "Token已过期")
+                        break
+            except Exception as e:
+                log(f"时长任务[{step}] 异常: {e}", "WARN", account.display_name)
+            random_sleep((2, 3))
+
+        if completed >= len(VIDEO_DURATION_STEPS):
+            cache.mark_daily_task_done(account.account_id, "duration_completed", True)
+        return completed
+    except Exception as e:
+        log(f"时长任务异常: {e}", "WARN", account.display_name)
+        return 0
+
+
+def update_user_watch_duration(token: str, account: AccountConfig, video_sec: int, look_video_sec: int, cache=None):
+    """更新用户观看时长记录"""
+    try:
+        user_info = get_user_info(token, account, cache) or {}
+        data = {
+            "userName": user_info.get("userName", ""),
+            "avatar": user_info.get("avatar", ""),
+            "phone": user_info.get("phone", ""),
+            "videoSec": video_sec,
+            "lookVideoSec": look_video_sec,
+        }
+        resp = safe_request("POST", f"{BUSINESS_API_BASE}/app/user/updateUsers",
+                            headers=make_json_headers(token), json=data)
+        min_dur = video_sec // 60
+        log(f"模拟观看时长: {min_dur}分钟", "INFO", account.display_name)
+    except Exception as e:
+        log(f"更新观看时长失败: {e}", "WARN", account.display_name)
+
+
+
 def do_daily_tasks(account: AccountConfig, cache: TaskCache) -> Dict:
     result = {
         "sign": False, "resign": 0, "like": 0, "like_reward": False,
@@ -897,7 +972,11 @@ def do_daily_tasks(account: AccountConfig, cache: TaskCache) -> Dict:
         return result
     random_sleep(TASK_INTERVAL)
 
-    # 5. 看广告
+    # 5. 看视频时长
+    random_sleep(TASK_INTERVAL)
+    watch_duration(token, account, cache)
+
+    # 6. 看广告
     result["video"] = watch_videos(token, account, cache)
 
     result["end_integral"] = get_integral(token, account, cache)

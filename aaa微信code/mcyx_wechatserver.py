@@ -745,3 +745,19 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# ========== PushPlus 推送 ==========
+try:
+    import urllib.request as _ur
+    import json as _js
+    _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
+    if _token:
+        _body = _js.dumps({'token': _token, 'title': '名创优品', 'content': '名创优品执行完成', 'template': 'txt'}).encode()
+        _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
+        _req.add_header('Content-Type', 'application/json')
+        _resp = _ur.urlopen(_req, timeout=15)
+        _r = _js.loads(_resp.read())
+        if _r.get('code') == 200: print('PushPlus 推送成功')
+        else: print(f'PushPlus 推送失败: {_r.get("msg", "")}')
+except Exception as _e: print(f'推送异常: {_e}')
+# ========== PushPlus 推送结束 ==========

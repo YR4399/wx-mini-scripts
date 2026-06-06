@@ -41,6 +41,16 @@ const VIDEO_DURATION_STEPS = [60, 300, 900, 1800, 3600, 7200, 9000];
 
 let ckName = "wx_opinion";
 
+function sleep(seconds) {
+    const ms = Math.floor(seconds * 1000);
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function randomSleep(minSec = 2, maxSec = 5) {
+    const sec = minSec + Math.random() * (maxSec - minSec);
+    return sleep(sec);
+}
+
 function readTokenCache() {
     try {
         if (!fs.existsSync(TOKEN_CACHE_FILE)) return {};
@@ -289,9 +299,13 @@ class Task {
 
     async doDailyTasks() {
         await this.completeDramaTasks();
+        await randomSleep(2, 4);
         await this.completeEatGoldTasks();
+        await randomSleep(2, 4);
         await this.completeVideoCoinTasks();
+        await randomSleep(3, 6);
         await this.completeVideoDurationTasks();
+        await randomSleep(2, 4);
         const tasks = [
             { name: "开宝箱", apiPath: "/app/integral/userTimer" },
             { name: "推荐剧观看金币", apiPath: "/app/integral/userDataVideo", params: await this.getUserDataVideoParams() },
@@ -301,6 +315,7 @@ class Task {
         ];
         for (const task of tasks) {
             await this.claimDailyTask(task);
+            await randomSleep(1, 3);
         }
     }
 
@@ -326,6 +341,7 @@ class Task {
     async completeEatGoldTasks() {
         try {
             for (let num = 0; num < EAT_GOLD_COUNT; num++) {
+                if (num > 0) await randomSleep(1, 2);
                 try {
                     const result = await this.request({
                         apiPath: "/app/integral/addEatGold",
@@ -370,7 +386,9 @@ class Task {
             }
 
             for (let step = nextStep; step <= VIDEO_COUNT_STEPS.length; step++) {
+                await randomSleep(15.1, 20.5);
                 await this.updateUserWatchCount(VIDEO_COUNT_STEPS[step - 1], step);
+                await randomSleep(2, 3);
                 try {
                     const result = await this.request({ apiPath: "/app/integral/lookVideoNum" });
                     $.log(`账号[${this.index}] 看视频次数金币[${step}/${VIDEO_COUNT_STEPS.length}]: ${result.msg || "success"}`);
@@ -403,7 +421,9 @@ class Task {
             }
 
             for (let step = nextStep; step <= VIDEO_DURATION_STEPS.length; step++) {
+                await randomSleep(15.1, 20.5);
                 await this.updateUserWatchDuration(VIDEO_DURATION_STEPS[step - 1], step);
+                await randomSleep(2, 3);
                 try {
                     const result = await this.request({ apiPath: "/app/integral/lookVideoSec" });
                     $.log(`账号[${this.index}] 看视频时长金币[${step}/${VIDEO_DURATION_STEPS.length}]: ${result.msg || "success"}`);
@@ -556,8 +576,12 @@ class Task {
 
 !(async () => {
     $.checkEnv(ckName);
-    for (const openid of $.userList) {
-        await new Task(openid).run();
+    for (let i = 0; i < $.userList.length; i++) {
+        if (i > 0) {
+            $.log(`切换账号，等待 5-10s...`);
+            await randomSleep(5, 10);
+        }
+        await new Task($.userList[i]).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
