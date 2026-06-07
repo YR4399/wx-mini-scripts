@@ -92,6 +92,10 @@ TASK_INTERVAL = (2, 5)
 LIKE_INTERVAL = (3, 6)
 REWARD_TARGETS = [1, 5, 9, 15, 20]
 VIDEO_DURATION_STEPS = [60, 300, 900, 1800, 3600, 7200, 9000]  # 最长150分钟
+# 时长任务配置：每档等待时间(秒)，加上随机5-15分钟抖动模拟真实观看
+DURATION_BASE_WAIT = [50, 240, 480, 900, 1800, 3600, 5400]
+DURATION_JITTER = (300, 900)  # 每档额外随机抖动 5-15 分钟
+DURATION_TARGET_RATIO = (0.4, 0.7)  # 随机完成 40%-70% 的档数（不全做完）
 
 # ============================================================================
 # 启动检查
@@ -870,12 +874,11 @@ def check_and_claim_eat_gold(token: str, account: AccountConfig, cache: TaskCach
 # ============================================================================
 
 def watch_duration(token: str, account: AccountConfig, cache: TaskCache) -> int:
-    """模拟观看时长任务，完成全部步骤直到150分钟"""
+    """模拟观看时长任务（拟人化：真实等待 + 随机不全部做完）"""
     if cache.is_daily_task_done(account.account_id, "duration_completed"):
         log("今日时长任务已完成", "SKIP", account.display_name)
         return 0
     try:
-        # 保存状态，防止 get_user_info 的 check_response 污染
         saved_status = account.status
         saved_msg = account.status_message
         user_info = get_user_info(token, account, cache)
@@ -892,14 +895,32 @@ def watch_duration(token: str, account: AccountConfig, cache: TaskCache) -> int:
             log("今日时长任务全部完成", "SKIP", account.display_name)
             return len(VIDEO_DURATION_STEPS)
 
+        # 随机目标：只做 40%-70% 的剩余档数
+        remaining = len(VIDEO_DURATION_STEPS) - next_step + 1
+        target = max(1, int(remaining * random.uniform(*DURATION_TARGET_RATIO)))
+        log(f"时长任务: 剩余{remaining}档, 随机目标{target}档", "INFO", account.display_name)
+
         completed = 0
         for step in range(next_step, len(VIDEO_DURATION_STEPS) + 1):
             if not account.is_runnable():
                 break
+            if completed >= target:
+                log(f"时长任务: 已达随机目标{target}档, 停止", "INFO", account.display_name)
+                break
+
             video_sec = VIDEO_DURATION_STEPS[step - 1]
+            # 拟人化等待：基础等待 + 随机抖动（模拟真实观看，不全速跳过）
+            base_wait = DURATION_BASE_WAIT[step - 1]
+            jitter = random.uniform(*DURATION_JITTER)
+            total_wait = base_wait + jitter
+            wait_min = total_wait / 60
+            log(f"模拟观看时长: 第{step}档 {video_sec//60}分钟 (等待 {wait_min:.0f}分钟)", "INFO", account.display_name)
+            time.sleep(total_wait)
+
             # 更新用户观看时长
             update_user_watch_duration(token, account, video_sec, step)
             random_sleep((15.1, 20.5), "模拟观看时长")
+
             # 领取时长奖励
             try:
                 resp = safe_request("GET", f"{BUSINESS_API_BASE}/app/integral/lookVideoSec",

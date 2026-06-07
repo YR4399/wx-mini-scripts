@@ -156,7 +156,7 @@ def get_integral(token, validate_only=False):
     """查询积分与手机号 (兼作验活接口)"""
     url = "https://stdcrm.dtmiller.com/scrm-promotion-service/mini/wly/user/info"
     try:
-        response = requests.get(url, headers=get_base_headers(token, verify=False), timeout=20)
+        response = requests.get(url, headers=get_base_headers(token), timeout=20)
         res = response.json()
         if res.get('code') == 0:
             member = res.get('data', {}).get('member', {})
@@ -175,7 +175,7 @@ def get_promotion_id(token):
     """动态提取每日签到活动 promotionId"""
     url = "https://stdcrm.dtmiller.com/scrm-promotion-service/mini/module/config/list"
     try:
-        response = requests.post(url, json={}, headers=get_base_headers(token, verify=False), timeout=20)
+        response = requests.post(url, json={}, headers=get_base_headers(token), timeout=20)
         res = response.json()
         
         if res.get("code") == 0 and res.get("success"):
@@ -208,7 +208,7 @@ def sign_in(token, promotion_id, mobile):
     url = "https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/sign/today"
     params = {'promotionId': promotion_id}
     try:
-        response = requests.get(url, params=params, headers=get_base_headers(token, verify=False), timeout=20)
+        response = requests.get(url, params=params, headers=get_base_headers(token), timeout=20)
         res = response.json()
         
         if res.get('code') == 0:
