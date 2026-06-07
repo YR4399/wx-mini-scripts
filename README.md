@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="banner.svg" width="100%" />
+<img src="banner_mai.jpg" width="100%" />
 
 # 🌲 微信小程序自动化脚本合集 🦊
 
