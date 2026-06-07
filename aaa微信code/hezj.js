@@ -226,7 +226,6 @@ class Task {
 }
 
 !(async () => {
-    await getNotice()
     $.checkEnv(ckName);
 
     for (let user of $.userList) {

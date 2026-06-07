@@ -278,7 +278,6 @@ class Task {
 }
 
 !(async () => {
-    await getNotice();
     $.checkEnv(ckName);
 
     for (const user of $.userList) {
@@ -295,7 +294,6 @@ async function getNotice() {
             headers: { "User-Agent": defaultUserAgent },
             timeout: 3000,
         });
-        $.log(res);
         return res;
     } catch (e) {}
 }

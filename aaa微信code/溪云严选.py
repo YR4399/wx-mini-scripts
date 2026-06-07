@@ -677,6 +677,8 @@ async def amain() -> int:
         send("溪云严选", final)
     except Exception:
         pass
+    globals()['_PUSH_TITLE'] = f"溪云严选 {len(accounts)}个账号"
+    globals()['_PUSH_SUMMARY'] = final
     return 0
 
 
@@ -695,7 +697,9 @@ try:
     import json as _js
     _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
     if _token:
-        _body = _js.dumps({'token': _token, 'title': '溪云严选', 'content': '溪云严选执行完成', 'template': 'txt'}).encode()
+        _content = globals().get('_PUSH_SUMMARY', '溪云严选执行完成')
+        _title = globals().get('_PUSH_TITLE', '溪云严选')
+        _body = _js.dumps({'token': _token, 'title': _title, 'content': _content, 'template': 'txt'}).encode()
         _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
         _req.add_header('Content-Type', 'application/json')
         _resp = _ur.urlopen(_req, timeout=15)

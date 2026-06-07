@@ -522,6 +522,10 @@ def main():
     send_notify("WPS签到完成", summary)
     log_global("通知发送完成")
 
+    # 设置 PushPlus 推送内容
+    globals()['_PUSH_TITLE'] = f"WPS签到 {len(results)}个账号"
+    globals()['_PUSH_SUMMARY'] = summary
+
 if __name__ == "__main__":
     main()
 
@@ -531,7 +535,9 @@ try:
     import json as _js
     _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
     if _token:
-        _body = _js.dumps({'token': _token, 'title': 'WPS小程序', 'content': 'WPS小程序执行完成', 'template': 'txt'}).encode()
+        _content = globals().get('_PUSH_SUMMARY', 'WPS小程序执行完成')
+        _title = globals().get('_PUSH_TITLE', 'WPS小程序')
+        _body = _js.dumps({'token': _token, 'title': _title, 'content': _content, 'template': 'txt'}).encode()
         _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
         _req.add_header('Content-Type', 'application/json')
         _resp = _ur.urlopen(_req, timeout=15)

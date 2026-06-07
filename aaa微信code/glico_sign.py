@@ -269,7 +269,7 @@ class GlicoClient:
     def _get(self, path, params=None):
         url = f'{API_BASE}{path}'
         resp = requests.get(url, params=params,
-                            headers=make_headers(self.token, verify=False), timeout=15)
+                            headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _post(self, path, data=None, params=None):
@@ -358,7 +358,7 @@ def login_with_code(code):
     time.sleep(random.uniform(0.3, 0.8))
     profile_resp = requests.get(
         f'{API_BASE}/profile',
-        headers=make_headers(token, verify=False),
+        headers=make_headers(token),
         timeout=15,
     )
     profile = profile_resp.json()

@@ -171,7 +171,6 @@ class Task {
 }
 
 !(async () => {
-    await getNotice()
     $.checkEnv(ckName);
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
@@ -199,7 +198,6 @@ async function getNotice() {
         let {
             data: res
         } = await axios.request(options);
-        $.log(res)
         return res
     } catch (e) { }
 

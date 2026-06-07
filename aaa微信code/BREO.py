@@ -265,7 +265,7 @@ def post_to_breo(token, content, title):
         "topicText": ""
     }
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data, verify=False))
+        response = requests.post(url, headers=headers, data=json.dumps(data))
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
@@ -290,7 +290,7 @@ def collect_post(token, post_id):
         "postId": post_id
     }
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data, verify=False))
+        response = requests.post(url, headers=headers, data=json.dumps(data))
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):

@@ -275,7 +275,6 @@ class Task {
 }
 
 !(async () => {
-    await getNotice();
     $.checkEnv(ckName);
 
     for (const openid of $.userList) {
@@ -295,7 +294,6 @@ async function getNotice() {
             timeout: 3000,
         };
         const { data: res } = await axios.request(options);
-        $.log(res);
         return res;
     } catch (e) { }
 }

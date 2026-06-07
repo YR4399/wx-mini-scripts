@@ -675,6 +675,10 @@ def main():
     except Exception:
         pass
 
+    # 设置 PushPlus 推送内容
+    globals()['_PUSH_TITLE'] = summary[:80]
+    globals()['_PUSH_SUMMARY'] = summary + "\n\n" + "\n".join(results)
+
     return 0 if fail_count == 0 else 1  # 跳过不计入失败
 
 if __name__ == "__main__":
@@ -686,7 +690,9 @@ try:
     import json as _js
     _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
     if _token:
-        _body = _js.dumps({'token': _token, 'title': '蒙娜丽莎', 'content': '蒙娜丽莎执行完成', 'template': 'txt'}).encode()
+        _content = globals().get('_PUSH_SUMMARY', '蒙娜丽莎执行完成')
+        _title = globals().get('_PUSH_TITLE', '蒙娜丽莎')
+        _body = _js.dumps({'token': _token, 'title': _title, 'content': _content, 'template': 'txt'}).encode()
         _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
         _req.add_header('Content-Type', 'application/json')
         _resp = _ur.urlopen(_req, timeout=15)

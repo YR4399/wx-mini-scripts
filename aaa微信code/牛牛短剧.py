@@ -197,7 +197,7 @@ def log(msg: str, level: str = "INFO", tag: str = ""):
     prefix = f"[{ts}] {icon}"
     if tag:
         prefix += f" [{tag}]"
-    print(f"{prefix} {msg}")
+    print(f"{prefix} {msg}", flush=True)
 
 # ============================================================================
 # 账号配置类
@@ -601,7 +601,7 @@ def get_integral(token: str, account: AccountConfig, cache: TaskCache) -> int:
 
 
 def get_user_info(token: str, account: AccountConfig, cache: TaskCache) -> Optional[Dict]:
-    url = f"{BUSINESS_API_BASE}/app/user/getUserInfo"
+    url = f"{BUSINESS_API_BASE}/app/user/selectUserById"
     resp = safe_request("GET", url, headers=make_headers(token))
     ok, data = safe_check(resp, account, cache)
     if ok and data and data.get("code") == 0:
@@ -736,13 +736,19 @@ def claim_video_reward(token: str, account: AccountConfig, cache: TaskCache,
 
 def watch_one_video(token: str, account: AccountConfig, cache: TaskCache,
                     current: int, total: int) -> bool:
-    url = f"{BUSINESS_API_BASE}/app/integral/addLookVideoNum"
+    """看视频次数任务（与 JS 版 niuniuduanju.js 一致）：
+    1. 模拟观看 2. POST /app/user/updateUsers 更新次数 3. GET /app/integral/lookVideoNum 领奖励"""
     t = random.uniform(*VIDEO_WATCH_DURATION)
     log(f"模拟观看视频 ({t:.1f}s)...", "INFO", account.display_name)
     time.sleep(t)
-    # 保存状态，防止 check_response 污染导致整个账号停止
+    # STEP 1: 更新用户观看次数（与 JS 版 updateUserWatchCount 一致）
+    step = REWARD_TARGETS[min(current - 1, len(REWARD_TARGETS) - 1)] if current <= max(REWARD_TARGETS) else current
+    update_user_watch_count(token, account, step, current)
+    random_sleep((2, 3))
+    # STEP 2: 领取奖励（与 JS 版 lookVideoNum 一致）
     saved_status = account.status
     saved_msg = account.status_message
+    url = f"{BUSINESS_API_BASE}/app/integral/lookVideoNum"
     resp = safe_request("GET", url, headers=make_headers(token))
     ok, data = safe_check(resp, account, cache)
     if ok and data and data.get("code") == 0:
@@ -750,8 +756,11 @@ def watch_one_video(token: str, account: AccountConfig, cache: TaskCache,
             log(f"第{current}/{total}次观看成功", "SUCCESS", account.display_name)
         return True
     elif data:
-        log(f"第{current}次观看失败: {data.get('msg')}", "WARN", account.display_name)
-    # 恢复状态，单次失败不应终止整个任务
+        msg = str(data.get("msg", ""))
+        if "已领取" in msg or "已完成" in msg or "不能重复" in msg:
+            log(f"第{current}次: 今日已完成", "SKIP", account.display_name)
+        else:
+            log(f"第{current}次观看失败: {msg}", "WARN", account.display_name)
     account.status = saved_status
     account.status_message = saved_msg
     return False
@@ -920,6 +929,24 @@ def watch_duration(token: str, account: AccountConfig, cache: TaskCache) -> int:
     except Exception as e:
         log(f"时长任务异常: {e}", "WARN", account.display_name)
         return 0
+
+
+def update_user_watch_count(token, account, look_day_video_num, look_video_num):
+    """更新用户观看视频次数记录（与 JS 版一致：先 POST updateUsers，再 GET lookVideoNum）"""
+    try:
+        user_info = get_user_info(token, account, None) or {}
+        data = {
+            "userName": user_info.get("userName", ""),
+            "avatar": user_info.get("avatar", ""),
+            "phone": user_info.get("phone", ""),
+            "lookDayVideoNum": look_day_video_num,
+            "lookVideoNum": look_video_num,
+        }
+        safe_request("POST", f"{BUSINESS_API_BASE}/app/user/updateUsers",
+                     headers=make_json_headers(token), json=data)
+        log("updateUserWatchCount done", "INFO", account.display_name)
+    except Exception as e:
+        log(f"updateUserWatchCount failed: {e}", "WARN", account.display_name)
 
 
 def update_user_watch_duration(token: str, account: AccountConfig, video_sec: int, look_video_sec: int):
@@ -1199,15 +1226,39 @@ def main():
     print(f"=== 执行结束 [{end.strftime('%H:%M:%S')}] 耗时 {(end-start).total_seconds():.1f}s ===")
 
 
+class Tee:
+    """同时写入多个流，用于实时显示+日志收集"""
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            try:
+                s.write(data)
+                s.flush()
+            except:
+                pass
+    def flush(self):
+        for s in self.streams:
+            try:
+                s.flush()
+            except:
+                pass
+    def getvalue(self):
+        for s in self.streams:
+            if hasattr(s, 'getvalue'):
+                return s.getvalue()
+        return ''
+
+
 if __name__ == "__main__":
     import io
 
-
     _log_capture = io.StringIO()
+    _tee = Tee(sys.stdout, _log_capture)
     _old_stdout = sys.stdout
     _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
+    sys.stdout = _tee
+    sys.stderr = _tee
     try:
         main()
     except SystemExit:
@@ -1219,25 +1270,11 @@ if __name__ == "__main__":
         sys.stderr = _old_stderr
     _logs = _log_capture.getvalue()
     if _logs.strip():
-        print(_logs)
         try:
             push_notify('牛牛短剧 签到结果', _logs[-2000:])
         except:
             pass
 
 
-# ========== 自动推送 ==========
-try:
-    push_content = []
-    output = ''
-    if hasattr(sys.stdout, 'getvalue'):
-        output = sys.stdout.getvalue()
-    if output:
-        for line in output.split(chr(10)):
-            if line.strip():
-                push_content.append(line)
-    if push_content:
-        push_notify('牛牛短剧 签到结果', chr(10).join(push_content[-20:]))
-except:
-    pass
-# ========== 自动推送结束 ==========
+# ========== 已在main中处理推送 ==========
+

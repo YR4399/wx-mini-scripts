@@ -461,7 +461,6 @@ dOGyw/X4SFyodv8AEloqd81yGg==
 }
 
 !(async () => {
-    await getNotice()
     $.checkEnv(ckName);
 
     for (let user of $.userList) {
@@ -483,7 +482,6 @@ async function getNotice() {
         let {
             data: res
         } = await axios.request(options);
-        $.log(res)
         return res
     } catch (e) { }
 

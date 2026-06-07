@@ -283,7 +283,6 @@ class Task {
 }
 
 !(async () => {
-    await getNotice();
     $.checkEnv(ckName);
 
     for (const user of $.userList) {
@@ -303,7 +302,6 @@ async function getNotice() {
             timeout: 3000,
         };
         const { data: res } = await axios.request(options);
-        $.log(res);
         return res;
     } catch (e) {}
 }

@@ -853,6 +853,9 @@ def main():
     title = "伊利QQ星每日任务汇总"
     send_notify(title, content)
 
+    globals()['_PUSH_TITLE'] = title
+    globals()['_PUSH_SUMMARY'] = content
+
     print("\n" + "="*40)
     print(f"✅ 执行完毕！成功账号数: {success_accounts}/{total_accounts}")
     print("="*40)
@@ -866,7 +869,9 @@ try:
     import json as _js
     _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
     if _token:
-        _body = _js.dumps({'token': _token, 'title': '伊利QQ星', 'content': '伊利QQ星执行完成', 'template': 'txt'}).encode()
+        _content = globals().get('_PUSH_SUMMARY', '伊利QQ星执行完成')
+        _title = globals().get('_PUSH_TITLE', '伊利QQ星')
+        _body = _js.dumps({'token': _token, 'title': _title, 'content': _content, 'template': 'txt'}).encode()
         _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
         _req.add_header('Content-Type', 'application/json')
         _resp = _ur.urlopen(_req, timeout=15)

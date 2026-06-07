@@ -734,6 +734,9 @@ async def amain() -> int:
         send("名创优品", final)
     except Exception:
         pass
+    # 设置 PushPlus 推送内容
+    globals()['_PUSH_TITLE'] = f"名创优品 {len(accounts)}个账号"
+    globals()['_PUSH_SUMMARY'] = final
     return 0
 
 
@@ -752,7 +755,9 @@ try:
     import json as _js
     _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
     if _token:
-        _body = _js.dumps({'token': _token, 'title': '名创优品', 'content': '名创优品执行完成', 'template': 'txt'}).encode()
+        _content = globals().get('_PUSH_SUMMARY', '名创优品执行完成')
+        _title = globals().get('_PUSH_TITLE', '名创优品')
+        _body = _js.dumps({'token': _token, 'title': _title, 'content': _content, 'template': 'txt'}).encode()
         _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
         _req.add_header('Content-Type', 'application/json')
         _resp = _ur.urlopen(_req, timeout=15)
