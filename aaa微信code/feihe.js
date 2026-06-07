@@ -285,6 +285,7 @@ class Task {
 }
 
 !(async () => {
+    $.sendMsg = async () => {};
     $.checkEnv(ckName);
     if (!$.userCount) return;
 

@@ -355,6 +355,7 @@ class Task {
 }
 
 !(async () => {
+    $.sendMsg = async () => {};
     $.checkEnv(ckName);
     for (let i = 0; i < $.userList.length; i++) {
         await new Task($.userList[i], i + 1).run();

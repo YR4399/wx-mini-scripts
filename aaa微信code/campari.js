@@ -221,6 +221,7 @@ class Task {
 }
 
 !(async () => {
+    $.sendMsg = async () => {};
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

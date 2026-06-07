@@ -263,6 +263,7 @@ async function signIn(account, index) {
 // ================== 主函数 ==================
 !(async () => {
   console.log("\n🔔 爱玛会员俱乐部, 开始!");
+  $.sendMsg = async () => {};
 
   let accounts = [];
   if ($.isNode()) {
@@ -292,6 +293,7 @@ async function signIn(account, index) {
 })()
   .catch((e) => console.log(e))
   .finally(() => $.done());
+// sendMsg override added
 
 
 

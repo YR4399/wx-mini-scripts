@@ -461,6 +461,7 @@ dOGyw/X4SFyodv8AEloqd81yGg==
 }
 
 !(async () => {
+    $.sendMsg = async () => {};
     $.checkEnv(ckName);
 
     for (let user of $.userList) {
@@ -469,25 +470,6 @@ dOGyw/X4SFyodv8AEloqd81yGg==
 })()
     .catch((e) => console.log(e))
     .finally(() => $.done());
-
-async function getNotice() {
-    try {
-        let options = {
-            url: `https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json`,
-            headers: {
-                "User-Agent": defaultUserAgent,
-            },
-            timeout: 3000
-        }
-        let {
-            data: res
-        } = await axios.request(options);
-        return res
-    } catch (e) { }
-
-}
-
-
 
 // ========== 自动推送 ==========
 process.on("beforeExit", async () => {

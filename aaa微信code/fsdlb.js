@@ -275,6 +275,7 @@ class Task {
 }
 
 !(async () => {
+    $.sendMsg = async () => {};
     $.checkEnv(ckName);
 
     for (const openid of $.userList) {
@@ -283,22 +284,6 @@ class Task {
 })()
     .catch((e) => $.log(e.message || e))
     .finally(() => $.done());
-
-async function getNotice() {
-    try {
-        const options = {
-            url: "https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json",
-            headers: {
-                "User-Agent": defaultUserAgent,
-            },
-            timeout: 3000,
-        };
-        const { data: res } = await axios.request(options);
-        return res;
-    } catch (e) { }
-}
-
-
 
 // ========== 自动推送 ==========
 process.on("beforeExit", async () => {

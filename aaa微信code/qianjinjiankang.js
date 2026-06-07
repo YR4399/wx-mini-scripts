@@ -276,6 +276,7 @@ class Task {
 }
 
 !(async () => {
+    $.sendMsg = async () => {};
     $.checkEnv(ckName);
     for (const item of $.userList) {
         if (!item) continue;

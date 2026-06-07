@@ -40,7 +40,7 @@ VIDEOAIP = "https://videoaip.wentuyun.com"
 WEBURL = "https://shortvideo.wentuyun.com"
 
 VIDEO_MAX_ROUNDS = 45
-AD_MAX_ROUNDS = 35
+AD_MAX_ROUNDS = 50
 
 UA_POOL = [
     "Mozilla/5.0 (Linux; Android 13; PFEM10 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5075 MMWEBSDK/20230701 MMWEBID/8888 MicroMessenger/8.0.40.2420(0x28002837) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android",
@@ -78,12 +78,17 @@ def post(path, openid, **body):
     return req("POST", VIDEOAIP + path, openid, body)
 
 
+import threading
+_thread_local = threading.local()
+
 def log(m):
-    print(m, flush=True)
+    prefix = getattr(_thread_local, "tag", "")
+    print("[%s] %s" % (prefix, m) if prefix else m, flush=True)
 
 
 def err(m):
-    print(m, file=sys.stderr, flush=True)
+    prefix = getattr(_thread_local, "tag", "")
+    print("[%s] %s" % (prefix, m) if prefix else m, file=sys.stderr, flush=True)
 
 
 # ========== WCS 业务 openid 获取 ==========
@@ -314,6 +319,7 @@ def task_exchange(openid):
 
 def run_account(openid, idx, total):
     tag = mask(openid)
+    _thread_local.tag = tag
     delay = random.uniform(20, 35)
     log("账号 %d/%d [%s] 延迟 %.0fs 后启动" % (idx + 1, total, tag, delay))
     time.sleep(delay)
