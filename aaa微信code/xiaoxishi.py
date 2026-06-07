@@ -39,7 +39,7 @@ CTX.verify_mode = ssl.CERT_NONE
 VIDEOAIP = "https://videoaip.wentuyun.com"
 WEBURL = "https://shortvideo.wentuyun.com"
 
-VIDEO_MAX_ROUNDS = 53
+VIDEO_MAX_ROUNDS = 45
 AD_MAX_ROUNDS = 35
 
 UA_POOL = [
