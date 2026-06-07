@@ -66,24 +66,72 @@ class Task {
 
     async login() {
         const code = await this.getLoginCode();
-        // Step 1: 微信OAuth登录
-        let resp = await this.get("/v1/wechat/oauth/mini/login", { code });
-        // code: 1=已绑定, 2=待绑定
-        if (!resp) throw new Error("登录返回为空");
+        // Step 1: 微信OAuth登录 - 尝试多种方式
+        let resp = await axios({
+            method: "POST",
+            url: `${API_BASE}/v1/wechat/oauth/mini/login`,
+            params: { ajax: true, platform: "weapp", guestToken: this.guestToken },
+            data: { code },
+            headers: { ...this.headers },
+            timeout: 15000,
+            validateStatus: () => true,
+        });
+        $.log(`  DEBUG step1: status=${resp.status} data=${JSON.stringify(resp.data).slice(0,300)}`);
+        if (resp.status !== 200) throw new Error(`登录失败 HTTP ${resp.status}`);
+        
+        const d = resp.data;
+        // code: 0=失败, 1=成功已绑定, 2=待绑定
+        if (d.code !== 1 && d.code !== 2) {
+            // 尝试获取新的 guestToken 然后重试
+            const gtResp = await axios.get(`${API_BASE}/v1/guest/token`, {
+                params: { ajax: true, platform: "weapp" },
+                headers: this.headers,
+                timeout: 15000,
+                validateStatus: () => true,
+            });
+            $.log(`  DEBUG guestToken resp: ${JSON.stringify(gtResp.data).slice(0,200)}`);
+            if (gtResp.data?.data?.guestToken) {
+                this.guestToken = gtResp.data.data.guestToken;
+                // 重试登录
+                resp = await axios({
+                    method: "POST",
+                    url: `${API_BASE}/v1/wechat/oauth/mini/login`,
+                    params: { ajax: true, platform: "weapp", guestToken: this.guestToken },
+                    data: { code },
+                    headers: { ...this.headers },
+                    timeout: 15000,
+                    validateStatus: () => true,
+                });
+                $.log(`  DEBUG step1 retry: ${JSON.stringify(resp.data).slice(0,300)}`);
+            }
+        }
+        
+        if (resp.data?.code !== 1 && resp.data?.code !== 2) {
+            throw new Error(`登录失败: ${resp.data?.msg || JSON.stringify(resp.data)}`);
+        }
 
         // Step 2: 获取手机号
-        const phone = await this.get("/v1/wechat/oauth/mini/phone/new");
-        if (!phone) throw new Error("获取手机号失败");
+        const phoneResp = await axios.get(`${API_BASE}/v1/wechat/oauth/mini/phone/new`, {
+            params: { ajax: true, platform: "weapp", guestToken: this.guestToken },
+            headers: this.headers,
+            timeout: 15000,
+            validateStatus: () => true,
+        });
+        const phoneData = phoneResp.data?.data || phoneResp.data;
+        $.log(`  DEBUG phone: ${JSON.stringify(phoneData).slice(0,200)}`);
 
         // Step 3: 绑定获取token
-        const bindResp = await this.get("/v1/wechat/oauth/mini/bind");
-        if (bindResp?.access_token) {
-            this.token = bindResp.access_token;
-        } else {
-            // direct return with token
-            this.token = bindResp?.token || bindResp?.accessToken || "";
-        }
-        if (!this.token) throw new Error(`绑定未返回token: ${JSON.stringify(bindResp)}`);
+        const bindResp = await axios.get(`${API_BASE}/v1/wechat/oauth/mini/bind`, {
+            params: { ajax: true, platform: "weapp", guestToken: this.guestToken },
+            headers: this.headers,
+            timeout: 15000,
+            validateStatus: () => true,
+        });
+        const bindData = bindResp.data?.data || bindResp.data;
+        $.log(`  DEBUG bind: ${JSON.stringify(bindData).slice(0,200)}`);
+        
+        this.token = bindData?.access_token || bindData?.token || bindData?.accessToken || "";
+        if (!this.token) throw new Error(`绑定未返回token: ${JSON.stringify(bindData)}`);
         this.saveCache();
         $.log(`账号[${this.index}] 登录成功`);
     }

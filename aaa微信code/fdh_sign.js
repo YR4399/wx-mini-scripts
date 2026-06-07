@@ -37,7 +37,8 @@ class Task {
         this.index = $.userIdx++;
         this.openid = openid;
         this.token = "";
-        this.yzUid = "";
+        this.userId = 0;
+        this.mobile = "";
     }
 
     get headers() {
@@ -55,7 +56,7 @@ class Task {
     }
     saveCache() {
         const c = readCache();
-        c[this.openid] = { token: this.token, yzUid: this.yzUid, ts: Date.now() };
+        c[this.openid] = { token: this.token, userId: this.userId, mobile: this.mobile, ts: Date.now() };
         writeCache(c);
     }
 
@@ -69,38 +70,54 @@ class Task {
     async login() {
         const code = await this.getLoginCode();
         const body = {
-            app_id: MINI_APP_ID,
+            appId: MINI_APP_ID,
             code,
             platformName: "weapp",
+            signature: "Windows",
         };
         const resp = await axios.post(`${UIC_URL}/passport/general/auth.json`, body, {
-            headers: { ...this.headers, "Content-Type": "application/json" },
+            headers: {
+                ...this.headers,
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
             timeout: 15000,
+            validateStatus: () => true,
         });
-        const d = resp.data?.data || resp.data;
-        this.token = d.access_token || d.accessToken || "";
-        this.yzUid = String(d.yz_uid || d.yzUid || "");
-        if (!this.token) throw new Error(`登录未返回 token: ${JSON.stringify(resp.data)}`);
+        if (resp.status !== 200 || resp.data?.code !== 0 || !resp.data?.data?.sessionId) {
+            throw new Error(`登录失败: ${JSON.stringify(resp.data)}`);
+        }
+        const d = resp.data.data;
+        this.token = d.sessionId || "";
+        this.userId = d.userId || 0;
+        this.mobile = d.mobile || "";
+        if (!this.token) throw new Error(`登录未返回 sessionId: ${JSON.stringify(resp.data)}`);
         this.saveCache();
-        $.log(`账号[${this.index}] 登录成功 yzUid=${this.yzUid}`);
+        $.log(`账号[${this.index}] 登录成功 uid=${this.userId} ${this.mobile}`);
     }
 
     async get(path, params = {}) {
         const q = { app_id: MINI_APP_ID, kdt_id: KDT_ID, access_token: this.token, ...params };
-        const resp = await axios.get(`${API_BASE}${path}`, { params: q, headers: this.headers, timeout: 15000 });
-        if (resp.data?.code !== 0) throw new Error(resp.data?.msg || JSON.stringify(resp.data));
-        return resp.data.data;
+        const extraData = JSON.stringify({ is_weapp: 1, sid: this.token, userId: this.userId, version: "2.233.4.101", client: "weapp" });
+        const hdrs = {
+            ...this.headers,
+            "Cookie": `KDTSESSIONID=${this.token}`,
+            "Extra-Data": extraData,
+        };
+        const resp = await axios.get(`${API_BASE}${path}`, { params: q, headers: hdrs, timeout: 15000, validateStatus: () => true });
+        if (resp.data?.code !== 0 && resp.data?.code !== 200) throw new Error(resp.data?.msg || JSON.stringify(resp.data));
+        return resp.data.data || resp.data;
     }
 
     async run() {
         // 读取缓存
         const cached = this.getCached();
-        if (cached?.token && cached?.yzUid) {
+        if (cached?.token && cached?.userId) {
             this.token = cached.token;
-            this.yzUid = cached.yzUid;
-            $.log(`账号[${this.index}] 使用缓存 token`);
+            this.userId = cached.userId;
+            this.mobile = cached.mobile;
+            $.log(`账号[${this.index}] 使用缓存 uid=${this.userId}`);
             try {
-                // 验证 token 有效性
                 await this.get("/wscuser/membercenter/stats.json", { currentKdtId: KDT_ID, version: "2.233.4.101" });
             } catch {
                 $.log(`账号[${this.index}] 缓存失效，重新登录`);
@@ -113,20 +130,31 @@ class Task {
         // 查询签到状态
         try {
             const status = await this.get("/wscump/checkin/get_activity_by_yzuid_v2.json", { checkinId: CHECKIN_ID });
-            if (status.isCheckin) {
+            if (status?.isCheckin) {
                 $.log(`账号[${this.index}] 今日已签到 (连续${status.continuesDay}天)`);
                 if (status.rewards?.length) {
                     const prize = status.rewards.find(r => !r.fetched);
                     if (prize) $.log(`  连续签到奖励待领取: ${prize.duration}天`);
                 }
             } else {
-                // 执行签到
-                const result = await this.get("/wscump/checkin/checkinV2.json", { checkinId: CHECKIN_ID });
-                if (result.success) {
-                    const award = result.list?.[0]?.infos?.title || "+奖励";
-                    $.log(`账号[${this.index}] 签到成功: ${award}`);
+                const extraData = JSON.stringify({ is_weapp: 1, sid: this.token, userId: this.userId, version: "2.233.4.101", client: "weapp" });
+                const url = `${API_BASE}/wscump/checkin/checkinV2.json?app_id=${MINI_APP_ID}&kdt_id=${KDT_ID}&access_token=${this.token}&checkinId=${CHECKIN_ID}&userId=${this.userId}`;
+                const resp2 = await axios.get(url, {
+                    headers: {
+                        ...this.headers,
+                        "Cookie": `KDTSESSIONID=${this.token}`,
+                        "Extra-Data": extraData,
+                    },
+                    timeout: 15000,
+                    validateStatus: () => true,
+                });
+                const result = resp2.data;
+                if (result?.code === 0 || result?.success) {
+                    $.log(`账号[${this.index}] 签到成功: +10积分`);
+                } else if (/已达最大参与|已签到|已签|already|limit/i.test(result?.msg || "")) {
+                    $.log(`账号[${this.index}] 今日已签到`);
                 } else {
-                    $.log(`账号[${this.index}] 签到失败: ${JSON.stringify(result)}`);
+                    $.log(`账号[${this.index}] 签到失败: ${result?.msg || JSON.stringify(result)}`);
                 }
             }
         } catch (e) {
@@ -136,7 +164,7 @@ class Task {
         // 查询积分
         try {
             const stats = await this.get("/wscuser/membercenter/stats.json", { currentKdtId: KDT_ID, version: "2.233.4.101" });
-            $.log(`账号[${this.index}] 当前积分: ${stats.stats?.points ?? "?"}`);
+            $.log(`账号[${this.index}] 当前积分: ${stats?.stats?.points ?? "?"}`);
         } catch {}
     }
 }
