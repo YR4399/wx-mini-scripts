@@ -538,6 +538,18 @@ def make_json_headers(token: str) -> dict:
     return h
 
 
+def safe_check(resp: Optional[requests.Response], account: AccountConfig,
+               cache: TaskCache) -> Tuple[bool, Optional[dict]]:
+    """check_response 的安全版本：失败时不改变账号状态，避免单个请求失败导致后续任务全部跳过"""
+    saved_status = account.status
+    saved_msg = account.status_message
+    ok, data = check_response(resp, account, cache)
+    if not ok:
+        account.status = saved_status
+        account.status_message = saved_msg
+    return ok, data
+
+
 def check_response(resp: Optional[requests.Response], account: AccountConfig,
                    cache: TaskCache) -> Tuple[bool, Optional[dict]]:
     if not resp:
@@ -582,7 +594,7 @@ def check_response(resp: Optional[requests.Response], account: AccountConfig,
 def get_integral(token: str, account: AccountConfig, cache: TaskCache) -> int:
     url = f"{BUSINESS_API_BASE}/app/integral/selectByUserId"
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if ok and data and data.get("code") == 0:
         return data.get("data", {}).get("integralNum", 0)
     return 0
@@ -591,7 +603,7 @@ def get_integral(token: str, account: AccountConfig, cache: TaskCache) -> int:
 def get_user_info(token: str, account: AccountConfig, cache: TaskCache) -> Optional[Dict]:
     url = f"{BUSINESS_API_BASE}/app/user/getUserInfo"
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if ok and data and data.get("code") == 0:
         return data.get("data", {})
     return None
@@ -653,7 +665,14 @@ def do_sign_and_resign(token: str, account: AccountConfig, cache: TaskCache) -> 
         signed = sign_in(token, account, cache, today)
     else:
         log("今日已签到", "SKIP", account.display_name)
+    # 补签前保存账号状态，防止 getUserInfo 的 check_response 改变状态导致后续任务被跳过
+    saved_status = account.status
+    saved_msg = account.status_message
     resign_count = try_resign_missing_days(token, account, cache)
+    # 恢复账号状态（补签失败不应影响后续任务）
+    if account.status != AccountStatus.OK and saved_status == AccountStatus.OK:
+        account.status = saved_status
+        account.status_message = saved_msg
     return signed, resign_count
 
 
@@ -666,7 +685,7 @@ def like_video(token: str, account: AccountConfig, cache: TaskCache,
         if not account.is_runnable():
             break
         resp = safe_request("POST", url, json=payload, headers=make_json_headers(token))
-        ok, data = check_response(resp, account, cache)
+        ok, data = safe_check(resp, account, cache)
         if ok and data and data.get("code") == 0:
             success_count += 1
             log(f"第{i+1}/{like_count}次点赞成功", "SUCCESS", account.display_name)
@@ -685,7 +704,7 @@ def like_video(token: str, account: AccountConfig, cache: TaskCache,
 def claim_like_reward(token: str, account: AccountConfig, cache: TaskCache) -> bool:
     url = f"{BUSINESS_API_BASE}/app/integral/goodVideo"
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if ok and data and data.get("code") == 0:
         log(f"领取点赞奖励: {data.get('msg')}", "SUCCESS", account.display_name)
         return True
@@ -700,7 +719,7 @@ def claim_video_reward(token: str, account: AccountConfig, cache: TaskCache,
                        before_integral: int, target: int) -> bool:
     url = f"{BUSINESS_API_BASE}/app/integral/lookVideoNum"
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if not ok:
         return False
     if data.get("code") != 0:
@@ -721,14 +740,20 @@ def watch_one_video(token: str, account: AccountConfig, cache: TaskCache,
     t = random.uniform(*VIDEO_WATCH_DURATION)
     log(f"模拟观看视频 ({t:.1f}s)...", "INFO", account.display_name)
     time.sleep(t)
+    # 保存状态，防止 check_response 污染导致整个账号停止
+    saved_status = account.status
+    saved_msg = account.status_message
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if ok and data and data.get("code") == 0:
         if current % 5 == 0 or current == total:
             log(f"第{current}/{total}次观看成功", "SUCCESS", account.display_name)
         return True
     elif data:
         log(f"第{current}次观看失败: {data.get('msg')}", "WARN", account.display_name)
+    # 恢复状态，单次失败不应终止整个任务
+    account.status = saved_status
+    account.status_message = saved_msg
     return False
 
 
@@ -782,7 +807,7 @@ def get_current_eat_slot() -> Optional[Dict]:
 def eat_gold(token: str, account: AccountConfig, cache: TaskCache) -> Tuple[bool, str]:
     url = f"{BUSINESS_API_BASE}/app/integral/eatGold"
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if not ok:
         return False, "请求失败"
     return (data.get("code") == 0, data.get("msg", ""))
@@ -799,7 +824,7 @@ def check_and_claim_eat_gold(token: str, account: AccountConfig, cache: TaskCach
     # 获取服务端时间配置
     url = f"{BUSINESS_API_BASE}/app/common/type/933"
     resp = safe_request("GET", url, headers=make_headers(token))
-    ok, data = check_response(resp, account, cache)
+    ok, data = safe_check(resp, account, cache)
     if not ok or not data or data.get("code") != 0:
         return False
     config = data.get("data", {})
@@ -841,7 +866,15 @@ def watch_duration(token: str, account: AccountConfig, cache: TaskCache) -> int:
         log("今日时长任务已完成", "SKIP", account.display_name)
         return 0
     try:
+        # 保存状态，防止 get_user_info 的 check_response 污染
+        saved_status = account.status
+        saved_msg = account.status_message
         user_info = get_user_info(token, account, cache)
+        if not user_info:
+            account.status = saved_status
+            account.status_message = saved_msg
+            log("时长任务: 获取用户信息失败", "WARN", account.display_name)
+            return 0
         next_step = int(user_info.get("okLookVideoSec", 0) or 0)
         if next_step < 1:
             next_step = 1
@@ -889,10 +922,10 @@ def watch_duration(token: str, account: AccountConfig, cache: TaskCache) -> int:
         return 0
 
 
-def update_user_watch_duration(token: str, account: AccountConfig, video_sec: int, look_video_sec: int, cache=None):
+def update_user_watch_duration(token: str, account: AccountConfig, video_sec: int, look_video_sec: int):
     """更新用户观看时长记录"""
     try:
-        user_info = get_user_info(token, account, cache) or {}
+        user_info = get_user_info(token, account, None) or {}
         data = {
             "userName": user_info.get("userName", ""),
             "avatar": user_info.get("avatar", ""),
