@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-07 16:04
-> 📦 脚本总数：**92** 个
+> 🕐 最后同步：2026-06-07 18:00
+> 📦 脚本总数：**95** 个
 
 </div>
 
@@ -28,13 +28,16 @@
 | `angel_sign.py` | 安吉尔 | 06-06 | 06-07 14:52 | 🌸 |
 | `cbd_sign.js` | 茶百道 | 06-05 | 06-07 11:56 | 🌸 |
 | `dt生活签到.py` | DT生活 | 06-06 | 06-07 14:12 | 🌸 |
+| `fdh_sign.js` | 福东海 签到 | 06-07 |  | 🥀 |
 | `glico_sign.py` | 格力高 | 06-07 | 06-07 10:28 | 🌸 |
 | `haishibao_sign.py` | 孩视宝 | 06-06 | 06-07 13:56 | 🌸 |
 | `jlc_sign.js` | 嘉立创金豆商城 | 06-05 | 06-07 14:36 | 🌸 |
+| `klh_sign.js` | 快乐会 签到 | 06-07 |  | 🥀 |
 | `lj_sign.py` | 联家超市 | 06-04 | 06-07 08:52 | 🌸 |
+| `mlh_sign.js` | 梦百合 签到 | 06-07 |  | 🥀 |
 | `小紫_sign.py` | 小紫有约 | 06-04 | — | 🌱 |
 | `米多奇签到.py` | (无描述) | 06-05 | 06-07 08:00 | 🌸 |
-| `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-06 | 06-06 16:12 | 🌸 |
+| `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-06 | 06-07 16:12 | 🌸 |
 
 <div align="center">
 
@@ -103,7 +106,7 @@
 | `mengxiangjia.js` | 梦想家 | 06-05 | 06-07 12:28 | 🌸 |
 | `mfd.js` | 麦富迪 | 06-05 | 06-07 12:12 | 🌸 |
 | `mifengjingxishe.js` | 蜜蜂惊喜社 | 06-05 | 06-07 11:48 | 🌸 |
-| `miqilin.js` | 米麒麟 | 06-07 | 06-06 16:28 | 🌸 |
+| `miqilin.js` | 米麒麟 | 06-07 | 06-07 16:28 | 🌸 |
 | `musi.js` | 慕斯 | 06-07 | 06-07 10:04 | 🌸 |
 | `mxbc.js` | 蜜雪冰城 | 06-07 | 06-07 08:12 | 🌸 |
 | `nice.js` | 纳爱斯 | 06-05 | 06-07 11:00 | 🌸 |
@@ -113,7 +116,7 @@
 | `qianjinjiankang.js` | 千金健康 | 06-05 | 06-07 08:44 | 🌸 |
 | `qiaqia.js` | 洽洽 | 06-05 | 06-07 13:08 | 🌸 |
 | `roki.js` | 老板电器ROKI | 06-05 | 06-07 09:56 | 🌸 |
-| `sinsin.js` | SINSIN | 06-05 | 06-06 16:20 | 🌸 |
+| `sinsin.js` | SINSIN | 06-05 | 06-07 16:20 | 🌸 |
 | `stokke.js` | Stokke | 06-07 | 06-07 12:36 | 🌸 |
 | `tmj.js` | 谭木匠 | 06-05 | 06-07 10:36 | 🌸 |
 | `tnjy.js` | 天牛旧衣回收 | 06-05 | 06-07 14:20 | 🌸 |
@@ -141,7 +144,7 @@
 | `BREO.py` | 倍轻松 | 06-07 | 06-07 13:00 | 🌸 |
 | `_push_helper.py` | (无描述) | 06-05 | — | 🌱 |
 | `ljg_ad_watcher.py` | 乐购 | 06-06 | 06-07 10:44 | 🌸 |
-| `miniso_stock.py` | (无描述) | 06-06 | 06-07 16:00 | 🌸 |
+| `miniso_stock.py` | (无描述) | 06-06 | — | 🌱 |
 | `quechao.py` | 雀巢 | 06-04 | 06-07 07:24 | 🌸 |
 | `tpy_lyb.py` | 太平洋蓝医保 | 06-05 | 06-07 08:04 | 🌸 |
 | `xiaoxishi.py` | 小喜柿 签到/视频/广告/打卡/兑换 | 06-07 | — | 🌱 |
