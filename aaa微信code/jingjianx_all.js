@@ -18,13 +18,14 @@ wx_auth        必填，wx_server 鉴权值
 */
 
 const { Env } = require("../tools/env.js");
+const { sendPushNotify } = require("./_push_helper");
 const $ = new Env("jingjianx统一签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
 
-const CK_NAME = "wx_opinion";
+const CK_NAME = "jingjianx_all";
 const WX_SERVER_URL = process.env.wx_server_url || "http://192.168.31.196:8787";
 const WX_AUTH = process.env.wx_auth || "";
 const CACHE_FILE = path.join(__dirname, "jingjianx_all_token_cache.json");
@@ -564,4 +565,18 @@ class ShopTask {
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(() => $.done());
+    .finally(async () => {
+    $.sendMsg = async () => {};
+    try {
+        const lines = [];
+        lines.push("| 小程序 | 用户 | 资产 | 签到 |");
+        lines.push("|--------|------|------|------|");
+        for (const item of summaries) {
+            lines.push(`| ${item.appName} | ${item.member} | ${item.assets} | ${item.sign} |`);
+        }
+        if (lines.length > 2) {
+            await sendPushNotify("jingjianx_all 签到结果", lines.join("\n"));
+        }
+    } catch(_e) {}
+    $.done();
+});

@@ -263,7 +263,7 @@ async function signIn(account, index) {
 // ================== 主函数 ==================
 !(async () => {
   console.log("\n🔔 爱玛会员俱乐部, 开始!");
-  $.sendMsg = async () => {};
+  
 
   let accounts = [];
   if ($.isNode()) {
@@ -292,18 +292,15 @@ async function signIn(account, index) {
   // await $.sendMsg($.logs.join("\n"));
 })()
   .catch((e) => console.log(e))
-  .finally(() => $.done());
-// sendMsg override added
-
-
-
-// ========== 自动推送 ==========
-process.on("beforeExit", async () => {
+  .finally(async () => {
+    // ========== push result ==========
     try {
-        const logs = global._pushLogs || [];
-        if (logs.length > 0) {
-            await sendPushNotify("aima 签到结果", logs.join("\n"));
+        const _logs = $.notifyStr || [];
+        if (_logs.length > 0) {
+            await sendPushNotify("爱玛会员俱乐部", _logs.join("\n"));
         }
-    } catch(e) {}
+    } catch(_e) {}
+    // ========== push end ==========
+    $.done();
 });
-// ========== 自动推送结束 ==========
+// sendMsg override added

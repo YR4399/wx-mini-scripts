@@ -17,13 +17,14 @@ wx_auth        必填，wx_server 鉴权值
 */
 
 const { Env } = require("../tools/env.js");
+const { sendPushNotify } = require("./_push_helper");
 const $ = new Env("ykb_huiyuan统一签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
 
-const CK_NAME = "wx_opinion";
+const CK_NAME = "ykb_all";
 const API_BASE = "https://pw.gzych.vip";
 const TOKEN_CACHE_FILE = path.join(__dirname, "ykb_all_token_cache.json");
 const USER_AGENT =
@@ -558,5 +559,19 @@ class Task {
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(() => $.done());
+    .finally(async () => {
+    $.sendMsg = async () => {};
+    try {
+        const lines = [];
+        lines.push("| 小程序 | 用户 | 资产 | 签到 |");
+        lines.push("|--------|------|------|------|");
+        for (const item of summaries) {
+            lines.push(`| ${item.appName} | ${item.member} | ${item.assets} | ${item.sign} |`);
+        }
+        if (lines.length > 2) {
+            await sendPushNotify("ykb_all 签到结果", lines.join("\n"));
+        }
+    } catch(_e) {}
+    $.done();
+});
 

@@ -461,7 +461,7 @@ dOGyw/X4SFyodv8AEloqd81yGg==
 }
 
 !(async () => {
-    $.sendMsg = async () => {};
+    
     $.checkEnv(ckName);
 
     for (let user of $.userList) {
@@ -469,15 +469,15 @@ dOGyw/X4SFyodv8AEloqd81yGg==
     }
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
-
-// ========== 自动推送 ==========
-process.on("beforeExit", async () => {
+    .finally(async () => {
+    // ========== push result ==========
     try {
-        const logs = global._pushLogs || [];
-        if (logs.length > 0) {
-            await sendPushNotify("mxbc 签到结果", logs.join("\n"));
+        const _logs = $.notifyStr || [];
+        if (_logs.length > 0) {
+            await sendPushNotify("蜜雪冰城", _logs.join("\n"));
         }
-    } catch(e) {}
+    } catch(_e) {}
+    // ========== push end ==========
+    $.sendMsg = async () => {};
+    $.done();
 });
-// ========== 自动推送结束 ==========

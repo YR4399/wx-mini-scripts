@@ -278,7 +278,7 @@ class Task {
 }
 
 !(async () => {
-    $.sendMsg = async () => {};
+    
     $.checkEnv(ckName);
 
     for (const user of $.userList) {
@@ -286,15 +286,15 @@ class Task {
     }
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
-
-// ========== 自动推送 ==========
-process.on("beforeExit", async () => {
+    .finally(async () => {
+    // ========== push result ==========
     try {
-        const logs = global._pushLogs || [];
-        if (logs.length > 0) {
-            await sendPushNotify("gyjj 签到结果", logs.join("\n"));
+        const _logs = $.notifyStr || [];
+        if (_logs.length > 0) {
+            await sendPushNotify("国乐酱酒", _logs.join("\n"));
         }
-    } catch(e) {}
+    } catch(_e) {}
+    // ========== push end ==========
+    $.sendMsg = async () => {};
+    $.done();
 });
-// ========== 自动推送结束 ==========

@@ -245,24 +245,22 @@ class Task {
 }
 
 !(async () => {
-    $.sendMsg = async () => {};
+    
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(() => $.done());
-
-
-
-// ========== 自动推送 ==========
-process.on("beforeExit", async () => {
+    .finally(async () => {
+    // ========== push result ==========
     try {
-        const logs = global._pushLogs || [];
-        if (logs.length > 0) {
-            await sendPushNotify("bluedash 签到结果", logs.join("\n"));
+        const _logs = $.notifyStr || [];
+        if (_logs.length > 0) {
+            await sendPushNotify("BLUE DASH 布鲁大师签到", _logs.join("\n"));
         }
-    } catch(e) {}
+    } catch(_e) {}
+    // ========== push end ==========
+    $.sendMsg = async () => {};
+    $.done();
 });
-// ========== 自动推送结束 ==========

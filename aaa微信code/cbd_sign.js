@@ -183,7 +183,7 @@ class Task {
 }
 
 !(async () => {
-    $.sendMsg = async () => {};
+    
     $.checkEnv(ckName);
 
     for (let i = 0; i < $.userList.length; i++) {
@@ -194,17 +194,15 @@ class Task {
     }
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
-
-
-
-// ========== 自动推送 ==========
-process.on("beforeExit", async () => {
+    .finally(async () => {
+    // ========== push result ==========
     try {
-        const logs = global._pushLogs || [];
-        if (logs.length > 0) {
-            await sendPushNotify("cbd_sign 签到结果", logs.join("\n"));
+        const _logs = $.notifyStr || [];
+        if (_logs.length > 0) {
+            await sendPushNotify("茶百道签到", _logs.join("\n"));
         }
-    } catch(e) {}
+    } catch(_e) {}
+    // ========== push end ==========
+    $.sendMsg = async () => {};
+    $.done();
 });
-// ========== 自动推送结束 ==========

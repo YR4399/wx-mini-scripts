@@ -40,7 +40,9 @@ VIDEOAIP = "https://videoaip.wentuyun.com"
 WEBURL = "https://shortvideo.wentuyun.com"
 
 VIDEO_MAX_ROUNDS = 45
-AD_MAX_ROUNDS = 50
+AD_MAX_ROUNDS = 25
+AD_COINS_CAP = 4800  # 广告金币上限,到达即停
+DEADLINE_HOUR = 23  # 晚上11点强制停止视频/广告任务
 
 UA_POOL = [
     "Mozilla/5.0 (Linux; Android 13; PFEM10 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5075 MMWEBSDK/20230701 MMWEBID/8888 MicroMessenger/8.0.40.2420(0x28002837) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android",
@@ -151,6 +153,14 @@ def load_openids():
         wcs_raw = os.getenv("WECHAT_ACCOUNTS", "")
     wcs_ids = [x.strip() for x in wcs_raw.replace("\n", "&").split("&") if x.strip()]
 
+    # 临时跳过指定 openid (XXS_SKIP 环境变量, 多个用 & 分隔)
+    skip_raw = os.getenv("XXS_SKIP", "")
+    if skip_raw:
+        skip_set = {x.strip() for x in skip_raw.replace("\n", "&").split("&") if x.strip()}
+        wcs_ids = [x for x in wcs_ids if x not in skip_set]
+        if skip_set:
+            log("[跳过] XXS_SKIP 已排除 %d 个账号" % len(skip_set))
+
     cache = read_user_cache()
     wcs_ok = bool(os.getenv("wx_server_url"))
     result = []
@@ -203,7 +213,14 @@ def task_sign(openid):
         log("  [签到] 失败: %s" % (r["data"].get("msg") or r.get("msg")))
 
 
+def check_deadline():
+    return time.localtime().tm_hour >= DEADLINE_HOUR
+
+
 def task_video(openid):
+    if check_deadline():
+        log("  [视频] 已过%d点,跳过" % DEADLINE_HOUR)
+        return
     cap = (
         get("/api/video/everyDayVideoCoins", openid)["data"].get("allCoinsDay") or 30000
     )
@@ -215,6 +232,9 @@ def task_video(openid):
     cfg = j["data"]["videoCoins"]
     got = 0
     for _ in range(VIDEO_MAX_ROUNDS):
+        if check_deadline():
+            log("  [视频] 已过%d点,强制停止(累计 %s)" % (DEADLINE_HOUR, got))
+            break
         item = cfg.get(str(task))
         if not item:
             log("  [视频] 所有档位已完成")
@@ -229,7 +249,7 @@ def task_video(openid):
         got += d.get("coins", item["coins"])
         cfg = d.get("coinsConfig", cfg)
         nt = d.get("next_task")
-        log("  [视频] 第%s档 +%s(累计 %s)" % (task, d.get("coins", item["coins"]), got))
+        log("  [视频] 第%s档 +%s(累计 %s),下档等 %ss" % (task, d.get("coins", item["coins"]), got, item["time"]))
         if got >= cap:
             log("  [视频] 已达每日上限 %s" % cap)
             break
@@ -250,6 +270,9 @@ def task_ad(openid):
     got = 0
     rounds = 0
     for _ in range(AD_MAX_ROUNDS):
+        if check_deadline():
+            log("  [广告] 已过%d点,强制停止(累计 %s)" % (DEADLINE_HOUR, got))
+            break
         r = get("/api/ad/adSuccess", openid)
         inner = r.get("data") if isinstance(r.get("data"), dict) else {}
         if not (r.get("code") == 1 and inner.get("code") == 1):
@@ -258,7 +281,10 @@ def task_ad(openid):
         d = inner.get("data") or [0, 0, 0]
         got += d[1] if len(d) > 1 else 0
         rounds += 1
-        log("  [广告] 第%d次 +%s(累计 %s)" % (rounds, d[1] if len(d) > 1 else 0, got))
+        log("  [广告] 第%d次 +%s(累计 %s),等 %ss" % (rounds, d[1] if len(d) > 1 else 0, got, d[0]))
+        if got >= AD_COINS_CAP:
+            log("  [广告] 已达金币上限 %s,完成" % AD_COINS_CAP)
+            break
         if d[0] == 0:
             log("  [广告] 服务端无更多广告,完成")
             break
@@ -332,8 +358,8 @@ def run_account(openid, idx, total):
             return tag, "失败", "openid无效"
         log("[%s] uid=%s 当前金币=%s" % (tag, uid, coins))
         task_sign(openid)
-        task_video(openid)
-        task_ad(openid)
+        task_ad(openid)     # 广告较快,先跑
+        task_video(openid)  # 视频耗时长,放后面(23点强制停止)
         task_checkin(openid, uid)
         task_exchange(openid)
         return tag, "成功", "金币=%s" % coins

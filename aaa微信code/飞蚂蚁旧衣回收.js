@@ -513,16 +513,3 @@ async function runAccount(openid, globalProxyAgent) {
     await sendPlusPlusNotification("飞蚂蚁旧衣回收任务完成", notifyContent);
     console.log('\n===== 所有账号执行完成 =====');
 })();
-
-
-
-// ========== 自动推送 ==========
-process.on("beforeExit", async () => {
-    try {
-        const logs = global._pushLogs || [];
-        if (logs.length > 0) {
-            await sendPushNotify("飞蚂蚁旧衣回收 签到结果", logs.join("\n"));
-        }
-    } catch(e) {}
-});
-// ========== 自动推送结束 ==========
