@@ -9,6 +9,8 @@ cron: 30 9 * * *
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Env } = require("../tools/env.js");
+const fs = require('fs');
+const path = require('path');
 const axios = require("axios");
 // ========== SSL和代理修复 ==========
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";

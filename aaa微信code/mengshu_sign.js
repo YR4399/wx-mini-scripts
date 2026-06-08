@@ -80,7 +80,9 @@ class Task {
 
     async login(code) {
         try {
-            const axios = require("axios");
+            const fs = require('fs');
+const path = require('path');
+const axios = require("axios");
             const { data } = await axios.post(
                 `${BASE}/dtapi/appLogin`,
                 { principal: code, appType: 1 },
@@ -109,7 +111,9 @@ class Task {
 
     async queryPoints() {
         try {
-            const axios = require("axios");
+            const fs = require('fs');
+const path = require('path');
+const axios = require("axios");
             const { data } = await axios.get(`${BASE}/dtapi/pointsSign/user/pointsInfo/query`, {
                 headers: headers(this.token),
                 timeout: 10000,
@@ -127,7 +131,9 @@ class Task {
 
     async querySignList() {
         try {
-            const axios = require("axios");
+            const fs = require('fs');
+const path = require('path');
+const axios = require("axios");
             const { data } = await axios.get(`${BASE}/dtapi/pointsSign/user/sign/list`, {
                 params: { v4Flag: true },
                 headers: headers(this.token),
@@ -144,7 +150,9 @@ class Task {
 
     async doSign() {
         try {
-            const axios = require("axios");
+            const fs = require('fs');
+const path = require('path');
+const axios = require("axios");
             const { data } = await axios.get(`${BASE}/dtapi/pointsSign/user/sign`, {
                 params: { date: todayStr() },
                 headers: headers(this.token),

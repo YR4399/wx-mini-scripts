@@ -29,8 +29,11 @@ const {
 } = require("../tools/env")
 const $ = new Env("谢瑞麟小程序签到");
 const WeChatServer = require("./wcs.js");
+const TOKEN_CACHE_FILE = path.join(__dirname, "tslj_token_cache.json");
 let ckName = `wx_opinion`;
 const strSplitor = "#";
+const fs = require('fs');
+const path = require('path');
 const axios = require("axios");
 // ========== SSL和代理修复 ==========
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -50,6 +53,35 @@ let wechat = new WeChatServer({
 }
 );
 
+
+    readCache() {
+        try {
+            if (fs.existsSync(TOKEN_CACHE_FILE)) {
+                const cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
+                const entry = cache[this.wcsid];
+                if (entry && entry.token) return entry;
+            }
+        } catch (_) {}
+        return null;
+    }
+    saveCache(token) {
+        try {
+            let cache = {};
+            if (fs.existsSync(TOKEN_CACHE_FILE)) cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
+            cache[this.wcsid] = { token, ts: Date.now() };
+            fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache));
+        } catch (_) {}
+    }
+    clearCache() {
+        try {
+            if (fs.existsSync(TOKEN_CACHE_FILE)) {
+                const cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
+                delete cache[this.wcsid];
+                fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache));
+            }
+        } catch (_) {}
+    }
+
 class Task {
     constructor(env) {
         this.index = $.userIdx++
@@ -63,6 +95,18 @@ class Task {
     async run() {
        //随机延迟5-30s 模拟人工操作
        await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
+                // 尝试缓存token
+        const cached = this.readCache();
+        if (cached && cached.token) {
+            this.token = cached.token;
+            if (cached.ts && Date.now() - cached.ts < 70000000) {
+                $.log();
+                await this.doSignAndPoints();
+                return;
+            }
+            this.token = null;
+            this.clearCache();
+        }
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)

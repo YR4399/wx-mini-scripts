@@ -1,257 +1,248 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
-
-
 /*
-------------------------------------------
-@Author: sm
-@Date: 2024.06.07 19:15
-@Description:  
-cron: 30 9 * * 1
-------------------------------------------
-#Notice:   
-谷雨 微信小程序 签到得积分 
-WeChatCodeServer 填写wx_server_url wx_auth 用于获取code 
-变量名称：guyu 名字 授权中心 里面的openid 多个账号用&分割
-⚠️【免责声明】
-------------------------------------------
-1、此脚本仅用于学习研究，不保证其合法性、准确性、有效性，请根据情况自行判断，本人对此不承担任何保证责任。
-2、由于此脚本仅用于学习研究，您必须在下载后 24 小时内将所有内容从您的计算机或手机或任何存储设备中完全删除，若违反规定引起任何事件本人对此均不负责。
-3、请勿将此脚本用于任何商业或非法目的，若违反规定请自行对此负责。
-4、此脚本涉及应用与本人无关，本人对因此引起的任何隐私泄漏或其他后果不承担任何责任。
-5、本人对任何脚本引发的问题概不负责，包括但不限于由脚本错误引起的任何损失和损害。
-6、如果任何单位或个人认为此脚本可能涉嫌侵犯其权利，应及时通知并提供身份证明，所有权证明，我们将在收到认证文件确认后删除此脚本。
-7、所有直接或间接使用、查看此脚本的人均应该仔细阅读此声明。本人保留随时更改或补充此声明的权利。一旦您使用或复制了此脚本，即视为您已接受此免责声明。
+@Description: 谷雨 小程序签到
+cron: 36 8 * * *
 */
-
-const {
-    Env
-} = require("../tools/env")
-const $ = new Env("谷雨小程序");
-const WeChatServer = require("./wcs.js");
-let ckName = `wx_opinion`;
-const strSplitor = "#";
+const { Env } = require("../tools/env.js");
+const { sendPushNotify } = require("./_push_helper");
+const $ = new Env("谷雨签到");
 const axios = require("axios");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const WeChatServer = require("./wcs.js");
 
+const MINI_APP_ID = "wxda948f3be0afc375";
+const API_BASE = "https://mall-mobile-v6.vecrp.com";
+const TOKEN_CACHE_FILE = path.join(__dirname, "guyu_token_cache.json");
+const SECRET_KEY = "R6WbJ830wNsEdjH9GumwKYiYxHz0K9QD";
+const SHOP_ID = "100186753";
+const ACTIVITY_ID = "cdd30467-abb8-4944-8941-2879aa950a86";
+let ckName = "wx_opinion";
 
-const defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001e31) NetType/WIFI Language/zh_CN miniProgram"
-let wechat = new WeChatServer({
-    url: process.env.wx_server_url || 'https://xxx',
-    appid: 'wxda948f3be0afc375',
+const wechat = new WeChatServer({
+    url: process.env.wx_server_url || "http://127.0.0.1:8787",
+    appid: MINI_APP_ID,
     auth: process.env.wx_auth || "",
+});
 
+function uuid() {
+    return crypto.randomUUID();
 }
-);
 
 class Task {
-    constructor(env) {
-        this.index = $.userIdx++
-        this.user = env.split(strSplitor);
-        this.token = null
-        this.wcsid = this.user[0]
-        this.isSign = false
+    constructor(openid, idx) {
+        this.openid = openid;
+        this.idx = idx;
+        this.token = null;
+    }
+
+    readCache() {
+        try {
+            if (fs.existsSync(TOKEN_CACHE_FILE)) {
+                const raw = fs.readFileSync(TOKEN_CACHE_FILE, "utf-8");
+                const cache = JSON.parse(raw);
+                return cache[this.openid] || null;
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    saveCache(token) {
+        try {
+            let cache = {};
+            if (fs.existsSync(TOKEN_CACHE_FILE)) {
+                cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, "utf-8"));
+            }
+            cache[this.openid] = { token, ts: Date.now() };
+            fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache));
+        } catch (e) {}
+    }
+
+    clearCache() {
+        try {
+            if (fs.existsSync(TOKEN_CACHE_FILE)) {
+                const cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, "utf-8"));
+                delete cache[this.openid];
+                fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache));
+            }
+        } catch (e) {}
+    }
+
+    sha1(str) {
+        return crypto.createHash("sha1").update(str).digest("hex");
+    }
+
+    makeSign(method, data, params) {
+        const ts = Date.now();
+        let payload;
+        if (method === "POST") {
+            payload = { body: JSON.stringify(data), secretKey: SECRET_KEY, ts };
+        } else {
+            payload = Object.assign({}, params || {}, { secretKey: SECRET_KEY, ts });
+        }
+        const keys = Object.keys(payload).sort();
+        const raw = keys.map((k) => k + payload[k]).join("");
+        return { sign: this.sha1(raw), ts };
+    }
+
+    request(method, url, data, params) {
+        const { sign, ts } = this.makeSign(method, data, params);
+        const headers = {
+            "Content-Type": "application/json;charset=UTF-8",
+            token: this.token || "",
+            sign: sign,
+            ts: String(ts),
+            startTime: String(ts),
+            "X-TracedId": uuid(),
+            appid: MINI_APP_ID,
+            "xweb_xhr": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF",
+            Referer: `https://servicewechat.com/${MINI_APP_ID}/68/page-frame.html`,
+        };
+
+        let config = { method, url, headers, timeout: 15000 };
+        if (method === "POST") {
+            config.data = data;
+        } else {
+            config.params = params;
+        }
+        return axios.request(config);
+    }
+
+    async login(code) {
+        const { data: result } = await axios.post(`${API_BASE}/mobile/wxAppLogin`, {
+            code: String(code),
+            appid: MINI_APP_ID,
+            shopId: null,
+            envVersion: "release",
+            isEnterpriseWx: false,
+            scene: 1168,
+            referrerInfo: { appId: MINI_APP_ID },
+        }, {
+            headers: {
+                "Content-Type": "application/json;charset=UTF-8",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF",
+                appid: MINI_APP_ID,
+                "xweb_xhr": "1",
+                Referer: `https://servicewechat.com/${MINI_APP_ID}/68/page-frame.html`,
+            },
+            timeout: 15000,
+        });
+
+        if (result?.success && result?.result?.mobileToken) {
+            this.token = result.result.mobileToken;
+            this.saveCache(this.token);
+            return true;
+        }
+        $.log(`[${this.idx}] 登录失败: ${result?.message || JSON.stringify(result)}`);
+        return false;
     }
 
     async run() {
-        //随机延迟5-30s 模拟人工操作
-        await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
-        let { data: codeRes } = await wechat.getCode(this.wcsid)
-        if (codeRes.status) {
-            await this.getUserToken(codeRes.data.code)
+        // 1. 尝试缓存 token
+        const cached = this.readCache();
+        if (cached && cached.token) {
+            this.token = cached.token;
+            const alive = await this.checkToken();
+            if (!alive) {
+                this.token = null;
+                this.clearCache();
+            }
         }
+
+        // 2. 无 token则登录
         if (!this.token) {
-            $.log(`账号[${this.index}] 获取用户Token失败❌`)
-            return
-        }
-        await this.signIn()
-        await this.getUserPoints()
-    }
-    async getUserToken(code) {
-        let data = JSON.stringify({
-            "code": "" + code,
-            "appid": "wxda948f3be0afc375",
-            "shopId": null,
-            "envVersion": "release",
-            "isEnterpriseWx": false,
-            "scene": 1168,
-            "referrerInfo": {
-                "appId": "wxda948f3be0afc375"
+            const { data: codeRes } = await wechat.getCode(this.openid);
+            if (!codeRes?.data?.code && !codeRes?.code) {
+                $.log(`[${this.idx}] WCS获取code失败`);
+                return;
             }
-        });
-
-        let options = {
-            method: 'POST',
-            url: 'https://mall-mobile-v6.vecrp.com/mobile/wxAppLogin',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781 NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF XWEB/50249',
-                'Content-Type': 'application/json;charset=UTF-8',
-                'xweb_xhr': '1',
-                'appid': 'wxda948f3be0afc375',
-                'token': '',
-                'Sec-Fetch-Site': 'cross-site',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Dest': 'empty',
-                'Referer': 'https://servicewechat.com/wxda948f3be0afc375/65/page-frame.html',
-                'Accept-Language': 'zh-CN,zh;q=0.9'
-            },
-            data: data
-        };
-
-        let {
-            data: result
-        } = await axios.request(options);
-        console.log(result);
-
-        if (result?.success) {
-            this.token = result.result.mobileToken
-            $.log(`🌸账号[${this.index}] 获取用户Token成功:${this.token}`)
-        } else {
-            $.log(`🌸账号[${this.index}] 获取用户Token-失败:${result.message}❌`)
+            const code = codeRes.data?.code || codeRes.code;
+            const ok = await this.login(code);
+            if (!ok) return;
+            await $.wait(2000);
         }
-    }
-    sha1(str) {
-        return require("crypto").createHash("sha1").update(str).digest("hex");
-    }
-    request(options) {
 
-        var sign,
-            n = void 0
-            , d = {},
-            l = "R6WbJ830wNsEdjH9GumwKYiYxHz0K9QD",
-            n = (new Date).getTime(),
-            d = "post" === options.method || "POST" === options.method ? {
-                body: JSON.stringify(options.data),
-                secretKey: l,
-                ts: n
-            } : Object.assign({}, options.params, {
-                secretKey: l,
-                ts: n
-            }),
-            sign = this.sha1(function (e) {
-                var t, a = [];
-                for (t in e) {
-                    var r = t + e[t];
-                    a.push(r)
+        // 3. 查询签到状态
+        try {
+            const { data: info } = await this.request("GET", `${API_BASE}/mobile/activity/sign/loadActivityInfo`, null, {
+                activityId: ACTIVITY_ID,
+                source: "undefined",
+                shopId: SHOP_ID,
+            });
+
+            if (info?.success) {
+                const points = info.result?.customerIntegral || "0";
+                const signDays = info.result?.signDays ?? 0;
+                $.log(`[${this.idx}] 积分=${points} 连签=${signDays}天`);
+
+                if (!info.result?.canJoin) {
+                    $.log(`[${this.idx}] 今日已签到`);
+                    return;
                 }
-                a.sort();
-                var u = "";
-                return a.map((function (e) {
-                    "" === u ? u = e : u += e
-                }
-                )),
-                    u
-            }(d))
-        let baseHeaders = {
-            host: "mall-mobile-v6.vecrp.com",
-            "accept": "*/*",
-            "accept-language": "zh-CN,zh;q=0.9",
-            "appid": "wxda948f3be0afc375",
-            "content-type": "application/json;charset=UTF-8",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "cross-site",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254173b) XWEB/19027",
-            "sign": "" + sign,
-            "starttime": "" + n,
-            "token": "" + this.token,
-            "ts": "" + n,
-            "x-tracedid": "" + $.uuid(),
-            "xweb_xhr": "1",
-            "Referer": "https://servicewechat.com/wxda948f3be0afc375/65/page-frame.html",
-        }
-        options.headers = Object.assign(options.headers, baseHeaders)
-
-        return axios.request(options)
-    }
-    async signIn() {
-        let options = {
-            method: 'POST',
-            url: `https://mall-mobile-v6.vecrp.com/mobile/activity/sign/sign`,
-
-            headers: {},
-            data: {
-                activityId: 'cdd30467-abb8-4944-8941-2879aa950a86',
-                shopId: '100186753',
-                signDate: $.time(`yyyy-M-dd`),
             }
-
-        };
-        let {
-            data: result
-        } = await this.request(options);
-        if (result?.success) {
-            //打印签到结果
-            $.log(`🌸账号[${this.index}]` + `签到成功`);
-        } else {
-            $.log(`🌸账号[${this.index}] 签到-失败:${result.msg}❌`)
+        } catch (e) {
+            $.log(`[${this.idx}] 查询签到状态异常: ${e.message}`);
+            return;
         }
 
+        // 4. 执行签到
+        try {
+            const today = $.time("yyyy-M-dd");
+            const { data: signResult } = await this.request("POST", `${API_BASE}/mobile/activity/sign/sign`, {
+                shopId: SHOP_ID,
+                activityId: ACTIVITY_ID,
+                signDate: today,
+            });
 
-
-
-    }
-    async getUserPoints() {
-        let options = {
-            method: 'GET',
-            url: `https://mall-mobile-v6.vecrp.com/mobile/customer/getMyAllPoint`,
-            params: {
-                shopId: '100186753'
-            },
-            headers: {},
-
-        }
-        let {
-            data: result
-        } = await this.request(options);
-        if (result?.success) {
-            $.log(`账号[${this.index}]` + `积分:${result.result[0].score}`);
-        } else {
-            $.log(`账号[${this.index}] 获取积分-失败:${result.msg}❌`)
+            if (signResult?.success) {
+                const reward = signResult.result?.integral || 2;
+                $.log(`[${this.idx}] 签到成功: +${reward}积分`);
+            } else {
+                $.log(`[${this.idx}] 签到失败: ${signResult?.msg || "未知错误"}`);
+            }
+        } catch (e) {
+            $.log(`[${this.idx}] 签到异常: ${e.message}`);
         }
     }
 
-
-
-
-
-
-
-
+    async checkToken() {
+        try {
+            const { data } = await this.request("GET", `${API_BASE}/mobile/customer/getMyAllPoint`, null, {
+                shopId: SHOP_ID,
+            });
+            return data?.success;
+        } catch (e) {
+            return false;
+        }
+    }
 }
 
 !(async () => {
-    
     $.checkEnv(ckName);
-    if (process.env['wx_server_url'] && process.env['wx_auth']) {
-        for (let user of $.userList) {
-            await new Task(user).run();
-        }
-    } else {
-
-        $.log(`${ckName}未配置微信SERVER配置 搭建可看仓库目录下的readme.md❌`)
-        return
+    if (!process.env.wx_server_url || !process.env.wx_auth) {
+        $.log("未配置WCS服务");
+        return;
     }
 
-})()
-    .catch((e) => console.log(e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("谷雨小程序", _logs.join("\n"));
+    const openids = $.userList;
+    $.log(`共${openids.length}个账号`);
+
+    for (let i = 0; i < openids.length; i++) {
+        const task = new Task(openids[i], i + 1);
+        await task.run();
+        if (i < openids.length - 1) {
+            await $.wait(3000 + Math.random() * 5000);
         }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    }
+
+})().catch((e) => $.log(e.message || e))
+    .finally(async () => {
+        try {
+            const logs = $.notifyStr || [];
+            if (logs.length > 0) {
+                await sendPushNotify("谷雨签到结果", logs.join("\n"));
+            }
+        } catch (_e) {}
+        process.exit(0);
+    });
