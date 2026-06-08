@@ -81,18 +81,23 @@ class Task {
     async login(code) {
         try {
             const axios = require("axios");
-            const { data } = await axios.get(`${BASE}/dtapi/wx/auth/login`, {
-                params: { code, appId: APPID },
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF",
-                    appId: APPID,
-                    version: VERSION,
-                },
-                timeout: 10000,
-            });
-            if (data.error === 0 && data.data && data.data.token) {
-                this.token = data.data.token;
+            const { data } = await axios.post(
+                `${BASE}/dtapi/appLogin`,
+                { principal: code, appType: 1 },
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        appId: APPID,
+                        version: VERSION,
+                        envVersion: "release",
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF",
+                    },
+                    timeout: 10000,
+                }
+            );
+            if (data.access_token) {
+                this.token = data.access_token;
                 $.log(`[${this.idx}] 登录成功`);
             } else {
                 $.log(`[${this.idx}] 登录失败: ${JSON.stringify(data)}`);
