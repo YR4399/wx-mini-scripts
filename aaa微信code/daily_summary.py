@@ -58,11 +58,77 @@ def extract_summary(name, command, log_tail):
     }
 
     # 按账号编号分块解析
-    # 匹配 "账号[N]" 开头的所有行
+    # 匹配 "账号[N]" 或 "🌸账号[N]" 开头的所有行
     acct_lines = {}
     for m in re.finditer(r'账号\[(\d+)\]\s*(.+?)(?:\n|$)', log_tail):
         idx = int(m.group(1))
         acct_lines.setdefault(idx, []).append(m.group(2).strip())
+    # 匹配 账号[N][手机号] 积分[N]🎉 格式 (无空格)
+    for m in re.finditer(r'账号\[(\d+)\]\[([^\]]+)\]\s*积分\[(\d+)\]', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s 积分: %s" % (m.group(2), m.group(3)))
+    # 匹配 🌸账号[N][手机号] 积分[N]🎉 格式
+    for m in re.finditer(r'🌸账号\[(\d+)\]\[([^\]]+)\]\s*积分\[(\d+)\]', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s 积分: %s" % (m.group(2), m.group(3)))
+    # 也匹配 🌸账号[N][手机号] 积分[N]🎉 格式
+    for m in re.finditer(r'🌸账号\[(\d+)\]\[([^\]]+)\]\s*积分\[(\d+)\]', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s 积分: %s" % (m.group(2), m.group(3)))
+    # 匹配 账号[N] [手机号] 积分[N]🎉 格式 (无🌸)
+    for m in re.finditer(r'账号\[(\d+)\]\s*\[([^\]]+)\]\s*积分\[(\d+)\]', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s 积分: %s" % (m.group(2), m.group(3)))
+    # 匹配 账号[N] 用户CK有效: [手机号] 雪王币剩余[N] 格式
+    for m in re.finditer(r'账号\[(\d+)\]\s*用户CK有效:\s*\[([^\]]+)\]\s*雪王币剩余\[(\d+)\]', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s 积分: %s" % (m.group(2), m.group(3)))
+    # 匹配 账号[N] 登录成功: [手机号] 格式
+    for m in re.finditer(r'账号\[(\d+)\]\s*登录成功:\s*\[([^\]]+)\]', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s" % m.group(2))
+    # 匹配 账号[N] 用户: 陌白 193****2646 格式 (飞鹤等)
+    for m in re.finditer(r'账号\[(\d+)\]\s*用户[：:]\s*(\S+)\s+(\d[\d*]+\d)', log_tail):
+        idx = int(m.group(1))
+        acct_lines.setdefault(idx, []).append("用户: %s %s" % (m.group(2), m.group(3)))
+    # 匹配 INFO 格式: [INFO] [Login] 成功! user=陌白, uid=6907922
+    if not acct_lines:
+        for i, m in enumerate(re.finditer(r'\[INFO\]\s*\[Login\]\s*成功!\s*user=(\S+?),\s*uid=(\d+)', log_tail), 1):
+            acct_lines.setdefault(i, []).append("用户: %s" % m.group(1))
+    # 匹配 [INFO] [陌白] ✅ 签到成功 格式
+    if not acct_lines:
+        for m in re.finditer(r'\[INFO\]\s*\[([^\]]+)\]\s*(✅|签到成功|签到失败)', log_tail):
+            name = m.group(1)
+            if name not in ("INFO", "Login", "Error"):
+                idx = len(acct_lines) + 1
+                acct_lines.setdefault(idx, []).append("用户: %s %s" % (name, "✅" if "✅" in m.group(2) or "成功" in m.group(2) else "❌"))
+    info_blocks = re.findall(r'INFO\s*签到.*?当前积分=(\d+).*?INFO\s*签到结果.*?code=(\d+)', log_tail, re.DOTALL)
+    if info_blocks and not acct_lines:
+        for i, (pts, code) in enumerate(info_blocks, 1):
+            acct_lines.setdefault(i, []).append("积分: %s %s" % (pts, "✅" if code == "200" else "❌"))
+
+    # 匹配 [手机号] 当前积分: N 格式 (太平洋汽车等)
+    if not acct_lines:
+        for i, m in enumerate(re.finditer(r'\[(\d[\d*]+\d)\]\s*(?:当前积分|积分)[：:]\s*(\d+)', log_tail), 1):
+            acct_lines.setdefault(i, []).append("用户: %s 积分: %s" % (m.group(1), m.group(2)))
+
+    # 匹配 📊 当前积分: totalScore=N 格式 (imusic等)
+    if not acct_lines:
+        for i, m in enumerate(re.finditer(r'📊\s*当前积分[：:]\s*totalScore=(\d+)', log_tail), 1):
+            acct_lines.setdefault(i, []).append("积分: %s" % m.group(1))
+
+    # 匹配 💰 执行后积分: 【N】格式 (顺丰速运)
+    if not acct_lines:
+        for i, m in enumerate(re.finditer(r'💰\s*执行后积分[：:]\s*【(\d+)】', log_tail), 1):
+            acct_lines.setdefault(i, []).append("积分: %s" % m.group(1))
+
+    # 匹配 [签到] 成功 格式 (中国智普等简单签到)
+    if not acct_lines:
+        sign_ok = len(re.findall(r'签到成功|签到.*成功|今日已签到|已签到', log_tail))
+        sign_fail = len(re.findall(r'签到失败|签到.*失败', log_tail))
+        if sign_ok or sign_fail:
+            info["sign_ok"] = sign_ok
+            info["sign_fail"] = sign_fail
 
     for idx in sorted(acct_lines.keys()):
         lines = acct_lines[idx]
@@ -71,37 +137,57 @@ def extract_summary(name, command, log_tail):
         sign = ""
 
         for line in lines:
-            # 用户: 陌白 193****2646 或 用户: 陌* 193********46
+            # 用户: 陌白 193****2646
             um = re.search(r'用户[：:]\s*(.+)', line)
             if um:
                 raw = um.group(1).strip()
-                # 只取名字和手机号,去掉多余信息
-                nm = re.match(r'(.+?)\s+(\d[\d*]+\d)', raw)
-                if nm:
-                    user = nm.group(1).strip()[:10] + " " + nm.group(2)
-                elif raw not in ("null", "未知", "None", ""):
-                    user = raw[:15]
+                # 用户: memberId=xxx 193****2646 → 提取手机号
+                mm = re.search(r'memberId=\S+\s+(\d[\d*]+\d)', raw)
+                if mm:
+                    user = mm.group(1)
+                # 用户:  193****2646 (空用户名,纯手机号)
+                elif re.match(r'^\d[\d*]+\d$', raw):
+                    user = raw
                 else:
-                    user = ""
+                    # 用户: 193****2646 积分: 1375 (手机号+积分)
+                    nm = re.match(r'(\d[\d*]+\d)\s+积分', raw)
+                    if nm:
+                        user = nm.group(1)
+                    else:
+                        nm = re.match(r'(\S+)\s+(\d[\d*]+\d)', raw)
+                        if nm and nm.group(1) not in ("null", "未知", "None"):
+                            # 如果第一个字段是手机号,不截断
+                            if re.match(r'^\d[\d*]+\d$', nm.group(1)):
+                                user = nm.group(1)
+                            else:
+                                user = nm.group(1).strip()[:10] + " " + nm.group(2)
+                        elif raw not in ("null", "未知", "None", ""):
+                            user = raw.split()[0][:10] if raw.split() else ""
 
-            # 会员: 陌* 193********46 (另一个格式)
-            um2 = re.search(r'会员[：:]\s*(.+?)(?:\s+代币|\s+积分|\s*$)', line)
+            # user=安宝23183 (安吉尔格式)
+            um5 = re.search(r'user=(\S+?)(?:,|\s|$)', line)
+            if um5 and not user and um5.group(1) not in ("null", "None", "未知"):
+                user = um5.group(1).strip()[:10]
+
+            # 会员: 陌白 193****2646 或 会员: 陌白 193****2646 积分=未知
+            um2 = re.search(r'会员[：:]\s*(\S+)\s+(\d[\d*]+\d)', line)
             if um2 and not user:
-                raw = um2.group(1).strip()
-                nm = re.match(r'(.+?)\s+(\d[\d*]+\d)', raw)
-                if nm:
-                    user = nm.group(1).strip()[:10] + " " + nm.group(2)
-                elif raw not in ("null", "未知", "None", ""):
-                    user = raw[:15]
+                name = um2.group(1).strip()
+                phone = um2.group(2)
+                if name not in ("null", "未知", "None"):
+                    user = name[:10] + " " + phone
 
-            # 用户: 陌白 - 积分=11 (布鲁大师格式)
-            um3 = re.search(r'用户[：:]\s*(\S+)\s+-\s+积分', line)
+            # 会员: 陌白 180****8939 (无积分)
+            um3 = re.search(r'会员[：:]\s*(\S+)\s+(\d[\d*]+\d)\s*$', line)
             if um3 and not user:
-                raw = um3.group(1).strip()
-                if raw not in ("null", "未知", "None", ""):
-                    user = raw[:10]
+                user = um3.group(1).strip()[:10] + " " + um3.group(2)
 
-            # 积分: 12 或 当前积分350 或 当前金币=24312
+            # 会员: 🌸 198****6325
+            um4 = re.search(r'会员[：:]\s*(🌸)\s+(\d[\d*]+\d)', line)
+            if um4 and not user:
+                user = "🌸 " + um4.group(2)
+
+            # 积分: 12 或 当前积分350 或 当前金币=24312 或 积分=11
             pm = re.search(r'(?:积分|金币|快乐币)[：:=]\s*(\d+)', line)
             if pm and not points:
                 points = pm.group(1)
@@ -188,12 +274,13 @@ def build_report(runs):
             icon = "✅" if status == 0 else "❌"
             t = format_duration(duration)
 
-            log_tail = read_log_tail(log_path, 80) if log_path else ""
+            log_tail = read_log_tail(log_path, 150) if log_path else ""
             summary = extract_summary(name, run["command"], log_tail)
 
             lines.append("  %s %s (%s)" % (icon, name, t))
 
-            # 显示每个账号详情
+            # 只显示有实际内容的账号
+            has_detail = False
             for acct in summary["accounts"]:
                 parts = []
                 if acct["user"]:
@@ -202,7 +289,11 @@ def build_report(runs):
                     parts.append("积分:" + acct["points"])
                 if acct["sign"]:
                     parts.append(acct["sign"])
-                detail = " ".join(parts) if parts else "-"
+                # 跳过没有任何信息的账号
+                if not parts or parts == ["-"]:
+                    continue
+                has_detail = True
+                detail = " ".join(parts)
                 lines.append("    [%d] %s" % (acct["idx"], detail))
         lines.append("")
 
