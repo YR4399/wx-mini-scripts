@@ -10,8 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-08 18:03
-> 📦 脚本总数：**98** 个
+> 🕐 最后同步：2026-06-08 20:00
+> 📦 脚本总数：**99** 个
 
 </div>
 
@@ -36,6 +36,7 @@
 | `jlc_sign.js` | 嘉立创金豆商城 | 06-08 | 06-08 14:36 | 🌸 |
 | `klh_sign.js` | 快乐会 签到 | 06-08 | — | 🌱 |
 | `lj_sign.py` | 联家超市 | 06-04 | 06-08 08:52 | 🌸 |
+| `mengshu_sign.js` | (无描述) | 06-08 |  | 🥀 |
 | `mlh_sign.js` | 梦百合 签到 | 06-08 | — | 🌱 |
 | `小紫_sign.py` | 小紫有约 | 06-04 | — | 🌱 |
 | `米多奇签到.py` | (无描述) | 06-05 | 06-08 08:00 | 🌸 |
@@ -147,7 +148,7 @@
 | `_push_helper.py` | (无描述) | 06-05 | — | 🌱 |
 | `daily_summary.py` | (无描述) | 06-08 |  | 🥀 |
 | `ljg_ad_watcher.py` | 乐购 | 06-06 | 06-08 10:44 | 🌸 |
-| `miniso_stock.py` | (无描述) | 06-06 | 06-08 18:00 | 🌸 |
+| `miniso_stock.py` | (无描述) | 06-06 | — | 🌱 |
 | `quechao.py` | 雀巢 | 06-04 | 06-08 07:24 | 🌸 |
 | `tpy_lyb.py` | 太平洋蓝医保 | 06-05 | 06-08 08:04 | 🌸 |
 | `xiaoxishi.py` | 小喜柿 签到/视频/广告/打卡/兑换 | 06-08 | 06-08 10:12 | 🥀 |
