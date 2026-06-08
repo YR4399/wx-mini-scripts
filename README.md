@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-08 16:03
+> 🕐 最后同步：2026-06-08 16:04
 > 📦 脚本总数：**98** 个
 
 </div>
@@ -92,7 +92,7 @@
 | `fsdlb.js` | 三得利 | 06-08 | 06-08 13:40 | 🌸 |
 | `gujiajiaju.js` | 顾家家居 | 06-08 | 06-08 12:44 | 🌸 |
 | `guyu.js` | 谷雨 | 06-08 | 06-08 08:36 | 🌸 |
-| `gyjj.js` | 国乐酱酒 | 06-08 | — | 🌱 |
+| `gyjj.js` | 国乐酱酒 | 06-08 | 06-08 16:04 | 🌸 |
 | `haitian.js` | 海天美味馆 | 06-08 | — | 🌱 |
 | `hezj.js` | 海尔智家 | 06-08 | 06-08 07:48 | 🌸 |
 | `hrj.js` | 好人家 | 06-08 | 06-08 10:20 | 🌸 |
