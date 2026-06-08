@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="banner_mai.jpg" width="100%" />
+<img src="banner.svg" width="100%" />
 
 # 🌲 微信小程序自动化脚本合集 🦊
 
@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-08 14:03
+> 🕐 最后同步：2026-06-08 14:10
 > 📦 脚本总数：**97** 个
 
 </div>
@@ -28,15 +28,15 @@
 | `angel_sign.py` | 安吉尔 | 06-06 | 06-07 14:52 | 🌸 |
 | `cbd_sign.js` | 茶百道 | 06-08 | 06-08 11:56 | 🌸 |
 | `dt生活签到.py` | DT生活 | 06-06 | 06-07 14:12 | 🌸 |
-| `fdh_sign.js` | 福东海 签到 | 06-07 | — | 🌱 |
+| `fdh_sign.js` | 福东海 签到 | 06-08 | — | 🌱 |
 | `glico_sign.py` | 格力高 | 06-07 | 06-08 10:28 | 🌸 |
-| `gy_sign.js` | 甘源食品 签到 | 06-07 |  | 🥀 |
+| `gy_sign.js` | 甘源食品 签到 | 06-08 |  | 🥀 |
 | `haishibao_sign.py` | 孩视宝 | 06-06 | 06-08 13:56 | 🌸 |
-| `hw_sign.js` | 花王 签到 | 06-07 |  | 🥀 |
+| `hw_sign.js` | 花王 签到 | 06-08 |  | 🥀 |
 | `jlc_sign.js` | 嘉立创金豆商城 | 06-08 | 06-08 01:10 | 🌸 |
-| `klh_sign.js` | 快乐会 签到 | 06-07 | — | 🌱 |
+| `klh_sign.js` | 快乐会 签到 | 06-08 | — | 🌱 |
 | `lj_sign.py` | 联家超市 | 06-04 | 06-08 08:52 | 🌸 |
-| `mlh_sign.js` | 梦百合 签到 | 06-07 | — | 🌱 |
+| `mlh_sign.js` | 梦百合 签到 | 06-08 | — | 🌱 |
 | `小紫_sign.py` | 小紫有约 | 06-04 | — | 🌱 |
 | `米多奇签到.py` | (无描述) | 06-05 | 06-08 08:00 | 🌸 |
 | `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-06 | 06-07 16:12 | 🌸 |
@@ -54,7 +54,7 @@
 | `monalisa_wechatserver.py` | 蒙娜丽莎 | 06-07 | 06-07 15:48 | 🌸 |
 | `wps小程序.py` | WPS | 06-07 | 06-08 08:20 | 🌸 |
 | `xmyx_auto_wcs.py` | 小米有品 | 06-05 | 06-08 12:20 | 🌸 |
-| `牛牛短剧.py` | 牛牛短剧 | 06-07 | 06-08 08:04 | 🌸 |
+| `牛牛短剧.py` | 牛牛短剧 | 06-08 | — | 🌱 |
 
 <div align="center">
 
@@ -155,7 +155,7 @@
 | `奈雪的茶.py` | 奈雪的茶 | 06-05 | 06-08 09:16 | 🌸 |
 | `微信支付优惠券每日领取.py` | 微信支付优惠券 | 06-06 | 06-07 14:28 | 🌸 |
 | `泰康在线保险.py` | (无描述) | 06-05 | 06-08 12:00 | 🌸 |
-| `浓五的酒馆 (2).py` | 浓五的酒馆 | 06-07 | 06-08 08:04 | 🌸 |
+| `浓五的酒馆 (2).py` | 浓五的酒馆 | 06-08 | 06-08 08:04 | 🌸 |
 | `溪云严选.py` | 溪云严选 | 06-07 | 06-08 11:40 | 🌸 |
 | `铛铛一下.py` | 铛铛一下 | 06-05 | 06-08 07:08 | 🌸 |
 
