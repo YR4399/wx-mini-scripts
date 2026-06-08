@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-08 12:03
+> 🕐 最后同步：2026-06-08 12:04
 > 📦 脚本总数：**97** 个
 
 </div>
@@ -126,7 +126,7 @@
 | `wb.js` | 花生帮 | 06-08 | 06-07 15:40 | 🌸 |
 | `wcs.js` | WCS工具 | 06-05 | — | 🌱 |
 | `wugenvboshi.js` | 五个女博士 | 06-08 | 06-07 15:16 | 🌸 |
-| `yingshujufeng.js` | 影视飓风 | 06-08 | 06-07 12:04 | 🌸 |
+| `yingshujufeng.js` | 影视飓风 | 06-08 | 06-08 12:04 | 🌸 |
 | `ykb.js` | 盈客宝 | 06-08 | 06-07 13:16 | 🌸 |
 | `ykb_all.js` | ykb_huiyuan 小程序统一登录查询签到 | 06-08 | — | 🌱 |
 | `yunduodingding.js` | 云朵叮叮 | 06-08 | 06-08 07:00 | 🌸 |
@@ -154,7 +154,7 @@
 | `优智云家.py` | 优智云家 | 06-05 | 06-08 07:32 | 🌸 |
 | `奈雪的茶.py` | 奈雪的茶 | 06-05 | 06-08 09:16 | 🌸 |
 | `微信支付优惠券每日领取.py` | 微信支付优惠券 | 06-06 | 06-07 14:28 | 🌸 |
-| `泰康在线保险.py` | (无描述) | 06-05 | — | 🌱 |
+| `泰康在线保险.py` | (无描述) | 06-05 | 06-08 12:00 | 🌸 |
 | `浓五的酒馆 (2).py` | 浓五的酒馆 | 06-07 | 06-08 08:04 | 🌸 |
 | `溪云严选.py` | 溪云严选 | 06-07 | 06-08 11:40 | 🌸 |
 | `铛铛一下.py` | 铛铛一下 | 06-05 | 06-08 07:08 | 🌸 |
