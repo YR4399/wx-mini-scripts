@@ -274,6 +274,6 @@ class Task {
         }
     } catch(_e) {}
     // ========== push end ==========
-    $.sendMsg = async () => {};
-    $.done();
+    $.sendMsg = async () => {}; $.log = async () => {};
+    process.exit(0);
 });

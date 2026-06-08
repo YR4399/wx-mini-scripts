@@ -164,7 +164,7 @@ class Task {
 }
 
 !(async () => {
-    $.sendMsg = async () => {};
+    $.sendMsg = async () => {}; $.log = async () => {};
     $.checkEnv(CK_NAME);
 
     const openids = $.userList;
@@ -200,8 +200,8 @@ class Task {
         }
         await sendPushNotify("萌叔宝贝鹅基地签到结果", lines.join("\n"));
     } catch (e) {}
-    $.done();
+    process.exit(0);
 })().catch((e) => $.log(e.message || e)).finally(() => {
-    $.sendMsg = async () => {};
-    $.done();
+    $.sendMsg = async () => {}; $.log = async () => {};
+    process.exit(0);
 });

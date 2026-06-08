@@ -478,6 +478,6 @@ dOGyw/X4SFyodv8AEloqd81yGg==
         }
     } catch(_e) {}
     // ========== push end ==========
-    $.sendMsg = async () => {};
-    $.done();
+    $.sendMsg = async () => {}; $.log = async () => {};
+    process.exit(0);
 });

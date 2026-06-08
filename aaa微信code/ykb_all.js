@@ -560,7 +560,7 @@ class Task {
 })()
     .catch((e) => $.log(e.message || e))
     .finally(async () => {
-    $.sendMsg = async () => {};
+    $.sendMsg = async () => {}; $.log = async () => {};
     try {
         const lines = [];
         lines.push("| 小程序 | 用户 | 资产 | 签到 |");
@@ -572,6 +572,6 @@ class Task {
             await sendPushNotify("ykb_all 签到结果", lines.join("\n"));
         }
     } catch(_e) {}
-    $.done();
+    process.exit(0);
 });
 
