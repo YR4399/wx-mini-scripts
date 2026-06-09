@@ -20,6 +20,11 @@ import json
 import random
 import hashlib
 import urllib.request
+import ssl
+
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
 import urllib.parse
 import ssl
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -66,7 +71,7 @@ def req(method, url, openid, body=None):
         headers["Content-Type"] = "application/json"
         data = json.dumps(body).encode()
     r = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(r, timeout=20) as resp:
+    with urllib.request.urlopen(r, timeout=20, context=_ssl_ctx) as resp:
         return json.loads(resp.read().decode())
 
 

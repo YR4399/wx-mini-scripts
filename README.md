@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-10 00:04
+> 🕐 最后同步：2026-06-10 02:00
 > 📦 脚本总数：**101** 个
 
 </div>
@@ -150,10 +150,10 @@
 | `_push_helper.py` | (无描述) | 06-05 | — | 🌱 |
 | `daily_summary.py` | (无描述) | 06-08 | 06-09 22:30 | 🌸 |
 | `ljg_ad_watcher.py` | 乐购 | 06-06 | 06-09 10:44 | 🌸 |
-| `miniso_stock.py` | (无描述) | 06-06 | 06-10 00:00 | 🌸 |
+| `miniso_stock.py` | (无描述) | 06-06 | — | 🌱 |
 | `quechao.py` | 雀巢 | 06-04 | 06-09 07:24 | 🌸 |
 | `tpy_lyb.py` | 太平洋蓝医保 | 06-05 | 06-09 08:04 | 🌸 |
-| `xiaoxishi.py` | 小喜柿 签到/视频/广告/打卡/兑换 | 06-08 | 06-09 16:11 | 🌸 |
+| `xiaoxishi.py` | 小喜柿 签到/视频/广告/打卡/兑换 | 06-10 | 06-09 16:11 | 🌸 |
 | `三福.py` | 三福 | 06-06 | 06-09 15:24 | 🌸 |
 | `优智云家.py` | 优智云家 | 06-05 | 06-09 07:32 | 🌸 |
 | `奈雪的茶.py` | 奈雪的茶 | 06-05 | 06-09 09:16 | 🌸 |
