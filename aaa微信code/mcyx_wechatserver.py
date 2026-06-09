@@ -55,14 +55,43 @@ SIGN_TASK_ID = 79
 BROWSE_TIME = 20
 TASK_INTERVAL = 3
 
-ALL_BROWSE_TASKS = [
-    32, 33, 41, 81, 92, 96, 98, 100, 105, 109,
-    110, 111, 113, 115, 116, 117, 118, 121, 122, 123,
-    124, 127, 129, 130, 132, 140, 141, 142, 146, 147,
-    152, 153, 155, 156, 160, 165, 175, 176, 177, 186,
-    187, 190, 200, 201, 204, 210, 211, 238, 240, 241,
-    242, 243, 257, 258, 259, 260, 261, 262,
-]
+ALL_BROWSE_TASKS = []  # 动态获取，不再硬编码
+
+async def fetch_browse_tasks(client, uid, openid, unionid, skey):
+    """从 API 动态获取浏览任务列表"""
+    headers = _api_headers(uid, openid, unionid, skey)
+    try:
+        resp = await client.get(
+            f"{SAAS_URL}/api/activity/periodTask/taskDetail",
+            params={"activityId": ACTIVITY_ID, "unionId": unionid},
+            headers=headers, timeout=30.0,
+        )
+        data = resp.json()
+        if data.get("code") != 200:
+            LOG.warning("获取任务列表失败: %s", data.get("message",""))
+            return [], []
+        
+        all_browse = []
+        completed = set()
+        periods = data.get("data", [])
+        for period in periods:
+            for task in period.get("periodTasks", []):
+                tid = task.get("taskId")
+                ttype = task.get("taskType")
+                finish_times = task.get("periodFinishTimes", 0)
+                button = task.get("buttonStatus", 0)
+                task_name = task.get("taskName", "")
+                
+                if ttype == 5:  # 浏览任务
+                    all_browse.append(tid)
+                    if finish_times > 0 or button == 3:
+                        completed.add(tid)
+        
+        LOG.info("动态获取浏览任务: %d个, 已完成%d个", len(all_browse), len(completed))
+        return all_browse, completed
+    except Exception as e:
+        LOG.warning("获取任务列表异常: %s", e)
+        return [], []
 
 UA = (
     "Mozilla/5.0 (Linux; Android 16; wv) AppleWebKit/537.36 "
@@ -499,12 +528,19 @@ async def do_browse_task(
 
         # 上报完成
         h = _api_headers(uid, openid, unionid, skey, pagetype=LANDING_PAGE_TYPE)
-        await client.post(
+        browse_resp = await client.post(
             f"{EASYGO_URL}/multi-configure-platform/api/activity/task/browse/finish",
             json={"activityId": ACTIVITY_ID, "taskId": task_id},
             headers=h,
             timeout=30.0,
         )
+        try:
+            browse_data = browse_resp.json()
+            browse_code = browse_data.get("code")
+            if browse_code not in (200, 0, None):
+                LOG.warning("%s browse/finish 失败: code=%s msg=%s", label, browse_code, browse_data.get("message",""))
+        except Exception:
+            LOG.warning("%s browse/finish 响应解析失败: %s", label, browse_resp.text[:200])
 
         # 领取奖励
         resp = await client.post(
@@ -522,10 +558,15 @@ async def do_browse_task(
         code = data.get("code")
 
         if code == 200:
-            return "success", f"{label} 领奖成功"
+            award_data = data.get("data", {})
+            mini_coins = award_data.get("awardNum", award_data.get("coins", ""))
+            LOG.debug("%s award/receive OK: %s", label, json.dumps(data, ensure_ascii=False)[:200])
+            coin_str = f" +{mini_coins}mini币" if mini_coins else ""
+            return "success", f"{label} 领奖成功{coin_str}"
         elif "已完成" in msg or "已领取" in msg:
             return "already", f"{label} {msg}"
         else:
+            LOG.warning("%s award/receive 失败: code=%s msg=%s", label, code, msg)
             return "fail", f"{label} {msg}"
     except Exception as e:
         return "fail", f"{label} 异常: {e}"
@@ -645,42 +686,71 @@ async def run_account(user_key: str, idx: int, semaphore: asyncio.Semaphore) -> 
         results.append(sign_result)
         LOG.info("[%s] %s", label, sign_result)
 
-        # ── 任务预检：查询已完成任务 ──
-        completed_ids = await get_completed_task_ids(biz_client, uid, openid, unionid, skey)
-        pending_tasks, pre_skipped = filter_pending_tasks(ALL_BROWSE_TASKS, completed_ids)
+        # ── 检测 401，自动重新登录 ──
+        if "暂未登录" in sign_result or "token认证不通过" in sign_result:
+            LOG.warning("[%s] 签到返回401，清除缓存并重新登录", label)
+            _invalidate_login(user_key)
+            # 重新登录
+            async with semaphore:
+                async with httpx.AsyncClient(timeout=30.0, verify=False) as login_client2:
+                    try:
+                        code2 = await get_wx_code(login_client2, user_key)
+                        info2 = await auto_login(login_client2, code2)
+                        uid = info2["uid"]
+                        openid = info2["openid"]
+                        unionid = info2.get("unionid", "")
+                        skey = info2["skey"]
+                        _set_cached_login(user_key, info2)
+                        results.append(f"重新登录成功: UID={uid}")
+                        LOG.info("[%s] 重新登录成功: UID=%s", label, uid)
+                        # 重新签到
+                        sign_result = await do_sign(biz_client, uid, openid, unionid, skey)
+                        results.append(sign_result)
+                        LOG.info("[%s] %s", label, sign_result)
+                    except Exception as e:
+                        results.append(f"重新登录失败: {e}")
+                        LOG.error("[%s] 重新登录失败: %s", label, e)
+                        return "\n".join(results)
 
-        if pre_skipped > 0:
-            results.append(f"任务预检: 跳过 {pre_skipped} 个已完成任务")
-            LOG.info("[%s] 跳过 %d 个已完成任务", label, pre_skipped)
+        # ── 动态获取浏览任务 ──
+        all_browse, completed_ids = await fetch_browse_tasks(biz_client, uid, openid, unionid, skey)
+        if not all_browse:
+            results.append("浏览任务: 未获取到任务列表")
+            LOG.warning("[%s] 未获取到浏览任务列表", label)
+        else:
+            pending_tasks = [t for t in all_browse if t not in completed_ids]
+            pre_skipped = len(all_browse) - len(pending_tasks)
+            if pre_skipped > 0:
+                results.append(f"任务预检: 跳过 {pre_skipped} 个已完成任务")
+                LOG.info("[%s] 跳过 %d 个已完成任务", label, pre_skipped)
+            if not pending_tasks:
+                results.append("浏览任务: 全部已完成，无需执行")
+                LOG.info("[%s] 浏览任务全部已完成，跳过", label)
+                summary = f"账号#{idx}: 签到OK 浏览✅0 ⏭️{pre_skipped} (全部完成)"
+                results.append(summary)
+                return "\n".join(results)
 
-        if not pending_tasks:
-            results.append("浏览任务: 全部已完成，无需执行")
-            LOG.info("[%s] 浏览任务全部已完成，跳过", label)
-            summary = f"账号#{idx}: 签到OK 浏览✅0 ⏭️{pre_skipped} (全部完成)"
-            results.append(summary)
-            return "\n".join(results)
+            # ── 浏览任务 ──
+            success = already = fail = 0
+            total = len(pending_tasks)
+            LOG.info("[%s] 开始浏览任务 (%d个待执行)", label, total)
 
-        # ── 浏览任务 ──
-        success = already = fail = 0
-        total = len(pending_tasks)
-        LOG.info("[%s] 开始浏览任务 (%d个待执行)", label, total)
+            for i, task_id in enumerate(pending_tasks, 1):
+                status, desc = await do_browse_task(biz_client, uid, openid, unionid, skey, task_id)
+                if status == "success":
+                    success += 1
+                    LOG.info("[%s] 浏览 %d/%d: 成功", label, i, total)
+                elif status == "already":
+                    already += 1
+                    LOG.info("[%s] 浏览 %d/%d: 已完成", label, i, total)
+                else:
+                    fail += 1
+                    LOG.warning("[%s] 浏览 %d/%d: %s", label, i, total, desc)
 
-        for i, task_id in enumerate(pending_tasks, 1):
-            status, desc = await do_browse_task(biz_client, uid, openid, unionid, skey, task_id)
-            if status == "success":
-                success += 1
-                LOG.info("[%s] 浏览 %d/%d: 成功", label, i, total)
-            elif status == "already":
-                already += 1
-                LOG.info("[%s] 浏览 %d/%d: 已完成", label, i, total)
-            else:
-                fail += 1
-                LOG.warning("[%s] 浏览 %d/%d: %s", label, i, total, desc)
+                if i < total:
+                    await asyncio.sleep(TASK_INTERVAL)
 
-            if i < total:
-                await asyncio.sleep(TASK_INTERVAL)
-
-        results.append(f"浏览任务: 预跳过{pre_skipped} 成功{success} 已完成{already} 失败{fail}")
+            results.append(f"浏览任务: 预跳过{pre_skipped} 成功{success} 已完成{already} 失败{fail}")
 
     summary = f"账号#{idx}: 签到OK 浏览✅{success} ⏭️{pre_skipped + already} ❌{fail}"
     results.append(summary)
@@ -710,8 +780,8 @@ async def amain() -> int:
         return 1
 
     LOG.info(
-        "名创优品 | wechatserver=%s appid=%s 共%d个账号 并发执行 | 浏览任务%d个 x %ds浏览",
-        WX_SERVER_URL, APP_ID, len(accounts), len(ALL_BROWSE_TASKS), BROWSE_TIME,
+        "名创优品 | wechatserver=%s appid=%s 共%d个账号 并发执行 | 浏览任务动态获取 x %ds浏览",
+        WX_SERVER_URL, APP_ID, len(accounts), BROWSE_TIME,
     )
 
     # 并发信号量：控制同时登录数，避免打爆 wechatserver
