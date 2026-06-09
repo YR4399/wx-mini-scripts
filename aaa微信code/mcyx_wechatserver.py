@@ -589,7 +589,7 @@ async def run_account(user_key: str, idx: int, semaphore: asyncio.Semaphore) -> 
     cached = _get_cached_login(user_key)
     if cached:
         LOG.info("[%s] 命中 token 缓存，验证有效性...", label)
-        async with httpx.AsyncClient(timeout=30.0, headers=biz_headers) as check_client:
+        async with httpx.AsyncClient(timeout=30.0, headers=biz_headers, verify=False) as check_client:
             if await check_login_valid(
                 check_client, cached["uid"], cached["openid"],
                 cached.get("unionid", ""), cached["skey"],
@@ -610,7 +610,7 @@ async def run_account(user_key: str, idx: int, semaphore: asyncio.Semaphore) -> 
     if not cached:
         # ── 登录阶段（受信号量控制）──
         async with semaphore:
-            async with httpx.AsyncClient(timeout=30.0) as login_client:
+            async with httpx.AsyncClient(timeout=30.0, verify=False) as login_client:
                 # Step 1: wechatserver 获取 code
                 try:
                     code = await get_wx_code(login_client, user_key)
@@ -639,7 +639,7 @@ async def run_account(user_key: str, idx: int, semaphore: asyncio.Semaphore) -> 
                     return "\n".join(results)
 
     # ── 任务阶段（登录后不受信号量限制）──
-    async with httpx.AsyncClient(timeout=30.0, headers=biz_headers) as biz_client:
+    async with httpx.AsyncClient(timeout=30.0, headers=biz_headers, verify=False) as biz_client:
         # ── 签到 ──
         sign_result = await do_sign(biz_client, uid, openid, unionid, skey)
         results.append(sign_result)
