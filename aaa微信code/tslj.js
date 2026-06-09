@@ -1,7 +1,3 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
 /*
 ------------------------------------------
 @Author: sm
@@ -29,21 +25,9 @@ const {
 } = require("../tools/env")
 const $ = new Env("谢瑞麟小程序签到");
 const WeChatServer = require("./wcs.js");
-const TOKEN_CACHE_FILE = path.join(__dirname, "tslj_token_cache.json");
-let ckName = `wx_opinion`;
+let ckName = `tslj`;
 const strSplitor = "#";
-const fs = require('fs');
-const path = require('path');
 const axios = require("axios");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 const defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001e31) NetType/WIFI Language/zh_CN miniProgram"
 let wechat = new WeChatServer({
     url: process.env.wx_server_url || 'http://192.168.31.196:12081',
@@ -52,35 +36,6 @@ let wechat = new WeChatServer({
 
 }
 );
-
-
-    readCache() {
-        try {
-            if (fs.existsSync(TOKEN_CACHE_FILE)) {
-                const cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
-                const entry = cache[this.wcsid];
-                if (entry && entry.token) return entry;
-            }
-        } catch (_) {}
-        return null;
-    }
-    saveCache(token) {
-        try {
-            let cache = {};
-            if (fs.existsSync(TOKEN_CACHE_FILE)) cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
-            cache[this.wcsid] = { token, ts: Date.now() };
-            fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache));
-        } catch (_) {}
-    }
-    clearCache() {
-        try {
-            if (fs.existsSync(TOKEN_CACHE_FILE)) {
-                const cache = JSON.parse(fs.readFileSync(TOKEN_CACHE_FILE, 'utf-8'));
-                delete cache[this.wcsid];
-                fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache));
-            }
-        } catch (_) {}
-    }
 
 class Task {
     constructor(env) {
@@ -93,20 +48,7 @@ class Task {
     }
 
     async run() {
-       //随机延迟5-30s 模拟人工操作
-       await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
-                // 尝试缓存token
-        const cached = this.readCache();
-        if (cached && cached.token) {
-            this.token = cached.token;
-            if (cached.ts && Date.now() - cached.ts < 70000000) {
-                $.log();
-                await this.doSignAndPoints();
-                return;
-            }
-            this.token = null;
-            this.clearCache();
-        }
+       
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)
@@ -222,7 +164,7 @@ class Task {
 }
 
 !(async () => {
-    
+    await getNotice()
     $.checkEnv(ckName);
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
@@ -236,15 +178,36 @@ class Task {
 
 })()
     .catch((e) => console.log(e))
-    .finally(async () => {
-    // ========== push result ==========
+    .finally(() => $.done());
+async function getNotice() {
     try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("谢瑞麟小程序签到", _logs.join("\n"));
+        let options = {
+            url: `https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json`,
+            headers: {
+                "User-Agent": defaultUserAgent,
+            },
+            timeout: 3000
         }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+        let {
+            data: res
+        } = await axios.request(options);
+        $.log(res)
+        return res
+    } catch (e) { }
+
+}
+
+// ========== PushPlus 推送 ==========
+try {
+    const _token = process.env.PLUSPLUS_TOKEN || process.env.PUSHPLUS_TOKEN;
+    if (_token) {
+        const _axios = require("axios");
+        _axios.post("http://www.pushplus.plus/send", {
+            token: _token, title: "谢瑞麟", content: "谢瑞麟执行完成", template: "txt"
+        }, { timeout: 15000 }).then(_r => {
+            if (_r.data?.code === 200) console.log("PushPlus 推送成功");
+            else console.log("PushPlus 推送失败:", _r.data?.msg);
+        }).catch(_e => console.log("推送异常:", _e.message));
+    }
+} catch(_e) { console.log("推送异常:", _e.message); }
+// ========== PushPlus 推送结束 ==========
