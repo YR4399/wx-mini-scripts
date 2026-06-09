@@ -26,12 +26,12 @@ cron: 30 7 * * *
 */
 
 const { Env } = require("../tools/env")
+const fs = require("fs");
+const path = require("path");
 const $ = new Env("海尔智家");
 const TOKEN_CACHE_FILE = path.join(__dirname, "hezj_token_cache.json");
 let ckName = "wx_opinion";
 const strSplitor = "#";
-const fs = require('fs');
-const path = require('path');
 const axios = require("axios");
 const crypto = require("crypto");
 const WeChatCodeServer = require("./wcs.js");

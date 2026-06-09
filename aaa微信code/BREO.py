@@ -211,16 +211,45 @@ def get_token_for_account(account_id, index):
     print(f"账号 {index} code登录成功: {user_info.get('nickname') or user_info.get('telephone') or auth_info.get('uid')}")
     return auth_info["token"]
 
+COMMENT_TEMPLATES = [
+    "不错不错，支持一下",
+    "感谢分享",
+    "写的很好，学习了",
+    "很有帮助，谢谢",
+    "赞",
+    "不错",
+    "支持",
+    "好",
+    "收藏了",
+    "有用",
+    "感谢",
+    "棒",
+    "不错不错",
+    "学到了",
+    "实用",
+]
+
+AI_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+AI_API_KEY = "sk-033fb36a9a304b8e9f40e141439d55de"
+AI_MODEL = "deepseek-r1-distill-qwen-7b"
+
 def get_random_one_word():
     try:
-        response = requests.get("https://uapis.cn/api/say", verify=False)
-        if response.status_code == 200:
-            return response.text.strip()
-        else:
-            return "无法获取一言"
-    except Exception as e:
-        print(f"获取一言时出错: {e}")
-        return "无法获取一言"
+        resp = requests.post(AI_API_URL,
+            headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": AI_MODEL,
+                "messages": [{"role": "user", "content": "用一句简短自然的话夸一下倍轻松按摩器，10字以内，不要引号不要标点"}],
+                "max_tokens": 1000
+            }, timeout=10, verify=False)
+        if resp.status_code == 200:
+            msg = resp.json()["choices"][0]["message"]
+            text = (msg.get("content") or "").strip()
+            if text:
+                return text
+    except Exception:
+        pass
+    return random.choice(COMMENT_TEMPLATES)
 
 def get_proclamation():
     primary_url = "https://github.com/3288588344/toulu/raw/refs/heads/main/tl.txt"
@@ -316,7 +345,7 @@ def comment_post(token, post_id):
             "postId": post_id
         }
         try:
-            response = requests.post(url, headers=headers, data=json.dumps(data, verify=False))
+            response = requests.post(url, headers=headers, data=json.dumps(data), verify=False)
             if response.status_code == 200:
                 result = response.json()
                 if result.get("success", False):
