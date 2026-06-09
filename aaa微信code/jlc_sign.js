@@ -270,49 +270,30 @@ class Task {
     }
 
     async claimReward() {
-        // 策略1: POST signIn 带上 activityId 跳过选择
+        // 策略1: GET receiveVoucher (SunnyNet 验证返回 8 = 8金豆)
         try {
-            const { data } = await axios.post(API_BASE + "/api/activity/sign/signIn", {
-                platformType: "MP-WEIXIN",
-                source: 2,
-                activityId: "640",  // 第7天8金豆活动ID
-            }, {
+            const { data } = await axios.get(API_BASE + "/api/activity/sign/receiveVoucher?platformType=MP-WEIXIN", {
                 headers: this.getHeaders(),
                 timeout: 10000
             });
-            if (data.success && data.message && data.message.indexOf("已签到") === -1) {
-                $.log("账号[" + this.index + "] signIn(activityId=640) 成功");
+            if (data && data.success && data.data) {
+                $.log("账号[" + this.index + "] 领取成功: +" + data.data + "金豆");
                 return true;
-            }
-            if (data.success) {
-                $.log("账号[" + this.index + "] signIn返回: " + (data.message || JSON.stringify(data).substring(0, 100)));
             }
         } catch (e) {}
 
-        // 策略2: 尝试 POST /receiveSignReward
-        const endpoints = [
-            { url: "/api/activity/sign/receiveSignReward", body: { activityId: "640", platformType: "MP-WEIXIN", source: 2 } },
-            { url: "/api/activity/sign/selectSignReward", body: { activityId: "640", platformType: "MP-WEIXIN", source: 2, rewardNum: 8 } },
-            { url: "/api/activity/sign/getCanChooseReward" },
-        ];
-        for (const ep of endpoints) {
-            try {
-                let resp;
-                if (!ep.body) {
-                    resp = await axios.get(API_BASE + ep.url, { headers: this.getHeaders(), timeout: 8000 });
-                } else {
-                    resp = await axios.post(API_BASE + ep.url, ep.body, { headers: this.getHeaders(), timeout: 8000 });
-                }
-                const d = resp.data;
-                if (d.success) {
-                    $.log("账号[" + this.index + "] " + ep.url + " 成功: " + JSON.stringify(d).substring(0, 200));
-                    return true;
-                }
-            } catch (e) {
-                // skip 404
+        // 策略2: POST signIn 带上 activityId=640 跳过选择
+        try {
+            const { data } = await axios.post(API_BASE + "/api/activity/sign/signIn", {
+                platformType: "MP-WEIXIN", source: 2, activityId: "640",
+            }, { headers: this.getHeaders(), timeout: 10000 });
+            if (data.success) {
+                $.log("账号[" + this.index + "] signIn(activityId) 成功");
+                return true;
             }
-        }
-        $.log("账号[" + this.index + "] 所有领取接口均失败, 用默认activityId=8金豆重试signIn");
+        } catch (e) {}
+
+        $.log("账号[" + this.index + "] 领取失败");
         return false;
     }
 
