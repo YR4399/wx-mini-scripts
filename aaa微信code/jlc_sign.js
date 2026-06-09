@@ -88,7 +88,7 @@ class Task {
 
     async doTasks() {
         await this.getSignInStatus();
-        await this.signIn();
+        await this.signInAndHandleReward();
         await this.getIntegral();
     }
 
@@ -221,6 +221,107 @@ class Task {
         } catch (e) {
             $.log("账号[" + this.index + "] 查询签到状态失败: " + (e.message || e));
         }
+    }
+
+    async signInAndHandleReward() {
+        // 1. 先尝试签到
+        let signResult = await this.signInRaw();
+        if (signResult.success) {
+            $.log("账号[" + this.index + "] 签到成功!");
+            return;
+        }
+
+        const msg = signResult.message || signResult.errorCode || "";
+        if (msg.indexOf("已签到") !== -1 || msg.indexOf("already") !== -1) {
+            $.log("账号[" + this.index + "] 今日已签到");
+            return;
+        }
+
+        // 2. 存在未领取奖励 → 先领取8金豆再签到
+        if (msg.indexOf("未领取") !== -1 || msg.indexOf("请先领取") !== -1) {
+            $.log("账号[" + this.index + "] 存在未领取奖励, 尝试领取8金豆...");
+            const claimed = await this.claimReward();
+            if (claimed) {
+                $.log("账号[" + this.index + "] 奖励领取成功, 重试签到...");
+                signResult = await this.signInRaw();
+                if (signResult.success) {
+                    $.log("账号[" + this.index + "] 签到成功!");
+                } else {
+                    $.log("账号[" + this.index + "] 重试签到失败: " + (signResult.message || ""));
+                }
+            }
+            return;
+        }
+
+        $.log("账号[" + this.index + "] 签到失败: " + msg);
+    }
+
+    async signInRaw() {
+        try {
+            const { data: signResult } = await axios.get(API_BASE + "/api/activity/sign/signIn?platformType=MP-WEIXIN&source=2", {
+                headers: this.getHeaders(),
+                timeout: 15000
+            });
+            return signResult;
+        } catch (e) {
+            return { success: false, message: (e.response && e.response.status) === 401 ? "已签到(401)" : (e.message || "") };
+        }
+    }
+
+    async claimReward() {
+        // 尝试多种接口领取奖励
+        const endpoints = [
+            { method: "get", url: "/api/activity/sign/getCanChooseReward" },
+            { method: "get", url: "/api/activity/sign/getCurrentSignReward" },
+            { method: "get", url: "/api/activity/sign/getRewardList" },
+            { method: "post", url: "/api/activity/sign/receiveSignReward", body: { rewardId: "", platformType: "MP-WEIXIN", source: 2 } },
+            { method: "post", url: "/api/activity/sign/chooseSignReward", body: { rewardVOId: "", platformType: "MP-WEIXIN", source: 2 } },
+        ];
+
+        for (const ep of endpoints) {
+            try {
+                let resp;
+                if (ep.method === "get") {
+                    resp = await axios.get(API_BASE + ep.url, { headers: this.getHeaders(), timeout: 10000 });
+                } else {
+                    resp = await axios.post(API_BASE + ep.url, ep.body, { headers: this.getHeaders(), timeout: 10000 });
+                }
+                if (resp.data && resp.data.success) {
+                    const data = resp.data.data;
+                    if (data) {
+                        // find reward list
+                        const rewards = data.rewardDetailVOS || data.rewardList || data.rewards || data.signRewardDetailVOS || [];
+                        if (rewards.length > 0) {
+                            let target = rewards.find(r =>
+                                (r.integralVoucher && r.integralVoucher >= 8) ||
+                                (r.integralAmount && r.integralAmount >= 8) ||
+                                (r.name && r.name.indexOf("8金豆") !== -1)
+                            ) || rewards[0];
+                            const rid = target.rewardId || target.id || target.rewardVOId || target.rewardDetailId || "";
+                            $.log("账号[" + this.index + "] 选择: " + (target.name || target.prizeName || "ID=" + rid));
+                            // 次接口: POST /chooseSignReward
+                            const { data: claimResult } = await axios.post(API_BASE + "/api/activity/sign/chooseSignReward", {
+                                rewardVOId: rid,
+                                rewardId: rid,
+                                platformType: "MP-WEIXIN",
+                                source: 2,
+                            }, { headers: this.getHeaders(), timeout: 10000 });
+                            if (claimResult.success) {
+                                $.log("账号[" + this.index + "] 领取成功!");
+                                return true;
+                            }
+                            $.log("账号[" + this.index + "] 领取失败: " + claimResult.message);
+                        }
+                    }
+                }
+            } catch (e) {
+                if (e.response && e.response.status !== 404) {
+                    $.log("账号[" + this.index + "] " + ep.url + " 失败: " + (e.message || e));
+                }
+            }
+        }
+        $.log("账号[" + this.index + "] 所有领取接口均失败");
+        return false;
     }
 
     async signIn() {

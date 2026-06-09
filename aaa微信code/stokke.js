@@ -25,6 +25,9 @@ const {
 } = require("../tools/env")
 const $ = new Env("stokke小程序");
 const WeChatServer = require("./wcs.js"); 
+const TokenCache = require("./_token_cache");
+const path = require("path");
+const tokenCache = new TokenCache(path.join(__dirname, "stokke_token_cache.json"));
 let ckName = `stokke`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -47,6 +50,8 @@ class Task {
     }
 
     async run() {
+        const cached = tokenCache.read(this.wcsid);
+        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
         
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
@@ -92,7 +97,7 @@ class Task {
         } = await axios.request(options);
 
         if (result?.code == '200') {
-            this.token = result.data.token
+            this.token = result.data.token; tokenCache.save(this.wcsid, result.data.token)
             $.log(`🌸账号[${this.index}] 获取用户Token成功:${this.token}`)
         } else {
             $.log(`🌸账号[${this.index}] 获取用户Token-失败:${result.message}❌`)

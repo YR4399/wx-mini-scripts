@@ -25,6 +25,9 @@ const {
 } = require("../tools/env")
 const $ = new Env("米其林会员小程序");
 const WeChatServer = require("./wcs.js"); 
+const TokenCache = require("./_token_cache");
+const path = require("path");
+const tokenCache = new TokenCache(path.join(__dirname, "miqilin_token_cache.json"));
 let ckName = `miqilin`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -47,6 +50,8 @@ class Task {
     }
 
     async run() {
+        const cached = tokenCache.read(this.wcsid);
+        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
        
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {

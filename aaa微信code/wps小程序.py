@@ -40,6 +40,9 @@ import threading
 import base64
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import hmac
+from datetime import timezone
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
@@ -111,6 +114,18 @@ def get_wx_code(user_key, appid=APPID, retries=3, timeout=60):
             return None, f"超时({timeout}s, 已重试{retries}次)"
         except Exception as e:
             return None, str(e)
+
+
+def generate_sign(data_dict, s_key, ss='7908b285f33c837d'):
+    """WPS签到签名算法: sort keys → JSON → MD5 → HMAC-SHA256"""
+    sorted_keys = sorted(data_dict.keys())
+    sorted_dict = {k: data_dict[k] for k in sorted_keys}
+    json_str = json.dumps(sorted_dict, ensure_ascii=False, separators=(',', ':'))
+    md5_val = hashlib.md5(json_str.encode('utf-8')).hexdigest()
+    utc_time = datetime.datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
+    sign_str = s_key + md5_val + utc_time
+    signature = base64.b64encode(hmac.new(ss.encode(), sign_str.encode(), hashlib.sha256).digest()).decode()
+    return signature, utc_time
 
 
 def generate_ec_sign(auth_code):
@@ -273,14 +288,49 @@ class WPSAccount:
         return False
 
     def do_clock_in(self):
-        """签到"""
-        data = self.request("POST", f"{BUS_URL}/clock_in", json={"client_type": 1})
-        if data and data.get("result") == "ok":
-            days = data.get("data", {}).get("continuous_days", 0)
-            self.log(f"签到成功! 连续{days}天", "SUCCESS")
-            return True
-        msg = data.get("msg", "未知") if data else "无响应"
-        self.log(f"签到: {msg}")
+        """签到（需HMAC-SHA256签名）"""
+        # 1. 获取s_key
+        s_key = '06196ab4da15c09a3aaee610162ca56f'
+        try:
+            info_resp = self.session.get(f"{BUS_URL}/info",
+                params={"client_type": 1, "page_index": 0, "page_size": 1}, timeout=10)
+            info_data = info_resp.json()
+            s_key = info_data.get('data', {}).get('s_key', s_key)
+        except:
+            pass
+
+        # 2. 生成签名
+        body = {"client_type": 1}
+        signature, utc_time = generate_sign(body, s_key)
+
+        # 3. 发送带签名的请求
+        try:
+            resp = requests.post(
+                f"{BUS_URL}/clock_in",
+                json=body,
+                headers={
+                    "signature": signature,
+                    "Date": utc_time,
+                    "x-csrftoken": "1234567890",
+                    "content-type": "application/json",
+                    "User-Agent": UA,
+                    "Referer": f"https://servicewechat.com/{APPID}/248/page-frame.html",
+                },
+                cookies=self.session.cookies,
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("result") == "ok":
+                days = data.get("data", {}).get("continuous_days", 0)
+                self.log(f"签到成功! 连续{days}天", "SUCCESS")
+                return True
+            msg = data.get("msg", "未知")
+            if "已签到" in msg:
+                self.log(f"签到: {msg}")
+                return True
+            self.log(f"签到: {msg}")
+        except Exception as e:
+            self.log(f"签到异常: {e}")
         return False
 
     def get_info(self):
@@ -343,7 +393,7 @@ class WPSAccount:
             return False
 
         # 等待模拟浏览
-        wait = random.uniform(15, 25)
+        wait = random.uniform(8, 12)
         self.log(f"浏览[{app_id[:8]}] 等待{wait:.0f}s...")
         time.sleep(wait)
 
@@ -388,18 +438,9 @@ class WPSAccount:
         return done_count
 
     def do_subscribe(self):
-        """尝试订阅任务"""
-        code = self.get_auth_code()
-        if not code:
-            return
-        data = self.request("POST", f"{BUS_URL}/task/subscribe", json={
-            "mp_id": "app_op_act",
-            "auth_code": code,
-            "subscribe_app_id": APPID,
-            "version": "new"
-        })
-        msg = data.get("msg", "未知") if data else "无响应"
-        self.log(f"订阅任务: {msg}")
+        """尝试订阅任务(经常not found job, 不强制)"""
+        self.log("订阅任务: 跳过(该任务经常无可用项)")
+        return
 
     def do_lottery(self, times):
         """执行抽奖"""

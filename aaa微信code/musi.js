@@ -27,6 +27,9 @@ const {
 } = require("../tools/env")
 const $ = new Env("慕斯小程序签到");
 const WeChatServer = require("./wcs.js");
+const TokenCache = require("./_token_cache");
+const path = require("path");
+const tokenCache = new TokenCache(path.join(__dirname, "musi_token_cache.json"));
 let ckName = `musi`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -49,6 +52,8 @@ class Task {
     }
 
     async run() {
+        const cached = tokenCache.read(this.wcsid);
+        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
        
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
@@ -96,7 +101,7 @@ class Task {
 
         if (result?.code == '0') {
             this.openId = result.data.openId
-            this.activedAuthToken = result.data.token
+            this.activedAuthToken = result.data.token; tokenCache.save(this.wcsid, result.data.token)
             $.log(`🌸账号[${this.index}] 获取用户Token成功:${this.activedAuthToken}`)
         } else {
             $.log(`🌸账号[${this.index}] 获取用户Token-失败:${result.msg}❌`)
