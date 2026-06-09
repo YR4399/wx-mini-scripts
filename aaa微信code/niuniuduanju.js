@@ -91,12 +91,17 @@ function today() {
 }
 
 class Task {
-    constructor(openid) {
-        this.index = $.userIdx++;
+    constructor(openid, accountIndex) {
+        this.accountIndex = accountIndex;
         this.openid = String(openid || "").trim();
         this.token = "";
         this.user = {};
         this.wxInfo = {};
+        this.label = `[账号${accountIndex + 1}]`;
+    }
+
+    log(msg) {
+        $.log(`${this.label} ${msg}`);
     }
 
     async run() {
@@ -104,10 +109,10 @@ class Task {
         if (cached?.token) {
             this.token = cached.token;
             this.user = cached.user || {};
-            $.log(`账号[${this.index}] 使用缓存token: ${maskToken(this.token)}`);
+            this.log(`使用缓存token: ${maskToken(this.token)}`)
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新code登录`);
+                this.log(`缓存token失效，重新code登录`)
             }
         }
 
@@ -237,9 +242,15 @@ class Task {
             this.user = login.user || {};
             if (!this.token) throw new Error(`insertWxUser 未返回token: ${JSON.stringify(login)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${this.user.userName || ""} ${maskPhone(this.user.phone)}`);
+            // 更新日志标签为实际用户名
+            if (this.user.userName) {
+                this.label = `[${this.user.userName}]`;
+            } else if (this.user.phone) {
+                this.label = `[${maskPhone(this.user.phone)}]`;
+            }
+            this.log(`登录成功`);
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            this.log(`登录失败: ${e.message || e}`)
         }
     }
 
@@ -256,7 +267,7 @@ class Task {
     async getPoints(label = "积分") {
         const result = await this.request({ apiPath: "/app/integral/selectByUserId" });
         const points = result.data?.integralNum ?? "未知";
-        $.log(`账号[${this.index}] ${label}: ${points}`);
+        this.log(`${label}: ${points}`)
         return result.data;
     }
 
@@ -271,10 +282,10 @@ class Task {
             });
             const list = Array.isArray(result.data) ? result.data : [];
             const signedDays = list.filter((item) => item?.num).length;
-            $.log(`账号[${this.index}] 本周签到记录: ${signedDays}/${list.length || 7}`);
+            this.log(`本周签到记录: ${signedDays}/${list.length || 7}`)
             return list;
         } catch (e) {
-            $.log(`账号[${this.index}] 查询签到记录失败: ${e.message || e}`);
+            this.log(`查询签到记录失败: ${e.message || e}`)
             return [];
         }
     }
@@ -285,14 +296,14 @@ class Task {
                 apiPath: "/app/integral/signIn",
                 params: { date: today() },
             });
-            $.log(`账号[${this.index}] 签到成功: ${result.msg || "success"}`);
+            this.log(`签到成功: ${result.msg || "success"}`)
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|已经签到|重复|今日.*签|不能重复|签到过/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                this.log(`今日已签到`)
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            this.log(`签到失败: ${message}`)
             if (e.code === 401 || /token|登录|验证失败/.test(message)) this.removeCachedToken();
         }
     }
@@ -322,18 +333,18 @@ class Task {
     async claimDailyTask(task) {
         try {
             const result = await this.request({ apiPath: task.apiPath, params: task.params || {} });
-            $.log(`账号[${this.index}] ${task.name}: ${result.msg || "已领取"}${result.data !== undefined ? ` ${result.data}` : ""}`);
+            this.log(`${task.name}: ${result.msg || "已领取"}${result.data !== undefined ? ` ${result.data}` : ""}`)
         } catch (e) {
             const message = String(e.message || e);
             if (/已领取|已完成|今日.*完成|重复|不能重复|已经.*领取/.test(message)) {
-                $.log(`账号[${this.index}] ${task.name}: 今日已完成`);
+                this.log(`${task.name}: 今日已完成`)
                 return;
             }
             if (/未完成|请先|任务未达成|次数不足|时间未到|倒计时|稍后|观看/.test(message)) {
-                $.log(`账号[${this.index}] ${task.name}: ${message}`);
+                this.log(`${task.name}: ${message}`)
                 return;
             }
-            $.log(`账号[${this.index}] ${task.name}失败: ${message}`);
+            this.log(`${task.name}失败: ${message}`)
             if (e.code === 401 || /token|登录|验证失败/.test(message)) this.removeCachedToken();
         }
     }
@@ -347,31 +358,31 @@ class Task {
                         apiPath: "/app/integral/addEatGold",
                         params: { num },
                     });
-                    $.log(`账号[${this.index}] 吃饭看剧补贴[${num + 1}/${EAT_GOLD_COUNT}]: ${result.msg || "success"}`);
+                    this.log(`吃饭看剧补贴[${num + 1}/${EAT_GOLD_COUNT}]: ${result.msg || "success"}`)
                 } catch (e) {
                     const message = String(e.message || e);
                     if (/已领取|已完成|今日.*完成|重复|不能重复|已经.*领取/.test(message)) {
-                        $.log(`账号[${this.index}] 吃饭看剧补贴[${num + 1}/${EAT_GOLD_COUNT}]: 今日已完成`);
+                        this.log(`吃饭看剧补贴[${num + 1}/${EAT_GOLD_COUNT}]: 今日已完成`)
                         continue;
                     }
-                    $.log(`账号[${this.index}] 吃饭看剧补贴[${num + 1}/${EAT_GOLD_COUNT}]: ${message}`);
+                    this.log(`吃饭看剧补贴[${num + 1}/${EAT_GOLD_COUNT}]: ${message}`)
                     if (e.code === 401 || /token|登录|验证失败/.test(message)) this.removeCachedToken();
                 }
             }
 
             try {
                 const result = await this.request({ apiPath: "/app/integral/eatGold" });
-                $.log(`账号[${this.index}] 当前餐点补贴: ${result.msg || "success"}`);
+                this.log(`当前餐点补贴: ${result.msg || "success"}`)
             } catch (e) {
                 const message = String(e.message || e);
                 if (/已领取|已完成|今日.*完成|重复|不能重复|已经.*领取/.test(message)) {
-                    $.log(`账号[${this.index}] 当前餐点补贴: 今日已完成`);
+                    this.log(`当前餐点补贴: 今日已完成`)
                 } else {
-                    $.log(`账号[${this.index}] 当前餐点补贴: ${message}`);
+                    this.log(`当前餐点补贴: ${message}`)
                 }
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 吃饭看剧补贴失败: ${e.message || e}`);
+            this.log(`吃饭看剧补贴失败: ${e.message || e}`)
         }
     }
 
@@ -381,7 +392,7 @@ class Task {
             let nextStep = Number(userInfo.okLookVideoNum || 0) + 1;
             if (nextStep < 1) nextStep = 1;
             if (nextStep > VIDEO_COUNT_STEPS.length) {
-                $.log(`账号[${this.index}] 看视频次数前置: 今日已完成`);
+                this.log(`看视频次数前置: 今日已完成`)
                 return;
             }
 
@@ -391,22 +402,22 @@ class Task {
                 await randomSleep(2, 3);
                 try {
                     const result = await this.request({ apiPath: "/app/integral/lookVideoNum" });
-                    $.log(`账号[${this.index}] 看视频次数金币[${step}/${VIDEO_COUNT_STEPS.length}]: ${result.msg || "success"}`);
+                    this.log(`看视频次数金币[${step}/${VIDEO_COUNT_STEPS.length}]: ${result.msg || "success"}`)
                     userInfo = await this.getUserInfo();
                     if (Number(userInfo.okLookVideoNum || 0) >= VIDEO_COUNT_STEPS.length) break;
                 } catch (e) {
                     const message = String(e.message || e);
                     if (/已领取|已完成|今日.*完成|重复|不能重复|已经.*领取/.test(message)) {
-                        $.log(`账号[${this.index}] 看视频次数金币: 今日已完成`);
+                        this.log(`看视频次数金币: 今日已完成`)
                         break;
                     }
-                    $.log(`账号[${this.index}] 看视频次数金币[${step}/${VIDEO_COUNT_STEPS.length}]: ${message}`);
+                    this.log(`看视频次数金币[${step}/${VIDEO_COUNT_STEPS.length}]: ${message}`)
                     if (e.code === 401 || /token|登录|验证失败/.test(message)) this.removeCachedToken();
                     break;
                 }
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 看视频次数前置失败: ${e.message || e}`);
+            this.log(`看视频次数前置失败: ${e.message || e}`)
         }
     }
 
@@ -416,7 +427,7 @@ class Task {
             let nextStep = Number(userInfo.okLookVideoSec || 0);
             if (nextStep < 1) nextStep = 1;
             if (nextStep > VIDEO_DURATION_STEPS.length) {
-                $.log(`账号[${this.index}] 看视频时长前置: 今日已完成`);
+                this.log(`看视频时长前置: 今日已完成`)
                 return;
             }
 
@@ -426,22 +437,22 @@ class Task {
                 await randomSleep(2, 3);
                 try {
                     const result = await this.request({ apiPath: "/app/integral/lookVideoSec" });
-                    $.log(`账号[${this.index}] 看视频时长金币[${step}/${VIDEO_DURATION_STEPS.length}]: ${result.msg || "success"}`);
+                    this.log(`看视频时长金币[${step}/${VIDEO_DURATION_STEPS.length}]: ${result.msg || "success"}`)
                     userInfo = await this.getUserInfo();
                     if (Number(userInfo.okLookVideoSec || 0) > VIDEO_DURATION_STEPS.length) break;
                 } catch (e) {
                     const message = String(e.message || e);
                     if (/已领取|已完成|今日.*完成|重复|不能重复|已经.*领取/.test(message)) {
-                        $.log(`账号[${this.index}] 看视频时长金币: 今日已完成`);
+                        this.log(`看视频时长金币: 今日已完成`)
                         break;
                     }
-                    $.log(`账号[${this.index}] 看视频时长金币[${step}/${VIDEO_DURATION_STEPS.length}]: ${message}`);
+                    this.log(`看视频时长金币[${step}/${VIDEO_DURATION_STEPS.length}]: ${message}`)
                     if (e.code === 401 || /token|登录|验证失败/.test(message)) this.removeCachedToken();
                     break;
                 }
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 看视频时长前置失败: ${e.message || e}`);
+            this.log(`看视频时长前置失败: ${e.message || e}`)
         }
     }
 
@@ -459,7 +470,7 @@ class Task {
                 lookVideoSec,
             },
         });
-        $.log(`账号[${this.index}] 模拟观看时长: ${Math.floor(videoSec / 60)}分钟`);
+        this.log(`模拟观看时长: ${Math.floor(videoSec / 60)}分钟`)
     }
 
     async updateUserWatchCount(lookDayVideoNum, lookVideoNum) {
@@ -476,7 +487,7 @@ class Task {
                 lookVideoNum,
             },
         });
-        $.log(`账号[${this.index}] 模拟观看视频次数: ${lookDayVideoNum}次`);
+        this.log(`模拟观看视频次数: ${lookDayVideoNum}次`)
     }
 
     async getUserDataVideoParams() {
@@ -503,7 +514,7 @@ class Task {
 
             const courses = await this.getDailyCourses();
             if (!courses.length) {
-                $.log(`账号[${this.index}] 剧集任务前置: 未获取到推荐剧`);
+                this.log(`剧集任务前置: 未获取到推荐剧`)
                 return;
             }
 
@@ -529,10 +540,10 @@ class Task {
             }
 
             if (goodDone || collectDone) {
-                $.log(`账号[${this.index}] 剧集任务前置: 点赞${goodDone}次 收藏${collectDone}次`);
+                this.log(`剧集任务前置: 点赞${goodDone}次 收藏${collectDone}次`)
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 剧集任务前置失败: ${e.message || e}`);
+            this.log(`剧集任务前置失败: ${e.message || e}`)
         }
     }
 
@@ -575,15 +586,25 @@ class Task {
 }
 
 !(async () => {
-    
+
     $.checkEnv(ckName);
-    for (let i = 0; i < $.userList.length; i++) {
-        if (i > 0) {
-            $.log(`切换账号，等待 5-10s...`);
-            await randomSleep(5, 10);
-        }
-        await new Task($.userList[i]).run();
-    }
+    $.log(`牛牛短剧 — 共 ${$.userList.length} 个账号，并发执行`);
+
+    const tasks = $.userList.map((openid, i) => {
+        return (async () => {
+            if (i > 0) {
+                const delay = 3 + Math.random() * 7;
+                $.log(`[账号${i + 1}] 等待 ${delay.toFixed(1)}s 后启动...`);
+                await sleep(delay);
+            }
+            const task = new Task(openid, i);
+            await task.run();
+            return task;
+        })();
+    });
+
+    await Promise.all(tasks);
+    $.log(`全部账号执行完成`);
 })()
     .catch((e) => $.log(e.message || e))
     .finally(async () => {

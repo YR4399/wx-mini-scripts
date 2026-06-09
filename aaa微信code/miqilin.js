@@ -266,7 +266,7 @@ class Task {
 
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
+    .finally(() => { $.sendMsg = async () => {}; $.done(); process.exit(0); });
 
 async function getNotice() {
     try {

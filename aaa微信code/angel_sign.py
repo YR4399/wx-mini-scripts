@@ -588,6 +588,15 @@ if __name__ == "__main__":
     _old_stderr = sys.stderr
     sys.stdout = _log_capture
     sys.stderr = _log_capture
+
+    # Make logging also write to _log_capture (fix empty push issue)
+    _capture_handler = logging.StreamHandler(_log_capture)
+    _capture_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    log.addHandler(_capture_handler)
+    log.propagate = False
+    for _h in logging.getLogger().handlers[:]:
+        logging.getLogger().removeHandler(_h)
+    logging.getLogger().addHandler(_capture_handler)
     try:
         result = main()
     except SystemExit as e:

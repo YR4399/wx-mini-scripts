@@ -301,6 +301,7 @@ async function signIn(account, index) {
         }
     } catch(_e) {}
     // ========== push end ==========
-    $.done();
+    $.sendMsg = async () => {}; $.done();
+    process.exit(0);
 });
 // sendMsg override added
