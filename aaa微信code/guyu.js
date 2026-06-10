@@ -186,23 +186,43 @@ class Task {
             return;
         }
 
-        // 4. 执行签到
-        try {
-            const today = $.time("yyyy-M-dd");
-            const { data: signResult } = await this.request("POST", `${API_BASE}/mobile/activity/sign/sign`, {
-                shopId: SHOP_ID,
-                activityId: ACTIVITY_ID,
-                signDate: today,
-            });
+        // 4. 执行签到（token过期时自动重登）
+        for (let retry = 0; retry < 2; retry++) {
+            try {
+                const today = $.time("yyyy-M-dd");
+                const { data: signResult } = await this.request("POST", `${API_BASE}/mobile/activity/sign/sign`, {
+                    shopId: SHOP_ID,
+                    activityId: ACTIVITY_ID,
+                    signDate: today,
+                });
 
-            if (signResult?.success) {
-                const reward = signResult.result?.integral || 2;
-                $.log(`[${this.idx}] 签到成功: +${reward}积分`);
-            } else {
-                $.log(`[${this.idx}] 签到失败: ${signResult?.msg || "未知错误"}`);
+                if (signResult?.success) {
+                    const reward = signResult.result?.integral || 2;
+                    $.log(`[${this.idx}] 签到成功: +${reward}积分`);
+                    break;
+                } else {
+                    const msg = signResult?.msg || "未知错误";
+                    // token过期：用户id不能为空 或 授权失败
+                    if (retry === 0 && (msg.includes("用户id") || msg.includes("授权失败"))) {
+                        $.log(`[${this.idx}] token疑似过期(${msg})，清除缓存重新登录...`);
+                        this.clearCache();
+                        this.token = null;
+                        const { data: codeRes } = await wechat.getCode(this.openid);
+                        const code = codeRes?.data?.code || codeRes?.code;
+                        if (code) {
+                            const ok = await this.login(code);
+                            if (ok) { await $.wait(2000); continue; }
+                        }
+                        $.log(`[${this.idx}] 重新登录失败`);
+                        break;
+                    }
+                    $.log(`[${this.idx}] 签到失败: ${msg}`);
+                    break;
+                }
+            } catch (e) {
+                $.log(`[${this.idx}] 签到异常: ${e.message}`);
+                break;
             }
-        } catch (e) {
-            $.log(`[${this.idx}] 签到异常: ${e.message}`);
         }
     }
 
