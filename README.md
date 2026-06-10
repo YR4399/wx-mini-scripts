@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-10 18:01
+> 🕐 最后同步：2026-06-10 18:02
 > 📦 脚本总数：**108** 个
 
 </div>
@@ -40,7 +40,7 @@
 | `mlh_sign.js` | 梦百合 签到 | 06-08 | 06-10 08:30 | 🌸 |
 | `qqpcmgr_sign.js` | 腾讯电脑管家 wx code 登录并创建 sdi auth | 06-09 | 06-10 09:00 | 🌸 |
 | `小紫_sign.py` | 小紫有约 | 06-04 | — | 🌱 |
-| `浓五的酒馆签到抽奖.js` | cron: 30 9 * * * | 06-10 | 06-10 08:04 | 🌸 |
+| `浓五的酒馆签到抽奖.js` | cron: 30 9 * * * | 06-10 |  | 🥀 |
 | `米多奇签到.py` | (无描述) | 06-05 | 06-10 08:00 | 🌸 |
 | `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-06 | 06-10 16:12 | 🌸 |
 
