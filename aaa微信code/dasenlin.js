@@ -402,10 +402,11 @@ class Task {
 
     async claimTaskAwards() {
         try {
+            // 1. 获取未领取的水滴记录
             const result = await this.request({
                 base: ACTIVITY_BASE,
                 method: "GET",
-                apiPath: "/dc-biz-activity/applet/ginsengDripRecord/userNewAwardGroupTaskId",
+                apiPath: "/dc-biz-activity/applet/ginsengDripRecord/userNewDrip",
                 params: {
                     activityId: ACTIVITY_ID,
                 },
@@ -413,12 +414,46 @@ class Task {
                 urlToken: true,
             });
             if (!isSuccess(result)) {
-                $.log(`账号[${this.index}] 领取奖励失败: ${getMessage(result)}`);
+                $.log(`账号[${this.index}] 查询水滴失败: ${getMessage(result)}`);
                 return;
             }
-            const tasks = result?.datas || [];
-            for (const t of tasks) {
-                $.log(`账号[${this.index}] 领取奖励: +${t.dripNum}水滴 (taskId=${t.taskId})`);
+            const dripList = result?.datas || [];
+            if (!dripList.length) {
+                $.log(`账号[${this.index}] 无待领取水滴`);
+                return;
+            }
+
+            // 2. 收集所有 dripRecordIds
+            const allIds = [];
+            for (const item of dripList) {
+                if (item.dripRecordIds && item.dripRecordIds.length) {
+                    allIds.push(...item.dripRecordIds);
+                    $.log(`账号[${this.index}] 待领取: ${item.dripNum}g水滴 (${item.dripRecordIds.length}条记录)`);
+                }
+            }
+
+            if (!allIds.length) {
+                $.log(`账号[${this.index}] 无待领取水滴记录`);
+                return;
+            }
+
+            // 3. 调用 getDrip 领取水滴
+            const claimResult = await this.request({
+                base: ACTIVITY_BASE,
+                method: "POST",
+                apiPath: "/dc-biz-activity/applet/ginsengDripRecord/getDrip",
+                data: {
+                    dripRecordIds: allIds,
+                },
+                raw: true,
+                urlToken: true,
+            });
+
+            if (isSuccess(claimResult)) {
+                const totalDrip = dripList.reduce((sum, item) => sum + (item.dripNum || 0), 0);
+                $.log(`账号[${this.index}] ✅ 领取水滴成功: +${totalDrip}g (${allIds.length}条记录)`);
+            } else {
+                $.log(`账号[${this.index}] ❌ 领取水滴失败: ${getMessage(claimResult)}`);
             }
         } catch (e) {
             $.log(`账号[${this.index}] 领取奖励异常: ${e.message || e}`);
