@@ -226,10 +226,14 @@ def task_video(openid):
     if check_deadline():
         log("  [视频] 已过%d点,跳过" % DEADLINE_HOUR)
         return
-    cap = (
-        get("/api/video/everyDayVideoCoins", openid)["data"].get("allCoinsDay") or 30000
-    )
-    j = post("/api/video/getCoinData", openid)
+    try:
+        cap = (
+            get("/api/video/everyDayVideoCoins", openid)["data"].get("allCoinsDay") or 30000
+        )
+        j = post("/api/video/getCoinData", openid)
+    except Exception as e:
+        log("  [视频] 查询失败: %s" % str(e)[:80])
+        return
     if j.get("code") != 1:
         log("  [视频] 获取配置失败: %s" % j.get("msg"))
         return
@@ -266,9 +270,13 @@ def task_video(openid):
 
 
 def task_ad(openid):
-    pre = (get("/api/ad/adLookBefore", openid).get("data") or {}).get("data") or [
-        0, 0, 0,
-    ]
+    try:
+        pre = (get("/api/ad/adLookBefore", openid).get("data") or {}).get("data") or [
+            0, 0, 0,
+        ]
+    except Exception as e:
+        log("  [广告] 查询失败: %s" % str(e)[:80])
+        return
     if pre[0] == 0:
         log("  [广告] 暂无广告")
         return
@@ -298,7 +306,11 @@ def task_ad(openid):
 
 
 def task_checkin(openid, uid):
-    j = get("/api/Activity/signActivityConfig", openid)
+    try:
+        j = get("/api/Activity/signActivityConfig", openid)
+    except Exception as e:
+        log("  [打卡] 查询失败: %s" % str(e)[:80])
+        return
     cfg = j["data"].get("data") or {}
     aid = cfg.get("activityId")
     if not aid:
@@ -333,12 +345,20 @@ def task_checkin(openid, uid):
 
 
 def task_exchange(openid):
-    _, coins = get_user(openid)
+    try:
+        _, coins = get_user(openid)
+    except Exception as e:
+        log("  [兑换] 查询失败: %s" % str(e)[:80])
+        return
     c = int(coins)
     if c < 100:
         log("  [兑换] 余额 %s < 100,不兑换" % c)
         return
-    r = post("/api/record/exchange", openid, coin=str(c))
+    try:
+        r = post("/api/record/exchange", openid, coin=str(c))
+    except Exception as e:
+        log("  [兑换] 兑换失败: %s" % str(e)[:80])
+        return
     inner = r.get("data") if isinstance(r.get("data"), dict) else {}
     if r.get("code") == 1 and inner.get("code") == 1:
         d = inner.get("data") or {}
@@ -357,7 +377,11 @@ def run_account(openid, idx, total):
     log("=" * 32)
     log("账号 %d/%d [%s] 开始执行" % (idx + 1, total, tag))
     try:
-        uid, coins = get_user(openid)
+        try:
+            uid, coins = get_user(openid)
+        except Exception as e:
+            err("[%s] 获取用户信息失败: %s" % (tag, str(e)[:80]))
+            return tag, "异常", "获取用户失败"
         if not uid:
             log("[%s] openid 无效(查不到用户),跳过" % tag)
             return tag, "失败", "openid无效"
