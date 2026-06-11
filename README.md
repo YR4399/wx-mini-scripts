@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://github.com/YR4399/wx-mini-scripts)
 [![Docker](https://img.shields.io/badge/Docker-呆呆面板-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/linzixuanzz/Dumb-Panel)
 
-> 🕐 最后同步：2026-06-11 08:00
+> 🕐 最后同步：2026-06-11 08:01
 > 📦 脚本总数：**107** 个
 
 </div>
@@ -41,7 +41,7 @@
 | `qqpcmgr_sign.js` | 腾讯电脑管家 wx code 登录并创建 sdi auth | 06-09 | 06-10 09:00 | 🌸 |
 | `小紫_sign.py` | 小紫有约 | 06-04 | — | 🌱 |
 | `浓五的酒馆签到抽奖.js` | cron: 30 9 * * * | 06-10 | — | 🌱 |
-| `米多奇签到.py` | (无描述) | 06-05 | — | 🌱 |
+| `米多奇签到.py` | (无描述) | 06-05 | 06-11 08:00 | 🌸 |
 | `袋鼠mama_sign.py` | 袋鼠妈妈 | 06-06 | 06-10 16:12 | 🌸 |
 
 <div align="center">
@@ -154,7 +154,7 @@
 | `_push_helper.py` | (无描述) | 06-05 | — | 🌱 |
 | `daily_summary.py` | (无描述) | 06-08 | — | 🌱 |
 | `ljg_ad_watcher.py` | 乐购 | 06-06 | 06-10 11:37 | 🌸 |
-| `miniso_stock.py` | (无描述) | 06-06 | — | 🌱 |
+| `miniso_stock.py` | (无描述) | 06-06 | 06-11 08:00 | 🌸 |
 | `quanmianshidai.py` | (无描述) | 06-10 | — | 🌱 |
 | `quechao.py` | 雀巢 | 06-04 | 06-11 07:24 | 🌸 |
 | `tpy_lyb.py` | 太平洋蓝医保 | 06-05 | 06-10 08:04 | 🌸 |
