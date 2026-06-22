@@ -165,4 +165,7 @@ class Task {
     for (const user of $.userList) {
         await new Task(user).run();
     }
-})().catch(e => console.log(e)).finally(() => $.done());
+})().catch(e => console.log(e)).then(async () => {
+    const _logs = $.notifyStr || [];
+    if (_logs.length > 0) await sendPushNotify("快乐会签到", _logs.join("\n"));
+  }).finally(() => $.done());

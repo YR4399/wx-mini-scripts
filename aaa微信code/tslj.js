@@ -176,14 +176,22 @@ class Task {
             await new Task(user).run();
         }
     } else {
-        
         $.log(`${ckName}未配置微信SERVER配置 搭建可看仓库目录下的readme.md❌`)
         return
     }
-
+    // Push summary via pushplus
+    try {
+        const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
+        if (token) {
+            const log = ($.notifyStr || []).slice(-10).join(String.fromCharCode(10));
+            await require("axios").post("http://www.pushplus.plus/send", {
+                token, title: "谢瑞麟", content: log || "谢瑞麟执行完成", template: "txt"
+            }, { timeout: 10000 });
+        }
+    } catch(e) {}
 })()
     .catch((e) => console.log(e))
-    .finally(() => { $.sendMsg = async () => {}; $.done(); process.exit(0); });
+    .finally(() => { $.done(); process.exit(0); });
 async function getNotice() {
     try {
         let options = {
@@ -202,17 +210,4 @@ async function getNotice() {
 
 }
 
-// ========== PushPlus 推送 ==========
-try {
-    const _token = process.env.PLUSPLUS_TOKEN || process.env.PUSHPLUS_TOKEN;
-    if (_token) {
-        const _axios = require("axios");
-        _axios.post("http://www.pushplus.plus/send", {
-            token: _token, title: "谢瑞麟", content: "谢瑞麟执行完成", template: "txt"
-        }, { timeout: 15000 }).then(_r => {
-            if (_r.data?.code === 200) console.log("PushPlus 推送成功");
-            else console.log("PushPlus 推送失败:", _r.data?.msg);
-        }).catch(_e => console.log("推送异常:", _e.message));
-    }
-} catch(_e) { console.log("推送异常:", _e.message); }
-// ========== PushPlus 推送结束 ==========
+

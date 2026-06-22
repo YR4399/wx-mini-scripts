@@ -7,6 +7,8 @@ os.environ['HTTPS_PROXY'] = ''
 os.environ['http_proxy'] = ''
 os.environ['https_proxy'] = ''
 # ========== SSL和代理修复结束 ==========
+from _log_tee import enable as _enable_tee
+
 
 # ========== 推送通知 ==========
 import sys
@@ -577,8 +579,8 @@ def check_response(resp: Optional[requests.Response], account: AccountConfig,
         if reason == "token_expired":
             account.set_status(AccountStatus.TOKEN_EXPIRED, "Token 已过期")
             cache.clear_token(account.account_id)
-            cache.mark_account_invalid(account.account_id, "Token已过期")
-            log("Token 已过期，将在下次运行时刷新", "EXPIRED", account.display_name)
+            # 不标记 invalid，让上层 process_account 刷新 token 后重试
+            log("Token 已过期，正在刷新...", "EXPIRED", account.display_name)
         elif reason == "account_invalid":
             account.set_status(AccountStatus.TOKEN_INVALID, "账号无效")
             cache.mark_account_invalid(account.account_id, "账号无效")
@@ -990,10 +992,76 @@ def update_user_watch_duration(token: str, account: AccountConfig, video_sec: in
 
 
 
+def get_balance(token: str, account: AccountConfig, cache: TaskCache) -> Optional[float]:
+    """获取可提现余额（元）"""
+    url = f"{BUSINESS_API_BASE}/app/invite/selectInviteMoney"
+    resp = safe_request("GET", url, headers=make_headers(token))
+    ok, data = safe_check(resp, account, cache)
+    if ok and data and data.get("code") == 0:
+        invite_money = data.get("data", {}).get("inviteMoney", {})
+        return float(invite_money.get("money", 0) or 0)
+    return None
+
+
+def cash_out(token: str, account: AccountConfig, cache: TaskCache,
+             amount: float) -> Tuple[bool, str]:
+    """提现到支付宝
+    classify=1 表示支付宝提现
+    """
+    url = f"{BUSINESS_API_BASE}/app/cash/cashMoney"
+    resp = safe_request("GET", url, params={"money": amount, "classify": 1},
+                        headers=make_headers(token))
+    ok, data = safe_check(resp, account, cache)
+    if not ok:
+        return False, "请求失败"
+    if data.get("code") == 0:
+        msg = data.get("msg", "提现成功")
+        return True, msg
+    return False, data.get("msg", "提现失败")
+
+
+def auto_cash_out(token: str, account: AccountConfig, cache: TaskCache) -> Dict:
+    """自动提现：余额 >= 3 元时提现 3 元到支付宝"""
+    result = {"attempted": False, "amount": 0, "msg": ""}
+
+    # 查余额
+    balance = get_balance(token, account, cache)
+    if balance is None:
+        log("获取可提现余额失败 (接口返回异常)", "WARN", account.display_name)
+        result["msg"] = "获取余额失败"
+        return result
+
+    log(f"可提现余额: {balance:.2f} 元", "INFO", account.display_name)
+
+    if balance < 3:
+        log(f"余额不足 3 元，不执行提现", "SKIP", account.display_name)
+        result["msg"] = f"余额不足 ({balance:.2f}元)"
+        return result
+
+    # 提现 3 元
+    amount = 3.0
+    log(f"余额 {balance:.2f}元 >= 3元，自动提现 {amount} 元...", "INFO", account.display_name)
+    ok, msg = cash_out(token, account, cache, amount)
+
+    if ok:
+        log(f"提现成功: {msg}", "SUCCESS", account.display_name)
+        result["attempted"] = True
+        result["amount"] = amount
+        result["msg"] = msg
+    else:
+        log(f"提现失败: {msg}", "WARN", account.display_name)
+        result["attempted"] = True
+        result["amount"] = 0
+        result["msg"] = msg
+
+    return result
+
+
 def do_daily_tasks(account: AccountConfig, cache: TaskCache) -> Dict:
     result = {
         "sign": False, "resign": 0, "like": 0, "like_reward": False,
         "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+        "cash_out": {"attempted": False, "amount": 0, "msg": ""},
         "status": account.status, "status_message": account.status_message,
     }
     if not account.is_runnable():
@@ -1064,6 +1132,14 @@ def do_daily_tasks(account: AccountConfig, cache: TaskCache) -> Dict:
     earned = result["end_integral"] - result["start_integral"]
     if earned > 0:
         log(f"本次获得: +{earned} 积分", "SUCCESS", account.display_name)
+
+    # 7. 自动提现
+    if account.is_runnable():
+        random_sleep(TASK_INTERVAL)
+        result["cash_out"] = auto_cash_out(token, account, cache)
+    else:
+        result["cash_out"] = {"attempted": False, "amount": 0, "msg": "账号状态异常"}
+
     result["status"] = account.status
     return result
 
@@ -1084,6 +1160,7 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
         return {
             "sign": False, "resign": 0, "like": 0, "like_reward": False,
             "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+            "cash_out": {"attempted": False, "amount": 0, "msg": reason},
             "status": account.status, "status_message": reason,
         }
 
@@ -1093,6 +1170,7 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
         return {
             "sign": False, "resign": 0, "like": 0, "like_reward": False,
             "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+            "cash_out": {"attempted": False, "amount": 0, "msg": "账号已封禁"},
             "status": account.status, "status_message": "账号已封禁",
         }
 
@@ -1104,6 +1182,7 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
                 return {
                     "sign": False, "resign": 0, "like": 0, "like_reward": False,
                     "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+                    "cash_out": {"attempted": False, "amount": 0, "msg": "未提供 Token"},
                     "status": account.status, "status_message": "未提供 Token",
                 }
             log("使用手动提供的 Token", "INFO", account.display_name)
@@ -1117,6 +1196,7 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
                     return {
                         "sign": False, "resign": 0, "like": 0, "like_reward": False,
                         "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+                        "cash_out": {"attempted": False, "amount": 0, "msg": account.status_message},
                         "status": account.status, "status_message": account.status_message,
                     }
                 cache.save_token(account.account_id, token)
@@ -1130,6 +1210,7 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
             return {
                 "sign": False, "resign": 0, "like": 0, "like_reward": False,
                 "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+                "cash_out": {"attempted": False, "amount": 0, "msg": "无法获取 Token"},
                 "status": account.status, "status_message": "无法获取 Token",
             }
 
@@ -1149,12 +1230,14 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
                     return {
                         "sign": False, "resign": 0, "like": 0, "like_reward": False,
                         "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+                        "cash_out": {"attempted": False, "amount": 0, "msg": account.status_message},
                         "status": account.status, "status_message": account.status_message,
                     }
             else:
                 return {
                     "sign": False, "resign": 0, "like": 0, "like_reward": False,
                     "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+                    "cash_out": {"attempted": False, "amount": 0, "msg": account.status_message},
                     "status": account.status, "status_message": account.status_message,
                 }
 
@@ -1166,6 +1249,7 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
         return {
             "sign": False, "resign": 0, "like": 0, "like_reward": False,
             "video": 0, "eat": False, "start_integral": 0, "end_integral": 0,
+            "cash_out": {"attempted": False, "amount": 0, "msg": str(e)},
             "status": account.status, "status_message": str(e),
         }
 
@@ -1239,6 +1323,14 @@ def main():
             print(f"  点赞奖励: {'✅' if result['like_reward'] else '❌'}")
             print(f"  吃饭补贴: {'✅' if result['eat'] else '❌'}")
             print(f"  看广告: {result['video']}/{MAX_VIDEO_PER_DAY} 次")
+            co = result.get("cash_out", {})
+            if co and co.get("attempted"):
+                if co.get("amount", 0) > 0:
+                    print(f"  提现: ✅ {co['amount']}元 → {co.get('msg', '')}")
+                else:
+                    print(f"  提现: ❌ {co.get('msg', '')}")
+            elif co and co.get("msg") and "余额不足" not in co.get("msg", ""):
+                print(f"  提现: ⏭️ {co.get('msg', '')}")
             print(f"  积分: {result['start_integral']} → {result['end_integral']} (+{earned})")
 
     print(f"\n{'='*50}")
@@ -1287,9 +1379,11 @@ if __name__ == "__main__":
     except Exception as e:
         print(f'脚本异常: {e}')
     finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
+        sys.stdout = _tee_out.original
+
+        sys.stderr = _tee_err.original
+
+        _logs = _tee_out.getvalue()
     if _logs.strip():
         try:
             push_notify('牛牛短剧 签到结果', _logs[-2000:])

@@ -1,3 +1,4 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 // ========== 推送通知模块 ==========
 const axios = require('axios');
 
@@ -5,21 +6,13 @@ const axios = require('axios');
 const PLUSPLUS_TOKEN = process.env.PLUSPLUS_TOKEN || '';
 
 async function sendPushNotify(title, content) {
-    if (!PLUSPLUS_TOKEN) {
-        console.log('⚠️ 未配置PLUSPLUS_TOKEN，跳过推送');
-        return false;
-    }
+    if (!PLUSPLUS_TOKEN) return false;
     try {
-        await axios.post('https://www.pushplus.plus/send', {
-            token: PLUSPLUS_TOKEN,
-            title: title,
-            content: content,
-            template: 'txt'
-        }, { 
-            timeout: 10000,
-            proxy: false
-        });
-        console.log('✅ PushPlus推送成功: ' + title);
+        const r = await axios.post('http://www.pushplus.plus/send', {
+            token: PLUSPLUS_TOKEN, title, content, template: 'txt'
+        }, { timeout: 10000 });
+        if (r.data?.code === 200) console.log('✅ PushPlus推送成功: ' + title);
+        else console.log('⚠️ PushPlus: ' + JSON.stringify(r.data));
         return true;
     } catch (e) {
         console.log('❌ PushPlus推送失败: ' + e.message);

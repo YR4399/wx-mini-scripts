@@ -8,18 +8,6 @@ os.environ['http_proxy'] = ''
 os.environ['https_proxy'] = ''
 # ========== SSL和代理修复结束 ==========
 
-# ========== 推送通知 ==========
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -514,11 +502,10 @@ def login_manual():
 # -----------------------------------------------------------------------
 def run_sign(client):
     """执行每日签到"""
-    print("\n========== 每日签到 ==========")
     info = client.get_sign_info()
     if not info:
         log.error("获取签到信息失败")
-        return
+        return False
 
     sign_status = info.get("data", {}).get("signStatus")
     total_point = info.get("data", {}).get("memberDetail", {}).get("totalPoint", 0)
@@ -526,7 +513,7 @@ def run_sign(client):
 
     if sign_status == 1:
         log.info("今日已签到, 跳过")
-        return
+        return True
 
     result = client.sign()
     if result:
@@ -534,10 +521,12 @@ def run_sign(client):
         log.info(f"签到结果: code={code}, msg={result.get('msg')}")
         if str(code) == "200":
             log.info("签到成功")
+            return True
         else:
             log.warning(f"签到可能失败: {result}")
     else:
         log.error("签到请求失败")
+    return False
 
 
 def run_browse_task(client, task, wait_time=15):
@@ -545,41 +534,36 @@ def run_browse_task(client, task, wait_time=15):
     task_type = task.get("taskType")
     task_name = task.get("taskName", task_type)
     award = task.get("awardPoint", 0)
-    log.info(f"任务: {task_name} (类型={task_type}, 奖励={award}分)")
 
-    # 1. tofinish
     r1 = client.tofinish(task_type)
     if r1:
-        log.info(f"开始浏览: {json.dumps(r1, ensure_ascii=False)[:120]}")
+        log.info(f"[{task_name}] 浏览中... {wait_time}s")
+    else:
+        log.info(f"[{task_name}] 开始失败")
 
-    # 2. wait
-    print(f"  浏览中... {wait_time}s")
     time.sleep(wait_time)
 
-    # 3. completeTask
     r2 = client.complete_task(task_type)
-    if r2:
-        log.info(f"完成任务: {json.dumps(r2, ensure_ascii=False)[:120]}")
-        if str(r2.get("code")) == "200":
-            log.info(f"任务完成: +{award}分")
-        else:
-            log.warning(f"任务可能失败: {r2.get('msg')}")
+    if r2 and str(r2.get("code")) == "200":
+        log.info(f"[{task_name}] ✅ +{award}分")
+        return True
+    else:
+        log.info(f"[{task_name}] 失败: {json.dumps(r2, ensure_ascii=False)[:80] if r2 else '无响应'}")
+        return False
 
 
 def run_all_tasks(client):
     """获取并执行所有浏览任务"""
-    print("\n========== 浏览任务 ==========")
     data = client.get_task_list()
     if not data:
         log.error("获取任务列表失败")
-        return
+        return 0, 0, 0
 
     tasks = data.get("data", [])
     if not isinstance(tasks, list):
         log.warning("任务列表格式异常")
-        return
+        return 0, 0, 0
 
-    # 过滤: 去掉 None taskType, 去掉 "进福利群" 等不可自动完成的任务
     skip_keywords = ["进福利群", "签到"]
     browse_tasks = [
         t for t in tasks
@@ -588,9 +572,10 @@ def run_all_tasks(client):
     ]
     log.info(f"共 {len(browse_tasks)} 个任务待执行")
 
-    # 可重复执行的任务类型及次数
     REPEAT_TASKS = {"TZSPXQ1": 3, "LLZTY": 3}
-    executed = set()  # 已处理过的 taskType
+    done = 0
+    failed = 0
+    points = 0
 
     for task in browse_tasks:
         task_type = task.get("taskType")
@@ -598,54 +583,51 @@ def run_all_tasks(client):
         for round_i in range(repeat):
             r = client.tofinish(task_type)
             if r and str(r.get("code")) != "200":
-                # 已经完成或不可用, 跳出本轮重复
-                log.info(f"任务 {task.get('taskName')} 第{round_i+1}次已不可用, 跳过剩余")
                 break
-            log.info(f"任务: {task.get('taskName')} (第{round_i+1}/{repeat}次)")
-            if r:
-                log.info(f"开始浏览: {json.dumps(r, ensure_ascii=False)[:120]}")
-            print(f"  浏览中... 15s")
+            log.info(f"[{task.get('taskName')}] ({round_i+1}/{repeat}) 浏览中... 15s")
             time.sleep(15)
             r2 = client.complete_task(task_type)
-            if r2:
-                log.info(f"完成任务: {json.dumps(r2, ensure_ascii=False)[:120]}")
-                if str(r2.get("code")) == "200":
-                    log.info(f"任务完成: +{task.get('awardPoint', 0)}分")
-                else:
-                    log.warning(f"任务可能失败: {r2.get('msg')}")
-                    break
+            if r2 and str(r2.get("code")) == "200":
+                a = task.get("awardPoint", 0)
+                log.info(f"[{task.get('taskName')}] ✅ +{a}分")
+                done += 1
+                points += a
+            else:
+                failed += 1
             if round_i < repeat - 1:
-                delay = random.randint(3, 8)
-                log.info(f"等待 {delay}s 后重复执行...")
-                time.sleep(delay)
+                time.sleep(random.randint(3, 8))
 
-        delay = random.randint(3, 8)
-        log.info(f"等待 {delay}s 后执行下一个任务...")
-        time.sleep(delay)
+        time.sleep(random.randint(3, 8))
+    return done, failed, points
 
 
 # -----------------------------------------------------------------------
 # 主函数
 # -----------------------------------------------------------------------
 def run_account(token, account_info):
-    """对单个账号执行签到 + 全部浏览任务"""
+    """对单个账号执行签到 + 全部浏览任务，返回结果摘要"""
     display = account_info.get("displayName", "") or account_info.get("openid", "")[:16]
     openid = account_info.get("openid", "")
     client = XingMaHuiClient(token, openid=openid)
-    log.info(f"--- 账号: {display} ---")
-    run_sign(client)
+    log.info(f"=== {display} ===")
+    
+    # 签到
+    signed = run_sign(client)
     time.sleep(random.randint(3, 8))
-    run_all_tasks(client)
+    
+    # 浏览任务
+    done, failed, points = run_all_tasks(client)
+    
+    return {"name": display, "signed": signed, "done": done, "failed": failed, "points": points}
 
 
 def main():
-    print("=" * 50)
     print("星妈会 自动签到 + 浏览任务 (WCS)")
-    print("=" * 50)
+    results = []
 
     token = login_manual()
     if token:
-        run_account(token, {})
+        results.append(run_account(token, {}))
     elif WCS_AUTH:
         log.info("尝试 WCS 自动登录...")
         wcs = WCSClient()
@@ -656,13 +638,10 @@ def main():
         log.info(f"找到 {len(accounts)} 个 WCS 账号")
         for i, acc in enumerate(accounts):
             if i > 0:
-                delay = random.randint(5, 10)
-                log.info(f"等待 {delay}s 后切换下一个账号...")
-                time.sleep(delay)
+                time.sleep(random.randint(5, 10))
             openid = acc.get("openid", "")
             user_key = acc.get("userKey", openid)
 
-            # 优先使用缓存 token
             token = _get_cached_token(openid)
             if not token:
                 user_key = acc.get("userKey", openid)
@@ -670,57 +649,45 @@ def main():
                 if token:
                     _set_cached_token(openid, token)
             if token:
-                run_account(token, acc)
+                results.append(run_account(token, acc))
             else:
                 log.warning(f"账号 {acc.get('displayName', openid[:16])} 登录失败")
+                results.append({"name": acc.get("displayName", openid[:16]), "signed": False, "done": 0, "failed": 0, "points": 0, "error": "登录失败"})
     else:
-        print("\n无可用 token, 请选择:")
-        print("  1. 设置环境变量 XMYX_TOKEN (手动模式, 单账号)")
-        print("  2. 设置环境变量 wx_auth + wx_server_url (WCS 自动模式, 多账号)")
+        print("\n无可用 token")
         sys.exit(1)
 
-    print("\n全部完成!")
+    # 汇总并推送
+    lines = []
+    for r in results:
+        name = r.get("name", "")[:6]
+        s = "✅" if r.get("signed") else "❌"
+        lines.append(f"{name} 签到{s} 任务{r['done']}个 +{r['points']}分")
+    summary = "\n".join(lines)
+    log.info(summary)
+    _push("星妈会 签到结果", summary)
+
+
+def _push(title, content):
+    """PushPlus 推送"""
+    try:
+        token = os.getenv("PLUSPLUS_TOKEN") or os.getenv("PUSH_PLUS_TOKEN", "")
+        if not token or not content:
+            return
+        import json as _j, urllib.request as _u
+        data = _j.dumps({"token": token, "title": title, "content": content, "template": "txt"}).encode()
+        req = _u.Request("http://www.pushplus.plus/send", data=data,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with _u.urlopen(req, timeout=10) as r:
+            resp = _j.loads(r.read())
+            if resp.get("code") == 200:
+                log.info("推送成功")
+            else:
+                log.info(f"推送失败: {resp.get('msg','')}")
+    except Exception as e:
+        log.info(f"推送异常: {e}")
 
 
 if __name__ == "__main__":
-    import io
+    main()
 
-
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
-    try:
-        main()
-    except SystemExit:
-        pass
-    except Exception as e:
-        print(f'脚本异常: {e}')
-    finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
-    if _logs.strip():
-        print(_logs)
-        try:
-            push_notify('xmyx_auto_wcs 签到结果', _logs[-2000:])
-        except:
-            pass
-
-
-# ========== 自动推送 ==========
-try:
-    push_content = []
-    output = ''
-    if hasattr(sys.stdout, 'getvalue'):
-        output = sys.stdout.getvalue()
-    if output:
-        for line in output.split(chr(10)):
-            if line.strip():
-                push_content.append(line)
-    if push_content:
-        push_notify('xmyx_auto_wcs 签到结果', chr(10).join(push_content[-20:]))
-except:
-    pass
-# ========== 自动推送结束 ==========

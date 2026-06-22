@@ -176,7 +176,10 @@ class Task {
 
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
+    .then(async () => {
+    const _logs = $.notifyStr || [];
+    if (_logs.length > 0) await sendPushNotify("可口可乐签到", _logs.join("\n"));
+  }).finally(() => $.done());
 
 async function getNotice() {
     try {

@@ -32,6 +32,8 @@ import random
 import hashlib
 import logging
 from datetime import datetime
+from _log_tee import enable as _enable_tee
+
 
 # ========== 推送通知 ==========
 import sys
@@ -301,6 +303,7 @@ def login_via_wcs(openid, user_key=None):
             json={'sourceType': 1, 'code': login_code},
             headers=make_headers(),
             timeout=15,
+            verify=False,
         )
     except requests.RequestException as e:
         log.error(f'wxLogin 请求失败: {e}')
@@ -583,11 +586,7 @@ if __name__ == "__main__":
     import io
 
 
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
+    _tee_out, _tee_err = _enable_tee()
 
     # Make logging also write to _log_capture (fix empty push issue)
     _capture_handler = logging.StreamHandler(_log_capture)
@@ -605,9 +604,11 @@ if __name__ == "__main__":
         print(f'脚本异常: {e}')
         result = 1
     finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
+        sys.stdout = _tee_out.original
+
+        sys.stderr = _tee_err.original
+
+        _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
         try:

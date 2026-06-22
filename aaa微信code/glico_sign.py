@@ -1,12 +1,7 @@
-# ========== SSL和代理修复 ==========
-import urllib3
+import os,ssl,urllib3
 urllib3.disable_warnings()
-import os
-os.environ['HTTP_PROXY'] = ''
-os.environ['HTTPS_PROXY'] = ''
-os.environ['http_proxy'] = ''
-os.environ['https_proxy'] = ''
-# ========== SSL和代理修复结束 ==========
+ssl._create_default_https_context=ssl._create_unverified_context
+for k in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy"):os.environ.pop(k,None)
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -35,6 +30,8 @@ import sys
 import time
 import hashlib
 import logging
+from _log_tee import enable as _enable_tee
+
 
 # ========== 推送通知 ==========
 import sys
@@ -268,19 +265,19 @@ class GlicoClient:
 
     def _get(self, path, params=None):
         url = f'{API_BASE}{path}'
-        resp = requests.get(url, params=params,
+        resp = requests.get(url, params=params, verify=False,
                             headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _post(self, path, data=None, params=None):
         url = f'{API_BASE}{path}'
-        resp = requests.post(url, json=(data or {}), params=params,
+        resp = requests.post(url, json=(data or {}), params=params, verify=False,
                              headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _put(self, path, data=None):
         url = f'{API_BASE}{path}'
-        resp = requests.put(url, json=(data or {}),
+        resp = requests.put(url, json=(data or {}), verify=False,
                             headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
@@ -606,11 +603,7 @@ if __name__ == '__main__':
     import io
 
 
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
+    _tee_out, _tee_err = _enable_tee()
     try:
         main()
     except SystemExit:
@@ -618,9 +611,11 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'脚本异常: {e}')
     finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
+        sys.stdout = _tee_out.original
+
+        sys.stderr = _tee_err.original
+
+        _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
         try:

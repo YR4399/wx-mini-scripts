@@ -228,7 +228,10 @@ class Task {
 
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
+    .then(async () => {
+    const _logs = $.notifyStr || [];
+    if (_logs.length > 0) await sendPushNotify(origin_title, _logs.join("\n"));
+  }).finally(() => $.done());
 async function getNotice() {
     try {
         let options = {

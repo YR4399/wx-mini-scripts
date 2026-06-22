@@ -420,3 +420,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+try:
+    import urllib.request as _ur, json as _js
+    _tok = os.getenv("PLUSPLUS_TOKEN","") or os.getenv("PUSHPLUS_TOKEN","")
+    if _tok:
+        _b = _js.dumps({"token":_tok,"title":"xiaoxishi","content":"xiaoxishi执行完成","template":"txt"}).encode()
+        _r = _ur.Request("http://www.pushplus.plus/send",data=_b,method="POST")
+        _r.add_header("Content-Type","application/json")
+        _rs = _js.loads(_ur.urlopen(_r,timeout=15).read())
+        print("PushPlus","ok" if _rs.get("code")==200 else _rs.get("msg",""))
+except: pass

@@ -214,6 +214,35 @@ class Task {
     }
 
     // 浓友购抽奖
+    async getActivityId() {
+        try {
+            let opts = {
+                method: 'GET',
+                url: 'https://www.wlnxjc.com:8088/app-api/promotion/activity/list',
+                headers: {
+                    'User-Agent': defaultUserAgent,
+                    'Content-Type': 'application/json;charset=UTF-8',
+                    'platform': 'WechatMiniProgram',
+                    'tenant-id': '1',
+                    'terminal': '10',
+                    'referer': 'https://servicewechat.com/wx99fa98e883130aa3/49/page-frame.html',
+                    Authorization: 'Bearer ' + this.nygToken,
+                },
+                timeout: 10000,
+            };
+            let { data: result } = await axios.request(opts);
+            if (result?.code == 0 && result.data?.length) {
+                let activity = result.data.find(a => a.name && a.name.includes('积分大转盘'));
+                if (activity) {
+                    $.log('自动检测活动: ' + activity.name + ' (' + activity.id + ')');
+                    return activity.id;
+                }
+                return result.data[0].id;
+            }
+        } catch (e) {}
+        return '2067074549517320194'; // 兜底 ID
+    }
+
     async doLottery() {
         let loginOk = await this.loginNYG()
         if (!loginOk) return
@@ -221,7 +250,7 @@ class Task {
         // 查询浓友购积分
         await this.getNYGIntegral()
 
-        let activityId = '2064174568711602177'
+        let activityId = await this.getActivityId()
         let drawResults = []
 
         for (let i = 0; i < 3; i++) {
@@ -370,7 +399,19 @@ class Task {
 
 })()
     .catch((e) => console.log(e))
-    .finally(() => $.done());
+    .finally(async () => {
+    try {
+      const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
+      if (token) {
+        const axios = require("axios");
+        const log = ($.notifyStr || []).slice(-10).join(String.fromCharCode(10));
+        await axios.post("http://www.pushplus.plus/send", {
+          token, title: "浓五", content: log || "浓五执行完成", template: "txt"
+        }, { timeout: 10000 });
+      }
+    } catch(e) {}
+    $.sendMsg = async () => {}; $.done();
+  });;
 
 async function getNotice() {
     try {

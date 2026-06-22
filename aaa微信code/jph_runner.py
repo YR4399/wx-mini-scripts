@@ -40,6 +40,8 @@ requests.packages.urllib3.disable_warnings()
 APPID = 'wx8d41cdc44c8aeaab'
 BASE = 'https://fm.exijiu.com'
 GARDEN_BASE = 'https://apimallwm.exijiu.com'
+ENABLE_GARDEN = False  # 花园改由 junpinhui.js 执行
+ENABLE_GARDEN = False  # 花园改由 junpinhui.js 执行
 AUTH_BASIC = 'Basic d2VjaGF0OndlY2hhdF9zZWNyZXQ='
 WCS_AUTH = '976dc5b3977cd2cbb8c61ddd32e9f885'
 WCS_INTERNAL = 'http://172.17.0.3:8787'
@@ -143,6 +145,8 @@ def do_sign(token, code):
         return False, d.get('message','未知')
     return False, '重试用完'
 
+from _log_tee import enable as _enable_tee
+
 
 # ==================== 花园功能 ====================
 
@@ -153,6 +157,8 @@ def garden_make_h(token):
         'AppID': APPID,
         'Authorization': AUTH_BASIC,
         'App-Version': '1.0.0',
+        'Referer': 'https://servicewechat.com/{}/0/page-frame.html'.format(APPID),
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.40',
     }
 
 
@@ -375,6 +381,9 @@ def process(openid, remark):
             print(f"  ❌ {msg}")
 
     # 花园功能 — 需要单独获取一次 code，避免被商城登录消费过
+    if not ENABLE_GARDEN:
+        print("  🌱 花园已关闭 (由 junpinhui.js 执行)")
+        return True
     print("\n  [花园]")
     code2 = get_wx_code(openid)
     if code2:
@@ -390,21 +399,23 @@ def process(openid, remark):
 
     # 花园签到 — 需要 session_key 加密，标记为跳过
     print("\n  [花园签到]")
-    garden_sign(token, code)
+    garden_sign(token, code2)
     time.sleep(1)
 
     # 每日分享
     print("\n  [每日分享]")
-    garden_share(token, code)
+    garden_share(token, code2)
     time.sleep(1)
 
     # 任务列表
     print("\n  [任务]")
     tasks = garden_get_tasks(token)
     if tasks:
-        for task_id, task in tasks.items():
-            status = "✅" if task.get('status') == 1 else "⏳"
-            print(f"  {status} {task.get('name', '未知')}: {task.get('reward', '')}")
+        task_items = tasks.items() if isinstance(tasks, dict) else enumerate(tasks) if isinstance(tasks, list) else []
+        for idx, task in task_items:
+            tid = idx if isinstance(tasks, list) else task
+            status = "✅" if (task.get('status') if isinstance(task, dict) else 1) == 1 else "⏳"
+            print(f"  {status} {task.get('name', task if isinstance(task,str) else '未知')}: {task.get('reward', '')}")
     time.sleep(1)
 
     # 获取地块信息
@@ -427,7 +438,7 @@ def process(openid, remark):
             elif status == 0:
                 # 空地，种植高粱
                 print(f"  地块{serial}: 空地，开始种植...")
-                garden_seed(token, code, field_id, crop_type=1)
+                garden_seed(token, code2, field_id, crop_type=1)
                 time.sleep(1)
             elif status == 10:
                 # 种植中，浇水
@@ -438,10 +449,10 @@ def process(openid, remark):
             elif status == 2:
                 # 可收获
                 print(f"  地块{serial}: 可收获!")
-                garden_harvest(token, code, field_id)
+                garden_harvest(token, code2, field_id)
                 time.sleep(1)
                 # 收获后种植
-                garden_seed(token, code, field_id, crop_type=1)
+                garden_seed(token, code2, field_id, crop_type=1)
                 time.sleep(1)
 
     # 再次获取会员信息显示最终状态
@@ -465,11 +476,7 @@ def main():
 
 if __name__ == '__main__':
     import io
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
+    _tee_out, _tee_err = _enable_tee()
     try:
         main()
     except SystemExit:
@@ -477,9 +484,11 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'脚本异常: {e}')
     finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
+        sys.stdout = _tee_out.original
+
+        sys.stderr = _tee_err.original
+
+        _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
         try:

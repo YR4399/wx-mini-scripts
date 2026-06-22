@@ -139,6 +139,7 @@ def checkin(access_token, session_id=''):
     """签到"""
     try:
         import uuid as _uuid
+
         headers = {
             'User-Agent': UA,
             'Accept': '*/*',

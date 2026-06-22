@@ -7,6 +7,8 @@ os.environ['HTTPS_PROXY'] = ''
 os.environ['http_proxy'] = ''
 os.environ['https_proxy'] = ''
 # ========== SSL和代理修复结束 ==========
+from _log_tee import enable as _enable_tee
+
 
 # ========== 推送通知 ==========
 import sys
@@ -481,11 +483,7 @@ if __name__ == '__main__':
     import io
 
 
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
+    _tee_out, _tee_err = _enable_tee()
     try:
         main()
     except SystemExit:
@@ -493,9 +491,11 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'脚本异常: {e}')
     finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
+        sys.stdout = _tee_out.original
+
+        sys.stderr = _tee_err.original
+
+        _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
         try:

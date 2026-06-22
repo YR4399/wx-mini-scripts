@@ -56,17 +56,17 @@ class Task {
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)
-        }
+
         if (!this.token) {
             $.log(`账号[${this.index}] 获取用户Token失败❌`)
             return
-        }
+
         this.token = 'Bearer ' + this.token
         await this.getUserInfo()
         await this.doPaper()
         for (let i = 0; i < 10; i++) {
             await this.share();
-        }
+
     }
     async share() {
         const options = {
@@ -76,9 +76,9 @@ class Task {
                 "Host": "ulp.michelin.com.cn",
                 "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001f37) NetType/WIFI Language/zh_CN",
                 "Authorization": this.token,
-            },
+    ,
             data: { "type": "ARTICLE", "code": "COM-MHT-93" }
-        };
+;
         //post方法
         let { data: result } = await axios.request(options);
 
@@ -92,12 +92,12 @@ class Task {
                 "Host": "ulp.michelin.com.cn",
                 "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001f37) NetType/WIFI Language/zh_CN",
                 "Referer": "https://servicewechat.com/wx14413dafd16b9540/130/page-frame.html"
-            }
+    
 
-        }
+
         let {
             data: result
-        } = await axios.request(options);
+ = await axios.request(options);
 
         this.token = result?.data?.token?.access_token;
         $.log(`🌸账号[${this.index}] 获取用户Token成功:${this.token}`)
@@ -113,21 +113,21 @@ class Task {
                     "Host": "ulp.michelin.com.cn",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781 NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF XWEB/50249",
                     "Authorization": this.token,
-                }
-            });
+        
+    );
 
 
             if (result?.data?.points) {
                 $.log(`账号[${this.index}] 获取用户积分成功:${result?.data?.points}`)
-            } else {
+     else {
                 $.log(`账号[${this.index}] 获取用户积分失败❌`)
-            }
+    
 
 
-        } catch (e) {
+ catch (e) {
             this.ckStatus = false;
             console.log(`❌查询积分失败！原因为:${e}`);
-        }
+
     }
     async doPaper() {
         //获取问卷
@@ -142,7 +142,7 @@ class Task {
                 let options = question?.questionChoise.options;
                 for (let option of options) {
                     $.log(`- ${option.optionHtml}`);
-                }
+        
                 let theQuestion = question.questionChoise.npsQuestionPk;
                 //查找对应题目答案
                 let detail = this.stdAnswers.find(answer => theQuestion == answer.npsQuestionChoisePk) || {};
@@ -151,12 +151,12 @@ class Task {
                 //提交答案
                 let answerRes = await this.answer(theQuestion, answer?.npsQuestionChoiseOptionPk);
                 $.log(`\n答案: ${answer.optionHtml} => ${answerRes}`);
-            }
+    
             //提交问卷
             await this.paperScore(this.paperCode);
-        } else {
+ else {
             $.log(`答题任务:本周奖励领取已达到上限，跳过执行`);
-        }
+
     }
 
     //获取本期答卷
@@ -169,9 +169,9 @@ class Task {
                 "Host": "ulp.michelin.com.cn",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781 NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF XWEB/50249",
                 "Authorization": this.token,
-            },
+    ,
             data: {}
-        };
+;
 
         let { data: result } = await axios.request(options);
         if (result?.code == 200) {
@@ -182,9 +182,9 @@ class Task {
             this.npsPaperCode = result?.data?.npsPaperCode;
             //获取本期问卷验证编号
             this.paperCode = result?.data?.paperCode;
-        } else {
+ else {
             this.ckStatus = false;
-        }
+
 
     }
     //获取问卷题目
@@ -197,8 +197,8 @@ class Task {
                 "Host": "ulp.michelin.com.cn",
                 "User-Agent": "",
                 "Authorization": this.token,
-            }
-        }
+    
+
 
         //post方法
         let result = await axios.request(options);
@@ -207,9 +207,9 @@ class Task {
             this.stdAnswers = result?.data?.stdAnswers;
             //题目
             this.questionList = result?.data?.questionList;
-        } else {
+ else {
             $.log(`🔴帐号[${this.index}]获取问卷列表失败！${result?.message}`)
-        }
+
 
     }
 
@@ -222,15 +222,15 @@ class Task {
                     "Host": "ulp.michelin.com.cn",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781 NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF XWEB/50249",
                     "Authorization": this.token,
-                },
+        ,
                 data: { "answerOptionId": [`${answer}`], "paperCode": `${this.paperCode}`, "questionId": `${question}` }
-            };
+    ;
             //post方法
             let { data: result } = await axios.request(options);
             return result?.code == 200 ? "回答成功！" : `回答失败！${result?.message}`
-        } catch (e) {
+ catch (e) {
             console.log(`❌回答问题失败！原因为:${e}`);
-        }
+
     }
 
     async paperScore(paperCode) {
@@ -238,13 +238,13 @@ class Task {
             const options = {
                 url: `https://ulp.michelin.com.cn/campaign/paper/score/${paperCode}`,
                 data: {}
-            };
+    ;
             //post方法
             let { data: res } = await axios.request(options);
             $.log(`提交问卷:本期问卷正确率为${res?.data?.score}%,排名${res.data.rank}`);
-        } catch (e) {
+ catch (e) {
             console.log(`❌提交问卷失败！原因为:${e}`);
-        }
+
     }
 
 
@@ -257,7 +257,7 @@ class Task {
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
             await new Task(user).run();
-        }
+
     } else {
         
         $.log(`${ckName}未配置微信SERVER配置 搭建可看仓库目录下的readme.md❌`)
@@ -274,12 +274,12 @@ async function getNotice() {
             url: `https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json`,
             headers: {
                 "User-Agent": defaultUserAgent,
-            },
+    ,
             timeout: 3000
-        }
+
         let {
             data: res
-        } = await axios.request(options);
+ = await axios.request(options);
         $.log(res)
         return res
     } catch (e) { }
@@ -293,10 +293,10 @@ try {
         const _axios = require("axios");
         _axios.post("http://www.pushplus.plus/send", {
             token: _token, title: "米其林", content: "米其林执行完成", template: "txt"
-        }, { timeout: 15000 }).then(_r => {
+, { timeout: 15000 }).then(_r => {
             if (_r.data?.code === 200) console.log("PushPlus 推送成功");
             else console.log("PushPlus 推送失败:", _r.data?.msg);
-        }).catch(_e => console.log("推送异常:", _e.message));
+).catch(_e => console.log("推送异常:", _e.message));
     }
 } catch(_e) { console.log("推送异常:", _e.message); }
 // ========== PushPlus 推送结束 ==========

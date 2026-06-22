@@ -31,6 +31,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from _push_helper import push_notify
+    from _push_helper import send_push_notify  # 自动采集日志并推送
+
 except ImportError:
     def push_notify(title, content):
         print(f'⚠️ 推送模块未加载')

@@ -34,12 +34,15 @@ import time
 import random
 import hashlib
 import logging
+from _log_tee import enable as _enable_tee
+
 
 # ========== 推送通知 ==========
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
+    from _youzan_milestone import check_milestone
     from _push_helper import push_notify
 except ImportError:
     def push_notify(title, content):
@@ -459,7 +462,14 @@ def run_checkin(client, remark=''):
             f'{r.get("infos", {}).get("title", "未知奖励")}'
             for r in rewards
         ])
-        log.info(f'{prefix}签到成功! {desc} - 获得: {reward_str}')
+        log.info(f"{prefix}签到成功! {desc} - 获得: {reward_str}")
+        # 连签里程碑推送
+        try:
+            info = client.do_get("/wscump/checkin/show_checkin_page_v2.json", {})
+            page_data = info.get("data") if isinstance(info, dict) else info
+            check_milestone("袋鼠妈妈签到", page_data, getattr(client, "openid", ""), reward_str)
+        except Exception:
+            pass
         return True
     else:
         log.warning(f'{prefix}签到未成功: {desc}')
@@ -575,11 +585,7 @@ if __name__ == '__main__':
     import io
 
 
-    _log_capture = io.StringIO()
-    _old_stdout = sys.stdout
-    _old_stderr = sys.stderr
-    sys.stdout = _log_capture
-    sys.stderr = _log_capture
+    _tee_out, _tee_err = _enable_tee()
     try:
         main()
     except SystemExit:
@@ -587,9 +593,11 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'脚本异常: {e}')
     finally:
-        sys.stdout = _old_stdout
-        sys.stderr = _old_stderr
-    _logs = _log_capture.getvalue()
+        sys.stdout = _tee_out.original
+
+        sys.stderr = _tee_err.original
+
+        _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
         try:

@@ -29,7 +29,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from _push_helper import push_notify
+    from _push_helper import push_notify, send_push_notify
+    from _push_helper import send_push_notify  # 自动采集日志并推送
+
 except ImportError:
     def push_notify(title, content):
         print(f'⚠️ 推送模块未加载')
@@ -444,3 +446,6 @@ if __name__ == "__main__":
             print(f"-------------- 账号 {i} 结束 --------------")
 
         print("\n=============== 所有任务执行完毕 ===============")
+
+# ========== PushPlus 推送 ==========
+send_push_notify("倍轻松签到")

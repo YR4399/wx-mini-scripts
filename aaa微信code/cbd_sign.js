@@ -1,5 +1,5 @@
 // ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
+// 已禁用
 // ========== 推送通知结束 ==========
 
 /*
@@ -31,7 +31,7 @@ const API_BASE = "https://chabaidao-gateway2.shuxinyc.com";
 const MARKETING_BASE = "https://md-h5-gateway.shuxinyc.com";
 const GROUP_ID = "317964";
 const MEMBER_SYSTEM_ID = "21";
-const BUSINESS_ID = "QhIwqqaafPIo";
+const BUSINESS_ID = process.env.cbd_business_id || "nLeSJVfnWF5Q";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254193e) XWEB/19841";
 
@@ -134,10 +134,59 @@ class Task {
         }
     }
 
-    async signIn() {
+    async fetchBusinessId(openId) {
+        // 如果手动指定了 businessId，优先使用
+        if (process.env.cbd_business_id) return process.env.cbd_business_id;
+        
+        // 从缓存文件读取（每周有效）
+        const cacheFile = path.join(__dirname, ".cbd_business_id");
+        try {
+            if (fs.existsSync(cacheFile)) {
+                const cache = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+                const age = Date.now() - (cache.time || 0);
+                // 缓存6天有效
+                if (age < 6 * 86400 * 1000 && cache.bId) {
+                    $.log(`使用缓存 businessId: ${cache.bId}`);
+                    return cache.bId;
+                }
+            }
+        } catch (_) {}
+        
+        // 从广告配置自动发现
+        try {
+            const headers = this.getHeaders("chabaidao-gateway2.shuxinyc.com");
+            headers["Accept"] = "application/json";
+            const resp = await axios.post(`${API_BASE}/cbd-advert-service/resBit/front/getAdContent`, {
+                appUserId: openId || "",
+                resBitCodeList: ["CBD_093_member_weeksop"],
+                dropEnd: 1,
+                appVersion: 34642,
+                orderType: 1,
+                diningMode: 1
+            }, { headers, timeout: 15000, validateStatus: () => true });
+            
+            const body = JSON.stringify(resp.data);
+            // 匹配 bId=xxxx (多种格式)
+            let m = body.match(/type=3[^"'\s]*bId=([A-Za-z0-9]+)/);
+            if (!m) m = body.match(/"businessId":"([A-Za-z0-9]+)"/);
+            if (!m) m = body.match(/"bId":"([A-Za-z0-9]+)"/);
+            if (m) {
+                $.log(`自动发现签到 businessId: ${m[1]}`);
+                // 缓存
+                try { fs.writeFileSync(cacheFile, JSON.stringify({bId:m[1],time:Date.now()})); } catch(_) {}
+                return m[1];
+            }
+        } catch (e) {
+            $.log(`获取 businessId 失败: ${e.message}`);
+        }
+        $.log("使用默认 businessId");
+        return BUSINESS_ID;
+    }
+
+    async signIn(businessId) {
         const resp = await axios.post(`${MARKETING_BASE}/marketing/minip/activity/join/signIn`, {
             id: "",
-            businessId: BUSINESS_ID,
+            businessId: businessId || BUSINESS_ID,
             activityJoinSource: 0,
             shopId: -1
         }, {
@@ -155,11 +204,27 @@ class Task {
             auth: process.env.wx_auth || ""
         });
 
-        await this.login(wechat, this.user);
+        const loginData = await this.login(wechat, this.user);
+        const openId = loginData?.openId || "";
 
+        // 自动发现当前周的 businessId (带重试)
+        let businessId = await this.fetchBusinessId(openId) || BUSINESS_ID;
+        
         // 签到
         await $.wait(1000 + Math.random() * 1500);
-        const signResult = await this.signIn();
+        let signResult = await this.signIn(businessId);
+
+        // 如果 businessId 过期，清除缓存并重新获取
+        if (signResult.code !== "000" && !(signResult.msg || "").includes("已签")) {
+            $.log("businessId 可能已失效，重新获取...");
+            const cacheFile = path.join(__dirname, ".cbd_business_id");
+            try { fs.unlinkSync(cacheFile); } catch (_) {}
+            const newBid = await this.fetchBusinessId(openId) || BUSINESS_ID;
+            if (newBid !== businessId) {
+                await $.wait(1000);
+                signResult = await this.signIn(newBid);
+            }
+        }
 
         if (signResult.code === "000") {
             const gifts = signResult.data?.marketingGiftConfCOList || [];
@@ -197,14 +262,16 @@ class Task {
 })()
     .catch((e) => console.log(e))
     .finally(async () => {
-    // ========== push result ==========
+    // PushPlus 推送
     try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("茶百道签到", _logs.join("\n"));
+        const logs = $.notifyStr || [];
+        const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
+        if (logs.length > 0 && token) {
+            await axios.post("http://www.pushplus.plus/send", {
+                token, title: "茶百道签到", content: logs.join("\n"), template: "txt"
+            }, { timeout: 10000 });
         }
-    } catch(_e) {}
-    // ========== push end ==========
+    } catch (_) {}
     $.sendMsg = async () => {}; $.log = async () => {};
     process.exit(0);
 });
