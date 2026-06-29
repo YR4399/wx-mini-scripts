@@ -122,31 +122,16 @@ class PDDClient {
 
     const cookieMap = {};
 
-    // 2. GET 登录页面获取 api_uid
-    const pageResp = await axios.get(
-      `${BASE_URL}/garden_index_lz_0.html?_pdd_fs=1&_pdd_tc=676666&_pdd_sbs=1&fun_id=wechat_app_home&refer_page_sn=10002&refer_idx=3&xcx_version=v8.6.21`,
-      {
-        headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
-        httpsAgent: this.agent,
-        validateStatus: () => true,
-        timeout: 15000,
-      }
-    );
-    const pageCookies = pageResp.headers["set-cookie"] || [];
-    for (const c of pageCookies) {
-      const [nameVal] = c.split(";");
-      const [name, val] = nameVal.split("=");
-      cookieMap[name.trim()] = val?.trim() || "";
-    }
-    const api_uid = cookieMap["api_uid"];
-    console.log(`[${this.openid.slice(-8)}] api_uid: ${api_uid}`);
+    // 3. POST login → verify 流程（带正确anti-content）
+    const antiContent = "3akAfa5e-eCEX5UEs2UX39qnGgon0ToXpmxn5EonGBYy0dYOq9xnqPxX0TjX0tqXpTYXWv5M48dI4PmtfJ9EkfM1BAKejed7KLeF3fW7OxVdlzekcVHUcWZFRtmzcewB-7crsWHgeUvv-fTzfP7LwH31DSz99QF6X98";
 
-    // 3. POST api.pinduoduo.com/login 交换 code（获取 pdd_user_id 等关键 cookie）
-    let loginApiOk = false;
+    // 3a. POST login
+    let loginResult = null;
+    let loginCookies = [];
     try {
       const loginResp = await axios.post(
         `https://api.pinduoduo.com/login?xcx=20161201&xcx_version=v8.6.21&xcx_hash=${Date.now()}`,
-        { code, has_auth: false, app_id: 33, support_enhance_type: 3, anti_content: "", xcx_version: "v8.6.21" },
+        { code, has_auth: false, app_id: 33, support_enhance_type: 3, anti_content: antiContent, xcx_version: "v8.6.21" },
         {
           headers: {
             "User-Agent": USER_AGENT,
@@ -158,66 +143,103 @@ class PDDClient {
             "Sec-Fetch-Site": "cross-site",
             "HD-XCX-MODEL": "microsoft",
             "X-XCX-QUERIES": "mini_program_name=pdd;mp_theme_version=v8.6.21",
+            Cookie: Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join("; "),
           },
           httpsAgent: this.agent,
           validateStatus: () => true,
           timeout: 15000,
         }
       );
-      loginApiOk = true;
-      console.log(`[${this.openid.slice(-8)}] POST login 响应: ${JSON.stringify(loginResp.data).slice(0, 200)}`);
-      // 合并 POST login 返回的 cookie
-      for (const c of loginResp.headers["set-cookie"] || []) {
+      loginResult = loginResp.data;
+      loginCookies = loginResp.headers["set-cookie"] || [];
+      console.log(`[${this.openid.slice(-8)}] POST login: ${JSON.stringify(loginResult).slice(0, 200)}`);
+      console.log(`[${this.openid.slice(-8)}] POST login cookies: ${JSON.stringify(loginCookies)}`);
+
+      for (const c of loginCookies) {
         const [nameVal] = c.split(";");
         const [name, val] = nameVal.split("=");
         cookieMap[name.trim()] = val?.trim() || "";
       }
-    } catch (e) {
-      console.log(`[${this.openid.slice(-8)}] POST login 异常: ${e.message}`);
-      if (e.response) {
-        console.log(`[${this.openid.slice(-8)}] POST login 错误响应: ${e.response.data?.slice?.(0, 300) || JSON.stringify(e.response.data).slice(0, 300)}`);
-        for (const c of e.response.headers["set-cookie"] || []) {
-          const [nameVal] = c.split(";");
-          const [name, val] = nameVal.split("=");
-          cookieMap[name.trim()] = val?.trim() || "";
+
+      // 3b. 如果54002需要verify
+      if (loginResult.error_code === 54002 && loginResult.verify_auth_token) {
+        console.log(`[${this.openid.slice(-8)}] 54002, verifying...`);
+        try {
+          const verifyResp = await axios.post(
+            `https://api.pinduoduo.com/verify/login?xcx=20161201&xcx_version=v8.6.21&xcx_hash=${Date.now()}&verify_auth_token=${loginResult.verify_auth_token}`,
+            { code, has_auth: false, app_id: 33, support_enhance_type: 3, anti_content: antiContent, xcx_version: "v8.6.21" },
+            {
+              headers: {
+                "User-Agent": USER_AGENT,
+                "Content-Type": "application/json;charset=UTF-8",
+                Accept: "*/*",
+                Referer: "https://servicewechat.com/wx32540bd863b27570/1840/page-frame.html",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+                "HD-XCX-MODEL": "microsoft",
+                "X-XCX-QUERIES": "mini_program_name=pdd;mp_theme_version=v8.6.21",
+                Cookie: Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join("; "),
+              },
+              httpsAgent: this.agent,
+              validateStatus: () => true,
+              timeout: 15000,
+            }
+          );
+          loginResult = verifyResp.data;
+          loginCookies = verifyResp.headers["set-cookie"] || [];
+          console.log(`[${this.openid.slice(-8)}] verify: ${JSON.stringify(loginResult).slice(0, 200)}`);
+          console.log(`[${this.openid.slice(-8)}] verify cookies: ${JSON.stringify(loginCookies)}`);
+
+          for (const c of loginCookies) {
+            const [nameVal] = c.split(";");
+            const [name, val] = nameVal.split("=");
+            cookieMap[name.trim()] = val?.trim() || "";
+          }
+        } catch (e) {
+          console.log(`[${this.openid.slice(-8)}] verify error: ${e.message}`);
         }
       }
-    }
-    console.log(`[${this.openid.slice(-8)}] POST login 后 cookie: ${JSON.stringify(cookieMap)}`);
-
-    // 4. GET 登录页面 + code 参数 获取 tubetoken
-    const loginResp = await axios.get(
-      `${BASE_URL}/garden_index_lz_0.html?_pdd_fs=1&_pdd_tc=676666&_pdd_sbs=1&fun_id=wechat_app_home&refer_page_sn=10002&refer_idx=3&code=${code}&state=BASE&xcx_version=v8.6.21`,
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          Cookie: Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join("; "),
-        },
-        httpsAgent: this.agent,
-        validateStatus: () => true,
-        timeout: 15000,
-      }
-    );
-
-    const loginCookies = loginResp.headers["set-cookie"] || [];
-    for (const c of loginCookies) {
-      const [nameVal] = c.split(";");
-      const [name, val] = nameVal.split("=");
-      if (val && !val.includes("1970")) cookieMap[name.trim()] = val?.trim() || "";
+    } catch (e) {
+      console.log(`[${this.openid.slice(-8)}] POST login error: ${e.message}`);
     }
 
-    // 5. 提取关键字段
-    this.pdduid = cookieMap["pdd_user_id"];
-    const tubetoken = cookieMap["tubetoken"];
-    if (tubetoken) this.tubetoken = decodeURIComponent(tubetoken);
+    // 4. 从登录响应提取 uid
+    if (loginResult && loginResult.uid) {
+      this.pdduid = String(loginResult.uid);
+    }
+
+    // 5. 构建完整cookie
     this.cookies = Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join("; ");
+    if (loginResult && loginResult.access_token) {
+      this.cookies += `; PDDAccessToken=${loginResult.access_token}`;
+    }
+    if (loginResult && loginResult.uin) {
+      this.cookies += `; pdd_user_uin=${loginResult.uin}`;
+    }
+    console.log(`[${this.openid.slice(-8)}] pdduid=${this.pdduid}, token=${loginResult?.access_token ? "有" : "无"}`);
 
-    console.log(`[${this.openid.slice(-8)}] 完整 cookie: ${JSON.stringify(cookieMap)}`);
+    // 6. 获取tubetoken
+    try {
+      const friendData = await this.getFriendHomePage();
+      if (friendData.tubetoken) this.tubetoken = friendData.tubetoken;
+      if (friendData.pdd_user_id && !this.pdduid) this.pdduid = String(friendData.pdd_user_id);
+    } catch (e) {
+      console.log(`[${this.openid.slice(-8)}] tubetoken失败: ${e.message}`);
+    }
 
     if (!this.pdduid || !this.tubetoken) {
       throw new Error(
-        `WCS登录失败: openid未关联多多果园账号。请在微信中先打开「多多果园」小程序初始化账号，\n然后将抓包中的Cookie设置为环境变量 DDGY_COOKIES 和 DDGY_PDDUID。\nCookie格式参考: api_uid=xxx; PDDAccessToken=xxx; pdd_user_id=xxx; pdd_user_uin=xxx; tubetoken=xxx; pdd_vds=xxx`
+        `WCS登录失败(PDD返回40003)。当前PDD反爬机制无法通过WCS自动登录。\n\n` +
+        `请手动获取Cookie:\n` +
+        `1. 打开浏览器访问 https://mobile.yangkeduo.com/garden_index_lz_0.html\n` +
+        `2. F12打开开发者工具 → Network面板\n` +
+        `3. 找到任意manor开头的API请求(如 manor-query/proxy/friend/home/page)\n` +
+        `4. 复制该请求的完整Cookie值\n\n` +
+        `然后在呆呆面板设置环境变量:\n` +
+        `  DDGY_COOKIES = <完整Cookie>\n` +
+        `  DDGY_PDDUID = <pdd_user_id的值>\n\n` +
+        `Cookie格式示例: api_uid=xxx; pdd_user_id=123; pdd_user_uin=xxx; PDDAccessToken=xxx; tubetoken=xxx; pdd_vds=xxx`
       );
     }
 
