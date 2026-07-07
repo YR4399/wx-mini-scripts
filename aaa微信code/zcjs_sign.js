@@ -1,16 +1,16 @@
 /*
-@Description:  ????(zcjs) ???? + ????
+@Description:  ????(zcjs) ???? + ???? + ????????
 cron: 0 8 * * *
 */
 
 // ==================== ?? ====================
 class Env {
-    constructor(name) { this.name = name || '??????'; this.userIdx = 0; }
+    constructor(name) { this.name = name || '????'; this.userIdx = 0; }
     log(msg) { console.log(String(msg)); }
     done() { process.exit(0); }
     wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 }
-const $ = new Env("??????");
+const $ = new Env("????");
 
 // ????
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -39,13 +39,36 @@ const FALLBACK_API_DOMAINS = [
     "https://bziran.xglrz.com/api",
 ];
 
-// TOKEN????????accessToken?refreshToken??????????
+// TOKEN????
 const TOKEN_CACHE_FILE = path.join(__dirname, "zcjs_token_cache.json");
 
-// ????
-// ???? ZCJS_ACCOUNTS: ????? ???:??
-// ??: account1:pass1,account2:pass2
+// ????????? ZCJS_ACCOUNTS = user1:pass1,user2:pass2
 const ACCOUNTS_ENV = process.env.ZCJS_ACCOUNTS || "";
+
+// ????????
+// ?? ??? SunnyNet ?????????URL?Header
+// ????: ??app ? ??H5???? ? ?"????/??"
+// ?????URL?? ZCJS_CASCADE_API_BASE ????
+const CASCADE_API_BASE = process.env.ZCJS_CASCADE_API_BASE || "";  // ?: https://xxx.com/api/cascade
+const ENABLE_MEETING = process.env.ZCJS_ENABLE_MEETING === "true";
+const MEETING_POLL_INTERVAL = parseInt(process.env.ZCJS_MEETING_POLL || "60");    // ????(?)
+const MEETING_MAX_DURATION = parseInt(process.env.ZCJS_MEETING_DURATION || "180"); // ??????(??)
+
+// ?????API???????????URL?
+const MEETING_ENDPOINTS = {
+    // GET /cascade/meeting/list?startTime=YYYY-MM-DD
+    // ????????
+    list: "/cascade/meeting/list",
+    // GET /cascade/meeting/currentLiving
+    // ???????????
+    currentLiving: "/cascade/meeting/currentLiving",
+    // POST /cascade/meeting/sign  body: {cascadeMeetingId: number}
+    // ??/???Toggle?????????
+    sign: "/cascade/meeting/sign",
+    // GET /cascade/meeting/meetingSignList
+    // ????
+    signList: "/cascade/meeting/meetingSignList",
+};
 
 // ==================== Token ?? ====================
 
@@ -62,7 +85,6 @@ function getCachedToken(userName) {
     const cache = readCache();
     const entry = cache[userName];
     if (!entry) return null;
-    // accessToken ????????30?????
     const age = Date.now() - entry.savedAt;
     if (age > 30 * 60 * 1000) return null; // 30????
     return entry;
@@ -87,7 +109,7 @@ async function fetchApiDomain() {
         try {
             const resp = await axios.get(url, { timeout: 8000 });
             if (resp.data && resp.data.domain && resp.data.domain.length > 0) {
-                const domain = resp.data.domain[0].apiDomain; // ???01
+                const domain = resp.data.domain[0].apiDomain;
                 $.log(`[??] ??????: ${domain}`);
                 return domain;
             }
@@ -101,14 +123,14 @@ async function fetchApiDomain() {
 
 let API_BASE = "https://daziran.xglrz.com/api";
 
-// ?????????app?$http?
-async function apiCall(endpoint, method = "GET", data = null, token = null) {
+// ??????
+async function apiCall(endpoint, method = "GET", data = null, token = null, baseUrl = null) {
     const headers = { "Content-Type": "application/json" };
     if (token) {
         headers["accessToken"] = token.accessToken;
     }
     const config = {
-        url: API_BASE + endpoint,
+        url: (baseUrl || API_BASE) + endpoint,
         method,
         headers,
         data: data || undefined,
@@ -123,12 +145,11 @@ async function apiCall(endpoint, method = "GET", data = null, token = null) {
         if (body.code === 200) {
             return { code: 200, data: body.data || body, message: body.message || "??" };
         }
-        // 401 -> refresh token
         if (body.code === 401 && token) {
             const newToken = await refreshToken(token);
             if (newToken) {
                 headers["accessToken"] = newToken.accessToken;
-                const retry = await axios({ url: API_BASE + endpoint, method, headers, data: data || undefined, timeout: 15000 });
+                const retry = await axios({ url: (baseUrl || API_BASE) + endpoint, method, headers, data: data || undefined, timeout: 15000 });
                 if (retry.status === 200 && retry.data.code === 200) {
                     return { code: 200, data: retry.data.data || retry.data, message: retry.data.message || "??" };
                 }
@@ -181,24 +202,19 @@ async function login(userName, password) {
     return null;
 }
 
-// ==================== ?? ====================
+// ==================== ???? ====================
 
 async function signIn(token, userName) {
     $.log(`[??] ????...`);
     const result = await apiCall("/user/sign", "GET", null, token);
     if (result.code === 200) {
-        const d = result.data;
-        const msg = d.message || d.msg || "????";
-        $.log(`[??] ??: ${msg}`);
-        if (d.coins !== undefined) $.log(`[??] ????: ${d.coins}`);
-        if (d.points !== undefined) $.log(`[??] ????: ${d.points}`);
-        return d;
+        $.log(`[??] ??: ??`);
+        return result.data;
     }
     $.log(`[??] ??: ${result.message}`);
     return null;
 }
 
-// ??????
 async function getSignList(token) {
     const result = await apiCall("/user/signInList", "GET", null, token);
     if (result.code === 200) {
@@ -213,10 +229,130 @@ async function getSignList(token) {
     return null;
 }
 
+// ==================== ???????? ====================
+
+// ?????? YYYY-MM-DD
+function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// ?????????
+async function getMeetingList(token, baseUrl) {
+    const result = await apiCall(`${MEETING_ENDPOINTS.list}?startTime=${today()}`, "GET", null, token, baseUrl);
+    if (result.code === 200) {
+        return result.data;
+    }
+    return null;
+}
+
+// ?????????
+async function getCurrentLiving(token, baseUrl) {
+    const result = await apiCall(MEETING_ENDPOINTS.currentLiving, "GET", null, token, baseUrl);
+    if (result.code === 200) {
+        return result.data;
+    }
+    return null;
+}
+
+// ????/???Toggle - ??????
+async function meetingSign(token, cascadeMeetingId, baseUrl) {
+    const result = await apiCall(MEETING_ENDPOINTS.sign, "POST", { cascadeMeetingId }, token, baseUrl);
+    if (result.code === 200) {
+        return { success: true, data: result.data };
+    }
+    return { success: false, message: result.message };
+}
+
+// ????????
+async function getMeetingSignList(token, baseUrl) {
+    const result = await apiCall(MEETING_ENDPOINTS.signList, "GET", null, token, baseUrl);
+    if (result.code === 200) {
+        return result.data;
+    }
+    return null;
+}
+
+// ????????????
+async function runMeetingMonitor(token, userName) {
+    if (!token) return;
+    if (!CASCADE_API_BASE) {
+        $.log(`[??] ?? ??? ZCJS_CASCADE_API_BASE???????`);
+        $.log(`[??] ??? SunnyNet ?????app ? H5???? ? ???/???`);
+        $.log(`[??] ????URL???????: ZCJS_CASCADE_API_BASE=https://????/api/cascade`);
+        $.log(`[??] ??? ZCJS_ENABLE_MEETING=true ?????`);
+        return;
+    }
+
+    $.log(`\n--- ?????? ---`);
+    $.log(`[??] API: ${CASCADE_API_BASE}`);
+    $.log(`[??] ????: ${MEETING_POLL_INTERVAL}s`);
+    $.log(`[??] ????: ${MEETING_MAX_DURATION}min`);
+
+    const startTime = Date.now();
+    const maxTime = startTime + MEETING_MAX_DURATION * 60 * 1000;
+    let hasSignedIn = false;
+
+    while (Date.now() < maxTime) {
+        try {
+            // 1. ???????
+            const living = await getCurrentLiving(token, CASCADE_API_BASE);
+            if (living && (Array.isArray(living) ? living.length > 0 : true)) {
+                const meetings = Array.isArray(living) ? living : [living];
+                for (const meeting of meetings) {
+                    const meetingId = meeting.id || meeting.cascadeMeetingId;
+                    if (!meetingId) continue;
+
+                    if (hasSignedIn) {
+                        // ??? ? ?????????
+                        const signList = await getMeetingSignList(token, CASCADE_API_BASE);
+                        if (signList) {
+                            $.log(`[??] ????ID=${meetingId}?????...`);
+                            // ????????????
+                            await $.wait(5000);
+                            const r = await meetingSign(token, meetingId, CASCADE_API_BASE);
+                            if (r.success) {
+                                $.log(`[??] ? ????`);
+                                hasSignedIn = false;
+                            } else {
+                                $.log(`[??] ????: ${r.message}`);
+                            }
+                        }
+                    } else {
+                        // ??? ? ????
+                        $.log(`[??] ???????ID=${meetingId}?????...`);
+                        const r = await meetingSign(token, meetingId, CASCADE_API_BASE);
+                        if (r.success) {
+                            $.log(`[??] ? ????`);
+                            hasSignedIn = true;
+                        } else {
+                            $.log(`[??] ????: ${r.message}`);
+                        }
+                    }
+                }
+            } else {
+                $.log(`[??] ????????`);
+                if (hasSignedIn) {
+                    $.log(`[??] ?????`);
+                    hasSignedIn = false;
+                }
+            }
+        } catch (e) {
+            $.log(`[??] ??: ${e.message}`);
+        }
+
+        // ??????
+        $.log(`[??] ${MEETING_POLL_INTERVAL}s ?????...`);
+        await $.wait(MEETING_POLL_INTERVAL * 1000);
+    }
+
+    $.log(`[??] ??????????? ${MEETING_MAX_DURATION}min?`);
+}
+
 // ==================== ??? ====================
 
 async function run() {
-    $.log(`\n======== ???????? ========\n`);
+    $.log(`\n======== ?????? ========\n`);
 
     // 1. ??API??
     API_BASE = await fetchApiDomain();
@@ -245,10 +381,8 @@ async function run() {
         const { userName, password } = accounts[i];
         $.log(`\n--- ??[${i + 1}/${accounts.length}]: ${userName} ---`);
 
-        // ??????token
+        // ??/??token
         let token = getCachedToken(userName);
-
-        // ????token???????
         if (!token) {
             token = await login(userName, password);
             if (!token) continue;
@@ -257,17 +391,16 @@ async function run() {
             $.log(`[Token] ????token`);
         }
 
-        // ????
+        // === ???? ===
+        $.log(`\n[??] ????`);
         const signResult = await signIn(token, userName);
         if (signResult === null && token) {
-            // ???????token??????refreshToken??
             $.log(`[Token] ????...`);
             const newToken = await refreshToken(token);
             if (newToken) {
                 setCachedToken(userName, newToken.accessToken, newToken.refreshToken);
                 await signIn(newToken, userName);
             } else {
-                // ?????????????
                 clearCachedToken(userName);
                 $.log(`[Token] ?????????`);
                 token = await login(userName, password);
@@ -277,15 +410,21 @@ async function run() {
                 }
             }
         }
-
-        // ??????
         if (token) {
             await $.wait(1000);
             await getSignList(token);
         }
+
+        // === ???????? ===
+        if (ENABLE_MEETING) {
+            $.log(`\n[??] ????`);
+            await runMeetingMonitor(token, userName);
+        } else {
+            $.log(`\n[??] ???? (?????? ZCJS_ENABLE_MEETING=true ??)`);
+        }
     }
 
-    $.log(`\n======== ???????? ========`);
+    $.log(`\n======== ?????? ========`);
 }
 
 // ==================== ?? ====================
