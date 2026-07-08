@@ -829,21 +829,21 @@ async function sendNotify(title, content) {
 
 function formatLotteryResult(result) {
     const data = result.data;
-    if (result.status === 200 && data?.code === 0) {
-        if (data.message) {
-            return `⏭️ ${data.message}`;
+    if (result.status === 200 && data) {
+        const innerData = data.data?.resp?.data || data.data?.data?.resp?.data || data.data?.data?.data || data.data;
+        const prize = innerData?.prize || innerData?.giftName || innerData?.name || data.data?.prize || data.data?.giftName || "";
+        if (prize) { return "🎉 " + prize; }
+        if (data.message && data.message.indexOf("已达") >= 0 && data.message.indexOf("上限") >= 0) { return "⏭️ " + data.message; }
+        if (data.message && data.message.indexOf("当前不可") >= 0) { return "⏭️ " + data.message; }
+        if (data.code !== 0 && data.message) {
+            if (data.message.indexOf("活动id:") >= 0 || data.message.indexOf("日志id") >= 0) { return "✅ 已抽奖"; }
+            return "💫 " + data.message;
         }
-        const prize = data.data?.prize || data.data?.giftName || data.data?.comment || data.data?.subcomment || "未知奖品";
-        const leftChance = Object.keys(data.data?.leftChance || {}).length;
-        if (!leftChance && !prize.includes("币") && !prize.includes("会员") && !prize.includes("钻") && !prize.includes("VIP")) {
-            return `🙅 谢谢参与`;
-        }
-        return `🎉 获得: ${prize}`;
-    } else if (data?.message) {
-        return `💫 ${data.message}`;
-    } else {
-        return `❌ 抽奖失败`;
-    }
+        const lc = Object.keys(innerData?.leftChance || data.data?.leftChance || {}).length;
+        if (!lc && data.code === 0) { return "🙅 谢谢参与"; }
+        return "✅ 完成";
+    } else if (data?.message) { return "💫 " + data.message; }
+    else { return "❌ 失败"; }
 }
 
 function randomDelay(minSeconds = 10, maxSeconds = 20) {
