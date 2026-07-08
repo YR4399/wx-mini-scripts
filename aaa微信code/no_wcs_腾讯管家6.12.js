@@ -934,7 +934,10 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
                 if (r.lotteries && r.lotteries.length > 0) {
                     content += `   🎲 抽奖结果:\n`;
                     for (const lottery of r.lotteries) {
-                        if (lottery.type === "每日抽奖") {
+                        if (lottery.type === "等级抽奖") {
+                            content += `      🏅 ${lottery.name}: ${formatLotteryResult(lottery)}
+`;
+                        } else {
                             content += `      ${lottery.name}: ${formatLotteryResult(lottery)}\n`;
                         }
                     }
