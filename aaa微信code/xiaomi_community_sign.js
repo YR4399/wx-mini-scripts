@@ -71,10 +71,14 @@ async function getCheckinInfo(cookies) {
     return null;
 }
 
-async function doCheckin(cookies, token, uid) {
+function randomStr(len) {
+    return Math.random().toString(36).slice(2, 2 + len);
+}
+
+async function doCheckin(cookies, token) {
     const ph = encodeURIComponent(cookies.miui_vip_ph || '');
     const url = `${API_BASE}/mtop/planet/vip/user/checkinV2?${CK_PARAMS}&miui_vip_ph=${ph}`;
-    const boundary = "----XiaoMiCheckIn" + randomStr(8);
+    const boundary = "----XB" + randomStr(8);
     const body = `--${boundary}\r\nContent-Disposition: form-data; name="token"\r\n\r\n${token || ''}\r\n--${boundary}--\r\n`;
     try {
         const resp = await axios.post(url, body, {
