@@ -60,12 +60,9 @@ const LOTTERIES = process.env.qqpcmgr_lotteries
     ? splitAccounts(process.env.qqpcmgr_lotteries) 
     : ["Lottery2"];
 const FORCE_LOTTERY = process.env.qqpcmgr_force_lottery === "true";
-
-// ====== Comment config ======
 const ENABLE_COMMENTS = process.env.qqpcmgr_comments !== "false";
 const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 5;
-const COMMENT_CONTENTS = ["好用","非常实用","功能强大","推荐使用","很好用","速度很快","操作简单","体验不错","非常满意","值得推荐","简单易用","功能齐全","运行流畅","很喜欢","方便快捷"];
-
+const COMMENT_CONTENTS = ["好用","非常实用","u529fu80fdu5f3au5927","u63a8u8350u4f7fu7528","u5f88u597du7528","u901fu5ea6u5f88u5feb","u64cdu4f5cu7b80u5355","u4f53u9a8cu4e0du9519","u975eu5e38u6ee1u610f","u503cu5f97u63a8u8350","u7b80u5355u6613u7528","u529fu80fdu9f50u5168","u8fd0u884cu6d41u7545","u5f88u559cu6b22","u65b9u4fbfu5febu6377"];
 
 function splitAccounts(raw = "") {
     return String(raw)
@@ -412,6 +409,47 @@ async function getTasks(profile, cookie) {
     return { status, data };
 }
 
+// ====== Post comment ======
+async function postComment(cookie, softId, content, score) {
+  try {
+    const resp = await axios({ url: `https://softcenter.qq.com/coralapi/publishcomment/${softId}`, method: "POST",
+      headers: { "Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "User-Agent": USER_AGENT, "Origin": "https://guanjia.qq.com", "Referer": "https://guanjia.qq.com/" },
+      data: `score=${score}&content=${encodeURIComponent(content)}&type=1&channel=guanjia`, timeout: 15000 });
+    return resp.data;
+  } catch(e) { return { code: -1, message: e.message }; }
+}
+
+// ====== Auto-increment comment ======
+async function runSoftwareComments(cookie, profile, index, displayName) {
+  if (!ENABLE_COMMENTS) { $.log(`[${index}] Comment disabled`); return 0; }
+  const cf = path.join(__dirname, ".cache", "qqpcmgr_comment_offset.json");
+  let offsets = {};
+  try { offsets = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
+  const key = profile.openid || `account_${index}`;
+  let nextId = offsets[key] || 32414;
+  let ok = 0, fail = 0;
+  $.log(`[${index}] [${displayName}] Commenting (max ${MAX_COMMENTS}, start at ${nextId})...`);
+  for (let i = 0; i < MAX_COMMENTS; i++) {
+    const sid = nextId++;
+    const txt = COMMENT_CONTENTS[Math.floor(Math.random()*COMMENT_CONTENTS.length)];
+    const scr = Math.floor(Math.random()*2)+4;
+    const r = await postComment(cookie, sid, txt, scr);
+    if (r?.code === 0 || r?.ret === 0) {
+      ok++; fail=0;
+      offsets[key] = sid + 1;
+      try { fs.writeFileSync(cf, JSON.stringify(offsets)); } catch {}
+      $.log(`[${index}] [${displayName}]  OK ${i+1}: sid=${sid} "${txt}" (${scr}star)`);
+      await new Promise(r => setTimeout(r, 2000+Math.random()*1000));
+    } else {
+      const ec = r?.code || r?.ret || "?";
+      fail++;
+      $.log(`[${index}] [${displayName}]  FAIL ${i+1}: sid=${sid} code=${ec}`);
+      if (fail >= 30) { $.log(`[${index}] [${displayName}]  Stopped`); break; }
+    }
+  }
+  $.log(`[${index}] [${displayName}] Done: ${ok}/${MAX_COMMENTS}`);
+}
 async function doTaskReport(profile, cookie, taskId, taskName) {
     const { data, status } = await axios.request({
         method: "POST",
@@ -541,10 +579,8 @@ async function runAccount(account, index, remark = "") {
         const taskResult = await runTasks(sessionKey, cookie, profile, index, displayName);
         growthValue = taskResult?.growthValue || 0;
     }
-    
-    // Comment software (independent of task execution)
-    await runSoftwareComments(cookie, profile, index, displayName);
 
+await runSoftwareComments(cookie, profile, index, displayName);
     await runHomeConfig(cookie, index, displayName);
     const userLevel = globalThis.lubanConfig?.[index]?.userLevel || 0;
     const lotteries = await runLotteries(sessionKey, cookie, index, displayName);
@@ -555,43 +591,6 @@ async function runAccount(account, index, remark = "") {
         growthValue,
         lotteries
     };
-}
-
-async function postComment(cookie, softId, content, score) {
-  try {
-    const resp = await axios({ url: `https://softcenter.qq.com/coralapi/publishcomment/${softId}`, method: "POST", headers: { "Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "User-Agent": USER_AGENT, "Origin": "https://guanjia.qq.com", "Referer": "https://guanjia.qq.com/" }, data: `score=${score}&content=${encodeURIComponent(content)}&type=1&channel=guanjia`, timeout: 15000 });
-    return resp.data;
-  } catch(e) { return { code: -1, message: e.message }; }
-}
-
-async function runSoftwareComments(cookie, profile, index, displayName) {
-  if (!ENABLE_COMMENTS) { $.log(`[${index}] Comment disabled`); return 0; }
-  const cf = path.join(__dirname, ".cache", "qqpcmgr_comment_offset.json");
-  let offsets = {};
-  try { offsets = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
-  const key = profile.openid || `account_${index}`;
-  let nextId = offsets[key] || 32414;
-  let ok = 0, fail = 0;
-  $.log(`[${index}] [${displayName}] Commenting (max ${MAX_COMMENTS}, start at ${nextId})...`);
-  for (let i = 0; i < MAX_COMMENTS; i++) {
-    const sid = nextId++;
-    const txt = COMMENT_CONTENTS[Math.floor(Math.random()*COMMENT_CONTENTS.length)];
-    const scr = Math.floor(Math.random()*2)+4;
-    const r = await postComment(cookie, sid, txt, scr);
-    if (r?.code === 0 || r?.ret === 0) {
-      ok++; fail=0;
-      offsets[key] = sid + 1;
-      try { fs.writeFileSync(cf, JSON.stringify(offsets)); } catch {}
-      $.log(`[${index}] [${displayName}]  OK ${i+1}: sid=${sid} "${txt}" (${scr}star)`);
-      await new Promise(r => setTimeout(r, 2000+Math.random()*1000));
-    } else {
-      const ec = r?.code || r?.ret || "?";
-      fail++;
-      $.log(`[${index}] [${displayName}]  FAIL ${i+1}: sid=${sid} code=${ec}`);
-      if (fail >= 30) { $.log(`[${index}] [${displayName}]  Stopped`); break; }
-    }
-  }
-  $.log(`[${index}] [${displayName}] Done: ${ok}/${MAX_COMMENTS}`);
 }
 
 async function runTasks(sessionKey, cookie, profile, index, displayName = "") {
@@ -654,7 +653,6 @@ async function runTasks(sessionKey, cookie, profile, index, displayName = "") {
             await sleep(500);
         }
         $.log(`[账号${index}] [${displayName}] 任务上报完成`);
-    await runSoftwareComments(cookie, profile, index, displayName);
     }
     
     return { growthValue: resp.total_growth_value };
