@@ -369,7 +369,7 @@ async function doLottery(sessionKey, cookie, lotteryId = LOTTERY_ID, sdiaidHeade
             "Accept-Language": "zh-CN,zh;q=0.9",
             Cookie: cookie,
         },
-        data: { lid: lotteryId },
+        data: { lid: "Lottery2" },
         timeout: 20000,
         validateStatus: () => true,
     });
@@ -430,7 +430,7 @@ async function runSoftwareComments(cookie, profile, index, displayName) {
   const cf = path.join(__dirname, ".cache", "qqpcmgr_comment_offset.json");
   let offsets = {}; try { offsets = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
   const key = profile.openid || "account_"+index;
-  let nextId = offsets[key] || 26685;
+  let nextId = offsets[key] || 27026;
   let ok = 0, fail = 0;
   $.log("Commenting (max "+MAX_COMMENTS+", start "+nextId+")...");
   for (let i = 0; i < MAX_COMMENTS; i++) {
@@ -696,7 +696,10 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
     if (lotteryType !== "每日抽奖") {
-        const lottery2 = await doLottery(sessionKey, cookie, lotteryId);
+        // level pool: per-pool auth + per-pool doLottery (from capture)
+        const pa = await createAuth(profile, cookie, lotteryId);
+        const pk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
+        const lottery2 = await doLottery(pk, cookie, lotteryId, lotteryId);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
         $.log("   "+result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
