@@ -61,7 +61,7 @@ const LOTTERIES = process.env.qqpcmgr_lotteries
     : ["Lottery2"];
 const FORCE_LOTTERY = process.env.qqpcmgr_force_lottery === "true";
 const ENABLE_COMMENTS = process.env.qqpcmgr_comments !== "false";
-const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 5;
+const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 10;
 const COMMENT_CONTENTS = ["好用","非常实用","功能强大","推荐使用","很好用","速度很快","操作简单","体验不错","非常满意","值得推荐","简单易用","功能齐全","运行流畅","很喜欢","方便快捷"];
 const QQPCMGR_CLIENT_VER = "18.2.30648.204";
 
@@ -696,7 +696,7 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
     if (lotteryType !== "每日抽奖") {
-        const lottery2 = await doLottery(sessionKey, cookie, lotteryId, lotteryId);
+        const lottery2 = await doLottery(sessionKey, cookie, lotteryId);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
         $.log("   "+result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
