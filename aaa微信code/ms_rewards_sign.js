@@ -2,34 +2,26 @@
 /**
  * Microsoft Rewards 自动化脚本 (中国版 cn.bing.com)
  * ------------------------------------------------------------
- * 功能:
- *   1. PC 搜索积分   - 纯 Node HTTP，已验证可计分 (cn.bing.com/reportActivity)
- *   2. 移动搜索积分  - 纯 Node HTTP (移动 UA)
+ * 架构:
+ *   1. PC 搜索积分   - 纯 Node HTTP POST reportActivity ✅ 已验证可计分 +1/次
+ *   2. 移动搜索积分  - Playwright 移动端仿真导航至搜索页 (纯 Node ❌ 不计分)
  *   3. 连续打卡状态  - Playwright 驱动系统 Edge 读取真实进度
- *   4. 升级任务(PunchCard) - Playwright 点击当日子任务打卡
+ *   4. 升级任务(PunchCard) - Playwright 点击当日首个未完成子任务打卡
  *   5. 每日活动(尽力) - Playwright 完成每日任务集，喂饱连续打卡活动进度
  *
- * 重要说明 (2026-07  redesigned 中国版):
- *   - 连续打卡分三路: 必应搜索 / 每日活动 / 必应应用。
- *     搜索路由本脚本的搜索计分自动满足；活动路由"每日活动"满足；
- *     应用路需必应 App 移动端签到，桌面端无法自动化。
- *   - 页面上**没有**"领取/打卡"按钮，只有"了解详细信息"等说明。
- *     因此脚本改为读取真实进度并尽力完成可自动化的部分。
- *   - PunchCard(升级活动) 为每月活动，含若干子任务，每 24h 可打 1 枚印章。
- *
  * 环境变量:
- *   MS_COOKIES    必填  Bing/Rewards Cookie
- *   MS_PC_SEARCH  可选  PC 搜索次数 (默认 30)
- *   MS_MB_SEARCH  可选  移动搜索次数 (默认 20)
- *   MS_SKIP_BROWSER 可选  设为 1 跳过浏览器打卡/升级任务
+ *   MS_COOKIES      必填  Bing/Rewards Cookie
+ *   MS_PC_SEARCH    可选  PC 搜索次数 (默认 30，日上限 60)
+ *   MS_MB_SEARCH    可选  移动搜索次数 (默认 20，需浏览器，日上限 ~30)
+ *   MS_SKIP_BROWSER 可选  设为 1 跳过浏览器(搜索/打卡/升级)
+ *     * 容器定时任务: 容器无浏览器 → 设 MS_SKIP_BROWSER=1 → 仅 PC 搜索
+ *     * 宿主机执行:  不设 → PC 搜索(Node) + 移动搜索/打卡/升级(Playwright+Edge)
  */
 
 'use strict';
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
-const fs = require('fs');
-const path = require('path');
 
 // ============================ 配置 ============================
 const COOKIE = process.env.MS_COOKIES || '';
@@ -81,7 +73,7 @@ function card(lines, color = C.blue) {
   console.log(`${color}└${'─'.repeat(w)}┘${C.reset}`);
 }
 
-// ============================ HTTP ============================
+// ============================ HTTP 工具 ============================
 function req(method, urlStr, body, headers, timeout = 15000) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
@@ -109,20 +101,13 @@ function req(method, urlStr, body, headers, timeout = 15000) {
   });
 }
 function extract(html, re) { const m = html.match(re); return m ? m[1] : null; }
-function extractBalance(html) {
-  const m = html.match(/"Balance":(\d+)/);
-  return m ? parseInt(m[1], 10) : null;
-}
-function extractEarned(html) {
-  const m = html.match(/"DailySearchPointsEarned":(\d+)/);
-  return m ? parseInt(m[1], 10) : null;
-}
+function extractBalance(html) { const m = html.match(/"Balance":(\d+)/); return m ? parseInt(m[1], 10) : null; }
+function extractEarned(html) { const m = html.match(/"DailySearchPointsEarned":(\d+)/); return m ? parseInt(m[1], 10) : null; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function randItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-// ============================ 搜索计分 ============================
-async function doSearch(keyword, idx, isMobile) {
-  const ua = isMobile ? UA_MOBILE : UA_DESKTOP;
+// ============================ PC 搜索计分 (纯 Node) ============================
+async function doSearchPc(keyword, idx) {
   const host = 'cn.bing.com';
   const kwEnc = encodeURIComponent(keyword);
   const pq = encodeURIComponent(keyword.slice(0, Math.min(4, keyword.length)));
@@ -131,7 +116,7 @@ async function doSearch(keyword, idx, isMobile) {
   // Step 1: 搜索页拿 IG / cvid
   const sp = await req('GET', `https://${host}/search?q=${kwEnc}&form=QBLH&pq=${pq}&sc=${sc}&cvid=7e373672ca744f1db546db5d6c3eb1f3`, null, {
     'Accept': 'text/html,application/xhtml+xml',
-    'User-Agent': ua,
+    'User-Agent': UA_DESKTOP,
   });
   if (sp.status !== 200) return { ok: false, err: `search HTTP ${sp.status}` };
   const ig = extract(sp.body, /["']IG["']?\s*[:=]\s*["']([A-F0-9]{32})["']/i) || '9AFE527C9FBC4E349A7B736F19E3F0B1';
@@ -146,7 +131,7 @@ async function doSearch(keyword, idx, isMobile) {
     'Accept': '*/*',
     'Origin': `https://${host}`,
     'Referer': `https://${host}/search?q=${kwEnc}`,
-    'User-Agent': ua,
+    'User-Agent': UA_DESKTOP,
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'same-origin',
@@ -157,7 +142,7 @@ async function doSearch(keyword, idx, isMobile) {
   return { ok: true, balance: bal, earned };
 }
 
-async function runSearches(isMobile, count, label) {
+async function runSearchesPc(count, label) {
   console.log(`\n${sym.info} ${label} (${count} 次)`);
   let ok = 0;
   let lastBalance = null;
@@ -165,14 +150,44 @@ async function runSearches(isMobile, count, label) {
     const kw = randItem(KEYWORDS);
     process.stdout.write(`\r  ${progress(i, count)} 搜索: ${kw.slice(0, 12)}...`);
     try {
-      const r = await doSearch(kw, i, isMobile);
+      const r = await doSearchPc(kw, i);
       if (r.ok) { ok++; lastBalance = r.balance; }
     } catch (e) { /* ignore single failure */ }
-    if (i < count - 1) await sleep(isMobile ? 1500 : 2000);
+    if (i < count - 1) await sleep(2000);
   }
   process.stdout.write(`\r  ${progress(count, count)} ${label} 完成\n`);
   console.log(`  ${sym.ok} ${label}: ${ok}/${count} 成功` + (lastBalance !== null ? ` | 余额: ${C.yellow}${lastBalance}${C.reset}` : ''));
   return { ok, count, lastBalance };
+}
+
+// ============================ Playwright 移动搜索 ============================
+async function runMobileViaBrowser(browser, count, label) {
+  console.log(`\n${sym.info} ${label} (${count} 次)`);
+  const ctx = await browser.newContext({
+    userAgent: UA_MOBILE,
+    viewport: { width: 412, height: 915 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const cookies = parseCookiesForPlaywright(COOKIE);
+  await ctx.addCookies(cookies).catch(() => {});
+  const page = await ctx.newPage();
+
+  let ok = 0;
+  for (let i = 0; i < count; i++) {
+    const kw = randItem(KEYWORDS);
+    process.stdout.write(`\r  ${progress(i, count)} 移动搜索: ${kw.slice(0, 12)}...`);
+    try {
+      await page.goto(`https://cn.bing.com/search?q=${encodeURIComponent(kw)}&form=QBLH`, { waitUntil: 'networkidle', timeout: 25000 });
+      await sleep(2000); // 等待 reportActivity 异步完成
+      ok++;
+    } catch (e) { /* ignore single failure */ }
+    if (i < count - 1) await sleep(1500);
+  }
+  await ctx.close();
+  process.stdout.write(`\r  ${progress(count, count)} ${label} 完成\n`);
+  console.log(`  ${sym.ok} ${label}: ${ok}/${count} 成功`);
+  return { ok, count };
 }
 
 // ============================ Playwright 打卡/升级 ============================
@@ -258,7 +273,7 @@ async function doPunchcard(page) {
     const txt = document.body ? document.body.innerText : '';
     let m = txt.match(/(\d+)\s*\/\s*(\d+)\s*个任务/);
     if (!m) m = txt.match(/(\d+)\s*\/\s*(\d+)/);
-    return { status: m ? `${m[1]}/${m[2]}` : '?', raw: txt.replace(/\s+/g, ' ').match(/状态[:：]?\s*\d+\s*\/\s*\d+\s*个任务/) || txt.replace(/\s+/g, ' ').slice(0, 200) };
+    return { status: m ? `${m[1]}/${m[2]}` : '?', raw: (txt || '').replace(/\s+/g, ' ').slice(0, 200) };
   });
   const after = afterInfo.status;
 
@@ -296,12 +311,9 @@ async function doDailySet(page) {
     try {
       await page.goto(o.href, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
       await sleep(3000);
-      // 通用完成: 选择题点第一个选项并提交；投票点第一个选项；浏览则停留
       const did = await page.evaluate(() => {
-        // 单选/多选
         const radios = [...document.querySelectorAll('input[type="radio"], [role="radio"]')];
         if (radios.length) { try { radios[0].click(); } catch (e) {} }
-        // 提交按钮
         const btns = [...document.querySelectorAll('button, [role="button"]')];
         const submit = btns.find(b => /提交|完成|确认|下一|开始|继续|参与|领取/.test(b.innerText || ''));
         if (submit) { try { submit.click(); return true; } catch (e) {} }
@@ -315,12 +327,13 @@ async function doDailySet(page) {
   return { ok: true, completed, detail };
 }
 
+// ============================ 浏览器任务总入口 ============================
 async function runBrowserTasks() {
   let playwright;
   try { playwright = require('playwright'); }
-  catch (e) { console.log(`  ${sym.warn} 未安装 playwright，跳过浏览器打卡/升级任务`); return null; }
+  catch (e) { console.log(`  ${sym.warn} 未安装 playwright，跳过浏览器搜索/打卡/升级任务`); return null; }
 
-  console.log(`\n${sym.fire} 启动 Edge 浏览器完成打卡 / 升级任务...`);
+  console.log(`\n${sym.fire} 启动 Edge 浏览器完成移动搜索 + 打卡 / 升级任务...`);
   let browser;
   try {
     browser = await playwright.chromium.launch({ channel: 'msedge', headless: true });
@@ -328,22 +341,30 @@ async function runBrowserTasks() {
     console.log(`  ${sym.err} 无法启动 Edge: ${e.message}`);
     return null;
   }
-  const context = await browser.newContext({ userAgent: UA_DESKTOP });
-  try {
-    const cookies = parseCookiesForPlaywright(COOKIE);
-    await context.addCookies(cookies);
-  } catch (e) { /* ignore */ }
-  const page = await context.newPage();
-  const result = { streak: null, punchcard: null, dailySet: null };
+
+  const result = { mobileSearch: null, streak: null, punchcard: null, dailySet: null };
 
   try {
-    // 1) 连续打卡状态
-    console.log(`  ${sym.info} 读取连续打卡状态...`);
+    // === 阶段 1: 移动搜索 (Playwright 移动端仿真) ===
+    if (MB_SEARCH > 0) {
+      result.mobileSearch = await runMobileViaBrowser(browser, MB_SEARCH, '📱  移动搜索');
+    }
+
+    // === 阶段 2: 桌面端打卡/升级任务 ===
+    const context = await browser.newContext({ userAgent: UA_DESKTOP });
+    try {
+      const cookies = parseCookiesForPlaywright(COOKIE);
+      await context.addCookies(cookies);
+    } catch (e) { /* ignore */ }
+    const page = await context.newPage();
+
+    // 2a) 连续打卡状态
+    console.log(`\n${sym.info} 读取连续打卡状态...`);
     try { result.streak = await getStreakStatus(page); console.log(`  ${sym.ok} 连续打卡: 搜索 ${result.streak.search} | 活动 ${result.streak.activity} | 应用 ${result.streak.app}`); }
     catch (e) { console.log(`  ${sym.err} 读取连续打卡失败: ${e.message}`); }
 
-    // 2) 升级任务 (PunchCard)
-    console.log(`  ${sym.info} 执行升级任务(PunchCard)...`);
+    // 2b) 升级任务 (PunchCard)
+    console.log(`\n${sym.info} 执行升级任务(PunchCard)...`);
     try {
       result.punchcard = await doPunchcard(page);
       const pc = result.punchcard;
@@ -357,13 +378,15 @@ async function runBrowserTasks() {
       }
     } catch (e) { console.log(`  ${sym.err} 升级任务出错: ${e.message}`); }
 
-    // 3) 每日活动 (尽力)
-    console.log(`  ${sym.info} 尝试每日活动(连续打卡-活动进度)...`);
+    // 2c) 每日活动 (尽力)
+    console.log(`\n${sym.info} 尝试每日活动(连续打卡-活动进度)...`);
     try {
       result.dailySet = await doDailySet(page);
       if (result.dailySet.ok) console.log(`  ${sym.ok} 每日活动: 完成 ${result.dailySet.completed} 项 ${result.dailySet.detail ? '(' + result.dailySet.detail.join(', ') + ')' : ''}`);
       else console.log(`  ${sym.warn} 每日活动: ${result.dailySet.reason}`);
     } catch (e) { console.log(`  ${sym.err} 每日活动出错: ${e.message}`); }
+
+    await context.close();
   } catch (e) {
     console.log(`  ${sym.err} 浏览器任务总出错: ${e.message}`);
   } finally {
@@ -380,14 +403,12 @@ async function main() {
     process.exit(1);
   }
   console.log(`${sym.info} 账号 Cookie 长度: ${COOKIE.length}`);
-  console.log(`${sym.info} 计划: PC ${PC_SEARCH} 次 / 移动 ${MB_SEARCH} 次`);
+  console.log(`${sym.info} 计划: PC ${PC_SEARCH} 次${SKIP_BROWSER ? ' (跳过浏览器)' : ' / 移动 ' + MB_SEARCH + ' 次(需浏览器)'}`);
 
-  // 1. PC 搜索
-  const pc = await runSearches(false, PC_SEARCH, '🖥️  PC 搜索');
-  // 2. 移动搜索
-  const mb = await runSearches(true, MB_SEARCH, '📱  移动搜索');
+  // 1. PC 搜索 (纯 Node，已验证)
+  const pc = await runSearchesPc(PC_SEARCH, '🖥️  PC 搜索');
 
-  // 3. 浏览器打卡/升级
+  // 2. 浏览器任务 (移动搜索 + 打卡/升级)
   let browserResult = null;
   if (!SKIP_BROWSER) {
     browserResult = await runBrowserTasks();
@@ -398,15 +419,23 @@ async function main() {
   box('运行汇总', C.green);
   const lines = [
     `🖥️  PC 搜索:    ${pc.ok}/${pc.count} ${pc.ok === pc.count ? sym.ok : sym.warn}`,
-    `📱  移动搜索:  ${mb.ok}/${mb.count} ${mb.ok === mb.count ? sym.ok : sym.warn}`,
   ];
+
   if (browserResult) {
+    // 移动搜索结果
+    if (browserResult.mobileSearch) {
+      lines.push(`📱  移动搜索:  ${browserResult.mobileSearch.ok}/${browserResult.mobileSearch.count} ${browserResult.mobileSearch.ok === browserResult.mobileSearch.count ? sym.ok : sym.warn}`);
+    } else {
+      lines.push(`📱  移动搜索:  ${sym.warn} 未执行`);
+    }
+    // 连续打卡
     if (browserResult.streak) {
       const s = browserResult.streak;
       lines.push(`🔥 连续打卡:  搜索 ${s.search} | 活动 ${s.activity} | 应用 ${s.app}`);
     } else {
       lines.push(`🔥 连续打卡:  ${sym.warn} 读取失败`);
     }
+    // 升级任务
     if (browserResult.punchcard && browserResult.punchcard.ok) {
       lines.push(`⭐ 升级任务:  ${browserResult.punchcard.before} → ${browserResult.punchcard.after} (${browserResult.punchcard.clicked})`);
     } else if (browserResult.punchcard) {
@@ -414,13 +443,16 @@ async function main() {
     } else {
       lines.push(`⭐ 升级任务:  ${sym.warn} 未执行`);
     }
+    // 每日活动
     if (browserResult.dailySet) {
       lines.push(`📋 每日活动:  ${browserResult.dailySet.ok ? '完成 ' + browserResult.dailySet.completed + ' 项' : (browserResult.dailySet.reason || '未执行')}`);
     }
   } else {
+    lines.push(`📱  移动搜索:  ${SKIP_BROWSER ? '已跳过' : sym.warn + ' 浏览器不可用'}`);
     lines.push(`🔥 连续打卡:  ${SKIP_BROWSER ? '已跳过' : sym.warn + ' 浏览器不可用'}`);
     lines.push(`⭐ 升级任务:  ${SKIP_BROWSER ? '已跳过' : sym.warn + ' 浏览器不可用'}`);
   }
+
   if (pc.lastBalance !== null) lines.push(`💰 当前积分: ${pc.lastBalance}`);
   card(lines, C.blue);
   console.log(`\n${sym.star} 提示: 搜索积分已通过 cn.bing.com 实时计入，几分钟后到 rewards.bing.com 查看余额`);
