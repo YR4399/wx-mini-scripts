@@ -692,18 +692,18 @@ async function runHomeConfig(cookie, index, displayName = "") {
     globalThis.lubanConfig[index] = { levelLotteries, dailyLotteries, userLevel: userInfo?.curr_lv || 0 };
 }
 
-async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lotteryType, index, displayName, profile) {
+async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lotteryType, index, displayName, profile, sdiAid) {
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
     if (lotteryType === "等级抽奖") {
                 // level pool: getLotteryStatus with pool sessionKey (like 10:03)
-        const pa = await createAuth(profile, cookie, lotteryId);
+        const pa = await createAuth(profile, cookie, sdiAid || lotteryId);
         const lk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
         const st = await getLotteryStatus(lk, cookie, lotteryId);
         if (st.status === 200 && st.data?.code === 0) {
           if (st.data.message) { $.log("   " + st.data.message); return { name: lotteryName, type: lotteryType, status: st.status, data: st.data }; }
         }
-        const lottery2 = await doLottery(lk, cookie, lotteryId, lotteryId);
+        const lottery2 = await doLottery(lk, cookie, lotteryId, sdiAid || lotteryId);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
         $.log("   " + result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
@@ -788,7 +788,7 @@ async function runLotteries(sessionKey, cookie, index, displayName = "", profile
                 $.log(`[账号${index}] [${displayName}] 当前等级 Lv.${userLevel}，解锁 ${unlockedLotteries.length} 个等级抽奖`);
                 for (const lv of unlockedLotteries) {
                     const drawPoolId = lv.adi_draw_pool_id || lv.draw_pool_id;
-                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, lv.title, "等级抽奖", index, displayName, profile);
+                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, lv.title, "等级抽奖", index, displayName, profile, lv.sdi_aid);
                     results.push(result);
                     await sleep(1500);
                 }
