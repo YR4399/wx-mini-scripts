@@ -60,6 +60,10 @@ const LOTTERIES = process.env.qqpcmgr_lotteries
     ? splitAccounts(process.env.qqpcmgr_lotteries) 
     : ["Lottery2"];
 const FORCE_LOTTERY = process.env.qqpcmgr_force_lottery === "true";
+const ENABLE_COMMENTS = process.env.qqpcmgr_comments !== "false";
+const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 5;
+const COMMENT_CONTENTS = ["好用","非常实用","功能强大","推荐使用","很好用","速度很快","操作简单","体验不错","非常满意","值得推荐","简单易用","功能齐全","运行流畅","很喜欢","方便快捷"];
+const QQPCMGR_CLIENT_VER = "18.2.30648.204";
 
 function splitAccounts(raw = "") {
     return String(raw)
@@ -406,6 +410,48 @@ async function getTasks(profile, cookie) {
     return { status, data };
 }
 
+async function postComment(cookie, profile, softId, content, score) {
+  try {
+    const resp = await axios({ url: "https://softcenter.qq.com/coralapi/publishcomment/" + softId, method: "POST",
+      headers: { "Content-Type": "application/json", "Cookie": cookie,
+        "account": String(profile.account || ""), "guid": profile.guid || "",
+        "loginkey": profile.loginKey || "", "logintype": "2",
+        "openid": profile.openid || "", "devicename": COMPUTER_NAME,
+        "User-Agent": USER_AGENT, "Origin": "https://cdn.m.qq.com", "Referer": "https://cdn.m.qq.com/" },
+      data: { content, scorenum: score, guid: profile.guid || "", devicename: COMPUTER_NAME,
+        client_version: QQPCMGR_CLIENT_VER, supply_id: "", os_type: 2, web_version: "1.8.0", web_env: "release" },
+      timeout: 15000 });
+    return resp.data;
+  } catch(e) { return { code: -1, message: e.message }; }
+}
+
+async function runSoftwareComments(cookie, profile, index, displayName) {
+  if (!ENABLE_COMMENTS) { $.log("Comment disabled"); return 0; }
+  const cf = path.join(__dirname, ".cache", "qqpcmgr_comment_offset.json");
+  let offsets = {}; try { offsets = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
+  const key = profile.openid || "account_"+index;
+  let nextId = offsets[key] || 26685;
+  let ok = 0, fail = 0;
+  $.log("Commenting (max "+MAX_COMMENTS+", start "+nextId+")...");
+  for (let i = 0; i < MAX_COMMENTS; i++) {
+    const sid = nextId++;
+    const txt = COMMENT_CONTENTS[Math.floor(Math.random()*COMMENT_CONTENTS.length)];
+    const scr = Math.floor(Math.random()*2)+4;
+    const r = await postComment(cookie, profile, sid, txt, scr);
+    if (r && r.code === 0) {
+      ok++; fail=0; offsets[key] = sid + 1;
+      try { fs.writeFileSync(cf, JSON.stringify(offsets)); } catch {}
+      $.log("  OK "+(i+1)+": sid="+sid+", score="+scr);
+      await new Promise(r => setTimeout(r, 2000+Math.random()*1000));
+    } else {
+      const ec = (r && r.code) || "?"; fail++;
+      $.log("  FAIL "+(i+1)+": sid="+sid+" code="+ec);
+      if (fail >= 30) { $.log("  Stopped"); break; }
+    }
+  }
+  $.log("Done: "+ok+"/"+MAX_COMMENTS);
+}
+
 async function doTaskReport(profile, cookie, taskId, taskName) {
     const { data, status } = await axios.request({
         method: "POST",
@@ -536,6 +582,8 @@ async function runAccount(account, index, remark = "") {
         growthValue = taskResult?.growthValue || 0;
     }
 
+    await runSoftwareComments(cookie, profile, index, displayName);
+
     await runHomeConfig(cookie, index, displayName);
     const userLevel = globalThis.lubanConfig?.[index]?.userLevel || 0;
     const lotteries = await runLotteries(sessionKey, cookie, index, displayName);
@@ -647,14 +695,13 @@ async function runHomeConfig(cookie, index, displayName = "") {
 async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lotteryType, index, displayName) {
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
-    // level lotteries: skip status check, draw directly
     if (lotteryType !== "每日抽奖") {
         const lottery2 = await doLottery(sessionKey, cookie, lotteryId);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
-        $.log(`[账号${index}] [${displayName}]   ${result2}`);
+        $.log("   "+result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
     }
-    
+
     const status = await getLotteryStatus(sessionKey, cookie, lotteryId);
     
     if (status.status !== 200 || status.data?.code !== 0) {
