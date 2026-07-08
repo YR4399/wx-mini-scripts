@@ -61,6 +61,12 @@ const LOTTERIES = process.env.qqpcmgr_lotteries
     : ["Lottery2"];
 const FORCE_LOTTERY = process.env.qqpcmgr_force_lottery === "true";
 
+// ====== Comment config ======
+const ENABLE_COMMENTS = process.env.qqpcmgr_comments !== "false";
+const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 5;
+const COMMENT_CONTENTS = ["好用","非常实用","功能强大","推荐使用","很好用","速度很快","操作简单","体验不错","非常满意","值得推荐","简单易用","功能齐全","运行流畅","很喜欢","方便快捷"];
+
+
 function splitAccounts(raw = "") {
     return String(raw)
         .split(/\n|&/)
@@ -548,6 +554,43 @@ async function runAccount(account, index, remark = "") {
     };
 }
 
+async function postComment(cookie, softId, content, score) {
+  try {
+    const resp = await axios({ url: `https://softcenter.qq.com/coralapi/publishcomment/${softId}`, method: "POST", headers: { "Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "User-Agent": USER_AGENT, "Origin": "https://guanjia.qq.com", "Referer": "https://guanjia.qq.com/" }, data: `score=${score}&content=${encodeURIComponent(content)}&type=1&channel=guanjia`, timeout: 15000 });
+    return resp.data;
+  } catch(e) { return { code: -1, message: e.message }; }
+}
+
+async function runSoftwareComments(cookie, profile, index, displayName) {
+  if (!ENABLE_COMMENTS) { $.log(`[${index}] Comment disabled`); return 0; }
+  const cf = path.join(__dirname, ".cache", "qqpcmgr_comment_offset.json");
+  let offsets = {};
+  try { offsets = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
+  const key = profile.openid || `account_${index}`;
+  let nextId = offsets[key] || 32414;
+  let ok = 0, fail = 0;
+  $.log(`[${index}] [${displayName}] Commenting (max ${MAX_COMMENTS}, start at ${nextId})...`);
+  for (let i = 0; i < MAX_COMMENTS; i++) {
+    const sid = nextId++;
+    const txt = COMMENT_CONTENTS[Math.floor(Math.random()*COMMENT_CONTENTS.length)];
+    const scr = Math.floor(Math.random()*2)+4;
+    const r = await postComment(cookie, sid, txt, scr);
+    if (r?.code === 0 || r?.ret === 0) {
+      ok++; fail=0;
+      offsets[key] = sid + 1;
+      try { fs.writeFileSync(cf, JSON.stringify(offsets)); } catch {}
+      $.log(`[${index}] [${displayName}]  OK ${i+1}: sid=${sid} "${txt}" (${scr}star)`);
+      await new Promise(r => setTimeout(r, 2000+Math.random()*1000));
+    } else {
+      const ec = r?.code || r?.ret || "?";
+      fail++;
+      $.log(`[${index}] [${displayName}]  FAIL ${i+1}: sid=${sid} code=${ec}`);
+      if (fail >= 30) { $.log(`[${index}] [${displayName}]  Stopped`); break; }
+    }
+  }
+  $.log(`[${index}] [${displayName}] Done: ${ok}/${MAX_COMMENTS}`);
+}
+
 async function runTasks(sessionKey, cookie, profile, index, displayName = "") {
     $.log(`[账号${index}] [${displayName}] 用户名: ${profile.nickname || "未知"}`);
     $.log(`[账号${index}] [${displayName}] 开始获取任务列表`);
@@ -608,6 +651,7 @@ async function runTasks(sessionKey, cookie, profile, index, displayName = "") {
             await sleep(500);
         }
         $.log(`[账号${index}] [${displayName}] 任务上报完成`);
+    await runSoftwareComments(cookie, profile, index, displayName);
     }
     
     return { growthValue: resp.total_growth_value };
