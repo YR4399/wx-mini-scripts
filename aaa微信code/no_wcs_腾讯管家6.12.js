@@ -292,7 +292,7 @@ async function createAuth(profile, cookie) {
             "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "sec-ch-ua": '"Chromium";v="109"',
-            sdiaid: SDIAID,
+            sdiaid: sdiaidHeader || SDIAID,
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             Origin: "https://sdi.3g.qq.com",
@@ -330,7 +330,7 @@ async function getLotteryStatus(sessionKey, cookie, lotteryId = LOTTERY_ID) {
             "User-Agent": USER_AGENT,
             "sec-ch-ua": '"Chromium";v="109"',
             sessionkey: sessionKey,
-            sdiaid: SDIAID,
+            sdiaid: sdiaidHeader || SDIAID,
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             Origin: "https://sdi.3g.qq.com",
@@ -349,7 +349,7 @@ async function getLotteryStatus(sessionKey, cookie, lotteryId = LOTTERY_ID) {
     return { status, data };
 }
 
-async function doLottery(sessionKey, cookie, lotteryId = LOTTERY_ID) {
+async function doLottery(sessionKey, cookie, lotteryId = LOTTERY_ID, sdiaidHeader) {
     const { data, status } = await axios.request({
         method: "POST",
         url: "https://sdi.m.qq.com/private/lottery/doLottery",
@@ -358,7 +358,7 @@ async function doLottery(sessionKey, cookie, lotteryId = LOTTERY_ID) {
             "Content-Type": "application/json",
             "sec-ch-ua": '"Chromium";v="109"',
             sessionkey: sessionKey,
-            sdiaid: SDIAID,
+            sdiaid: sdiaidHeader || SDIAID,
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             Origin: "https://sdi.3g.qq.com",
@@ -696,7 +696,7 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
     if (lotteryType !== "每日抽奖") {
-        const lottery2 = await doLottery(sessionKey, cookie, lotteryId);
+        const lottery2 = await doLottery(sessionKey, cookie, lotteryId, lotteryId);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
         $.log("   "+result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
@@ -830,20 +830,22 @@ async function sendNotify(title, content) {
 function formatLotteryResult(result) {
     const data = result.data;
     if (result.status === 200 && data) {
-        const innerData = data.data?.resp?.data || data.data?.data?.resp?.data || data.data?.data?.data || data.data;
-        const prize = innerData?.prize || innerData?.giftName || innerData?.name || data.data?.prize || data.data?.giftName || "";
+        const d = data.data || {};
+        const prize = d.prize || d.giftName || d.name || "";
         if (prize) { return "🎉 " + prize; }
-        if (data.message && data.message.indexOf("已达") >= 0 && data.message.indexOf("上限") >= 0) { return "⏭️ " + data.message; }
-        if (data.message && data.message.indexOf("当前不可") >= 0) { return "⏭️ " + data.message; }
+        if (d.leftChance && Object.keys(d.leftChance).length === 0 && data.code === 0) {
+            return "⏭️ 今日已抽奖";
+        }
+        if (data.message && data.message.includes("已达") && data.message.includes("上限")) { return "⏭️ " + data.message; }
+        if (data.message && data.message.includes("当前不可")) { return "⏭️ " + data.message; }
         if (data.code !== 0 && data.message) {
-            if (data.message.indexOf("活动id:") >= 0 || data.message.indexOf("日志id") >= 0) { return "✅ 已抽奖"; }
+            if (data.message.includes("活动id:") || data.message.includes("日志id")) { return "✅ 已抽奖"; }
             return "💫 " + data.message;
         }
-        const lc = Object.keys(innerData?.leftChance || data.data?.leftChance || {}).length;
-        if (!lc && data.code === 0) { return "🙅 谢谢参与"; }
         return "✅ 完成";
-    } else if (data?.message) { return "💫 " + data.message; }
-    else { return "❌ 失败"; }
+    } else if (data && data.message) { return "💫 " + data.message; }
+    else { return "❌ 失败";
+    }
 }
 
 function randomDelay(minSeconds = 10, maxSeconds = 20) {
