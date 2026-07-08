@@ -541,6 +541,9 @@ async function runAccount(account, index, remark = "") {
         const taskResult = await runTasks(sessionKey, cookie, profile, index, displayName);
         growthValue = taskResult?.growthValue || 0;
     }
+    
+    // Comment software (independent of task execution)
+    await runSoftwareComments(cookie, profile, index, displayName);
 
     await runHomeConfig(cookie, index, displayName);
     const userLevel = globalThis.lubanConfig?.[index]?.userLevel || 0;
