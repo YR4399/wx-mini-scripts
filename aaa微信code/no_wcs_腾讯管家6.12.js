@@ -45,7 +45,7 @@ function generateGuid(account) {
     const hash = require('crypto').createHash('md5').update(String(account)).digest('hex');
     return hash.slice(0, 32);
 }
-const SDIAID = process.env.qqpcmgr_sdiaid || "2025121115391911962";
+const SDIAID = process.env.qqpcmgr_sdiaid || "2025121719435311737";
 const LOTTERY_ID = process.env.qqpcmgr_lid || "Lottery2";
 const VERSION = process.env.qqpcmgr_version || "18.2.30612.301";
 const COMPUTER_NAME = process.env.qqpcmgr_computer || "DESKTOP-6S9P0IV";
@@ -54,7 +54,7 @@ const USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/143.0.13.0 Tencent QQPCMgr/18.2.30612.301";
 const CACHE_DIR = "./.cache";
 const CACHE_EXPIRE_HOURS = parseInt(process.env.qqpcmgr_cache_expire_hours) || 720;
-const DO_TASKS = true;
+const DO_TASKS = process.env.qqpcmgr_tasks !== "false";
 const DO_TASK_REPORT = process.env.qqpcmgr_task_report !== "false";
 const LOTTERIES = process.env.qqpcmgr_lotteries 
     ? splitAccounts(process.env.qqpcmgr_lotteries) 
@@ -646,6 +646,14 @@ async function runHomeConfig(cookie, index, displayName = "") {
 
 async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lotteryType, index, displayName) {
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
+    
+    // level lotteries: skip status check, draw directly
+    if (lotteryType !== "每日抽奖") {
+        const lottery2 = await doLottery(sessionKey, cookie, lotteryId);
+        const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
+        $.log(`[账号${index}] [${displayName}]   ${result2}`);
+        return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
+    }
     
     const status = await getLotteryStatus(sessionKey, cookie, lotteryId);
     
