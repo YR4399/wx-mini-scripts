@@ -205,16 +205,16 @@ function parseCookiesForPlaywright(cookieStr) {
   return out;
 }
 
-// 读取连续打卡三路真实进度
+// 读取连续打卡三路真实进度 (支持繁/简体中文)
 async function getStreakStatus(page) {
   await page.goto('https://rewards.bing.com/earn?section=streaks', { waitUntil: 'networkidle', timeout: 45000 }).catch(() => {});
   await sleep(5000);
   const txt = await page.evaluate(() => document.body ? document.body.innerText : '');
   function grab(re) { const m = txt.match(re); return m ? `${m[1]}/${m[2]}` : '?'; }
   return {
-    search: grab(/必应搜索连续打卡[\s\S]*?搜索:\s*(\d+)\s*\/\s*(\d+)/),
-    activity: grab(/每日连续打卡活动[\s\S]*?活动:\s*(\d+)\s*\/\s*(\d+)/),
-    app: grab(/必应应用连续打卡[\s\S]*?签到:\s*(\d+)\s*\/\s*(\d+)/),
+    search: grab(/(?:搜[寻尋索]|Search)[\s\S]*?[搜寻尋索][寻索尋]?:\s*(\d+)\s*\/\s*(\d+)/),
+    activity: grab(/(?:每日[设設定]定?|活[动動])[\s\S]*?活[动動]:\s*(\d+)\s*\/\s*(\d+)/),
+    app: grab(/[签簽]到:\s*(\d+)\s*\/\s*(\d+)/),
   };
 }
 
@@ -232,7 +232,7 @@ async function doPunchcard(page) {
 
   await page.goto(punchUrl, { waitUntil: 'networkidle', timeout: 45000 }).catch(() => {});
   await sleep(5000);
-  const before = await page.evaluate(() => { const m = document.body.innerText.match(/(\d+)\s*\/\s*(\d+)\s*个任务/); return m ? `${m[1]}/${m[2]}` : '?'; });
+  const before = await page.evaluate(() => { const m = document.body.innerText.match(/(\d+)\s*\/\s*(\d+)/); return m ? `${m[1]}/${m[2]}` : '?'; });
 
   // 2) 点击首个未完成的子任务链接。
   //    子任务链接特征: href 指向 bing.com/search，卡片文本含 "点击完成" (aria-label 在 RSC 下不稳定，故用可见文本判定)
@@ -240,14 +240,16 @@ async function doPunchcard(page) {
   let clicked = null;
   try {
     await page.waitForFunction(() => {
+      const t = (a) => (a.textContent || '');
       return [...document.querySelectorAll('a')].some(a =>
         (a.getAttribute('href') || '').includes('bing.com/search') &&
-        (a.textContent || '').includes('点击完成'));
+        (t(a).includes('点击完成') || t(a).includes('點擊完成')));
     }, { timeout: 15000 });
     clicked = await page.evaluate(() => {
+      const t = (a) => (a.textContent || '');
       const links = [...document.querySelectorAll('a')].filter(a =>
         (a.getAttribute('href') || '').includes('bing.com/search') &&
-        (a.textContent || '').includes('点击完成'));
+        (t(a).includes('点击完成') || t(a).includes('點擊完成')));
       if (links.length) {
         const t = (links[0].innerText || '').trim().split('\n')[0] || '子任务';
         links[0].click();
@@ -272,7 +274,7 @@ async function doPunchcard(page) {
   await sleep(6000);
   const afterInfo = await page.evaluate(() => {
     const txt = document.body ? document.body.innerText : '';
-    let m = txt.match(/(\d+)\s*\/\s*(\d+)\s*个任务/);
+    let m = txt.match(/(\d+)\s*\/\s*(\d+)\s*(?:个任务|個任務|工作)/);
     if (!m) m = txt.match(/(\d+)\s*\/\s*(\d+)/);
     return { status: m ? `${m[1]}/${m[2]}` : '?', raw: (txt || '').replace(/\s+/g, ' ').slice(0, 200) };
   });
@@ -281,29 +283,43 @@ async function doPunchcard(page) {
   return { ok: true, reason: '', before, after, clicked, raw: afterInfo.raw };
 }
 
-// 每日活动 (尽力): 完成每日任务集，喂饱"连续打卡-活动"进度
+// 每日活动: 找到页面上的所有奖励 offer（搜索/拼图/问答），依次导航完成
 async function doDailySet(page) {
   await page.goto('https://rewards.bing.com/earn', { waitUntil: 'networkidle', timeout: 45000 }).catch(() => {});
   await sleep(4000);
-  // 展开"显示更多"
-  try {
-    const more = page.locator('button, [role="button"]').filter({ hasText: '显示更多' });
-    if (await more.count() > 0) { await more.first().click({ timeout: 4000 }); await sleep(3000); }
-  } catch (e) {}
-  // 收集所有 /earn/quest/ 非 punchcard/onboarding 的 offer 链接
+  // 滚动到底部触发 RSC 惰性加载
+  try { await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await sleep(2000); } catch (e) {}
+  try { await page.evaluate(() => window.scrollTo(0, 0)); await sleep(1000); } catch (e) {}
+
+  // 收集所有可点击的 offer 链接：
+  //   - 排除导航/兑换/奖励 等无关链接
+  //   - 排除 punchcard/onboarding
+  //   - 必须有积分标记 (+5 +15 +30 +50 +95 +100)
   const offers = await page.evaluate(() => {
-    const nav = /首页|兑换|关于|邀请|更多活动|在 X|订单|常见|最佳|兑换促销|网站|必应\b|Xbox|关于 Microsoft|公司|隐私|使用条款|简体|反馈|关注积分/;
-    const links = [...document.querySelectorAll('a[href*="/earn/quest/"]')];
+    // 排除已知的非 offer 元素（导航、连续打卡、升级任务等）
+    const exclude = /連續達標|深入了解|獎勵|戳記|到期|工作|全新仪表板|Bing\s*搜尋|每日設定|Edge|應用程式|產品|合作夥伴|訂購|常見|最佳|促銷|網站地圖|意見|Microsoft|Xbox|公司|隱私|使用條款|提供|連續|簽到|活動[:：]|搜尋[:：]/;
+    // 页面上的 offer 链接: bing.com 的链接，包含积分数字
+    const links = [...document.querySelectorAll('a[href*="bing.com"]')];
+    const seen = new Set();
     const out = [];
     for (const a of links) {
       const href = a.getAttribute('href') || '';
-      const t = (a.innerText || '').trim();
+      const txt = (a.innerText || '').trim();
+      const pointMatch = txt.match(/[+](\d+)/);
+      if (!pointMatch) continue;
+      const points = parseInt(pointMatch[1], 10);
+      if (points < 5 || points > 500) continue; // 积分范围过滤
       if (/punchcard|onboarding/.test(href)) continue;
-      if (nav.test(t)) continue;
-      if (t && t.length < 40) out.push({ href: 'https://rewards.bing.com' + href, text: t });
+      if (exclude.test(txt)) continue;
+      if (!txt || txt.length < 10) continue;
+      const key = href.slice(0, 60);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ href, text: txt.split('\n')[0].slice(0, 30), points });
     }
-    return out.slice(0, 6);
+    return out;
   });
+
   if (offers.length === 0) return { ok: false, reason: '未发现可自动化的每日活动(可能已完成或由RSC动态加载)', completed: 0 };
 
   let completed = 0;
@@ -311,21 +327,20 @@ async function doDailySet(page) {
   for (const o of offers) {
     try {
       await page.goto(o.href, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
-      await sleep(3000);
-      const did = await page.evaluate(() => {
-        const radios = [...document.querySelectorAll('input[type="radio"], [role="radio"]')];
-        if (radios.length) { try { radios[0].click(); } catch (e) {} }
-        const btns = [...document.querySelectorAll('button, [role="button"]')];
-        const submit = btns.find(b => /提交|完成|确认|下一|开始|继续|参与|领取/.test(b.innerText || ''));
-        if (submit) { try { submit.click(); return true; } catch (e) {} }
-        return radios.length > 0 || btns.length > 0;
-      });
-      await sleep(2000);
+      await sleep(5000); // 等待自动计分
       completed++;
-      detail.push(o.text + (did ? '(已尝试)' : '(无交互)'));
+      detail.push(o.text + '(已访问)');
     } catch (e) { detail.push(o.text + '(失败:' + e.message.slice(0, 20) + ')'); }
   }
   return { ok: true, completed, detail };
+}
+
+// ============================ 超时辅助 ============================
+function runWithTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`[${label}] 超时 ${ms}ms`)), ms)),
+  ]);
 }
 
 // ============================ 浏览器任务总入口 ============================
@@ -337,13 +352,23 @@ async function runBrowserTasks() {
   console.log(`\n${sym.fire} 启动 Edge 浏览器完成移动搜索 + 打卡 / 升级任务...`);
   let browser;
   try {
-    browser = await playwright.chromium.launch({ channel: 'msedge', headless: true });
+    browser = await runWithTimeout(
+      playwright.chromium.launch(Object.assign(
+        { headless: true },
+        process.platform === 'win32' ? { channel: 'msedge' } : {},
+      )),
+      30000, '浏览器启动',
+    );
   } catch (e) {
     console.log(`  ${sym.err} 无法启动 Edge: ${e.message}`);
     return null;
   }
 
   const result = { mobileSearch: null, streak: null, punchcard: null, dailySet: null };
+  const browserTimeout = setTimeout(() => {
+    console.log(`  ${sym.warn} 浏览器任务总超时，强制关闭...`);
+    browser.close().catch(() => {});
+  }, 240000); // 4 分钟硬超时保护
 
   try {
     // === 阶段 1: 移动搜索 (Playwright 移动端仿真) ===
@@ -391,7 +416,8 @@ async function runBrowserTasks() {
   } catch (e) {
     console.log(`  ${sym.err} 浏览器任务总出错: ${e.message}`);
   } finally {
-    await browser.close();
+    clearTimeout(browserTimeout);
+    await browser.close().catch(() => {});
   }
   return result;
 }
