@@ -22,6 +22,7 @@
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const { push } = require('./_push_helper');
 
 // ============================ 配置 ============================
 const COOKIE = process.env.MS_COOKIES || '';
@@ -456,6 +457,10 @@ async function main() {
   if (pc.lastBalance !== null) lines.push(`💰 当前积分: ${pc.lastBalance}`);
   card(lines, C.blue);
   console.log(`\n${sym.star} 提示: 搜索积分已通过 cn.bing.com 实时计入，几分钟后到 rewards.bing.com 查看余额`);
+
+  // 推送通知
+  const pushContent = lines.map(l => l.replace(/\x1b\[\d+m/g, '')).join('\n');
+  push('Microsoft Rewards 签到结果', pushContent).catch(() => {});
 }
 
 main().catch(e => {
