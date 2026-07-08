@@ -586,7 +586,7 @@ async function runAccount(account, index, remark = "") {
 
     await runHomeConfig(cookie, index, displayName);
     const userLevel = globalThis.lubanConfig?.[index]?.userLevel || 0;
-    const lotteries = await runLotteries(sessionKey, cookie, index, displayName);
+    const lotteries = await runLotteries(sessionKey, cookie, index, displayName, profile);
     
     return {
         nickname: profile.nickname,
@@ -692,10 +692,10 @@ async function runHomeConfig(cookie, index, displayName = "") {
     globalThis.lubanConfig[index] = { levelLotteries, dailyLotteries, userLevel: userInfo?.curr_lv || 0 };
 }
 
-async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lotteryType, index, displayName) {
+async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lotteryType, index, displayName, profile) {
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
-    if (lotteryType !== "每日抽奖") {
+    if (lotteryType === "等级抽奖") {
         // level pool: per-pool auth + per-pool doLottery (from capture)
         const pa = await createAuth(profile, cookie, lotteryId);
         const pk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
@@ -758,7 +758,7 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     return { name: lotteryName, type: lotteryType, ...lottery };
 }
 
-async function runLotteries(sessionKey, cookie, index, displayName = "") {
+async function runLotteries(sessionKey, cookie, index, displayName = "", profile) {
     $.log(`[账号${index}] [${displayName}] 开始多抽奖模块`);
     const results = [];
 
@@ -784,7 +784,7 @@ async function runLotteries(sessionKey, cookie, index, displayName = "") {
                 $.log(`[账号${index}] [${displayName}] 当前等级 Lv.${userLevel}，解锁 ${unlockedLotteries.length} 个等级抽奖`);
                 for (const lv of unlockedLotteries) {
                     const drawPoolId = lv.adi_draw_pool_id || lv.draw_pool_id;
-                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, lv.title, "等级抽奖", index, displayName);
+                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, lv.title, "等级抽奖", index, displayName, profile);
                     results.push(result);
                     await sleep(1500);
                 }
@@ -793,16 +793,16 @@ async function runLotteries(sessionKey, cookie, index, displayName = "") {
             if (luban.dailyLotteries && luban.dailyLotteries.length > 0) {
                 for (const daily of luban.dailyLotteries) {
                     const drawPoolId = daily.draw_pool_id;
-                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, daily.title, "每日抽奖", index, displayName);
+                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, daily.title, "每日抽奖", index, displayName, profile);
                     results.push(result);
                     await sleep(1500);
                 }
             } else {
-                const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName);
+                const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName, profile);
                 results.push(result);
             }
         } else {
-            const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName);
+            const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName, profile);
             results.push(result);
         }
     }
@@ -816,7 +816,7 @@ function sleep(ms) {
 
 async function sendNotify(title, content) {
     try {
-        const notify = require("./sendNotify");
+        const notify = require(path.join(__dirname, "../sendNotify"));
         await notify.sendNotify(title, content);
         $.log(`[推送] 通知已发送`);
     } catch (e) {
