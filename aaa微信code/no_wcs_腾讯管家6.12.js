@@ -696,12 +696,16 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
     if (lotteryType === "等级抽奖") {
-        // level pool: per-pool auth + per-pool doLottery (from capture)
+                // level pool: getLotteryStatus with pool sessionKey (like 10:03)
         const pa = await createAuth(profile, cookie, lotteryId);
-        const pk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
-        const lottery2 = await doLottery(pk, cookie, lotteryId, lotteryId);
+        const lk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
+        const st = await getLotteryStatus(lk, cookie, lotteryId);
+        if (st.status === 200 && st.data?.code === 0) {
+          if (st.data.message) { $.log("   " + st.data.message); return { name: lotteryName, type: lotteryType, status: st.status, data: st.data }; }
+        }
+        const lottery2 = await doLottery(lk, cookie, lotteryId, lotteryId);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
-        $.log("   "+result2);
+        $.log("   " + result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
     }
 
