@@ -14,7 +14,7 @@ appid: wxfeb453e6377c3137
   5. 连续签到 + 任务里程碑奖励
 
 【环境变量】
-  wx_server_url  = WCS 地址（默认 http://172.17.0.3:8787）
+  wx_server_url  = WCS 地址（默认 http://host.docker.internal:18788）
   wx_auth        = WCS 认证 Key
   wx_opinion     = 微信 openid，多账号用 & 分隔
 
@@ -25,6 +25,34 @@ appid: wxfeb453e6377c3137
 */
 
 const crypto = require('crypto');
+const notifyLines = [];
+const _origLog = console.log;
+console.log = function (...args) {
+  try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
+  _origLog.apply(console, args);
+};
+async function sendToPushPlus(title, content) {
+  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
+  if (!token || !content.trim()) return;
+    if (content.length > 6000) content = content.slice(-6000);
+  const payload = { token, title, content, template: "txt" };
+  try {
+    if (typeof axios !== "undefined") {
+      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
+    } else {
+      const data = JSON.stringify(payload);
+      await new Promise((resolve, reject) => {
+        const req = https.request("https://www.pushplus.plus/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+          timeout: 10000,
+        }, (res) => { res.resume(); res.on("end", resolve); });
+        req.on("error", reject); req.write(data); req.end();
+      });
+    }
+    _origLog("✅ PushPlus推送成功: " + title);
+  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
+}
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
@@ -45,7 +73,7 @@ const $ = new Env();
 
 // ==================== 配置 ====================
 const CFG = {
-  WX_SERVER: process.env.wx_server_url || process.env.wxcodeurl || 'http://172.17.0.3:8787',
+  WX_SERVER: process.env.wx_server_url || process.env.wxcodeurl || 'http://host.docker.internal:18788',
   WX_AUTH: process.env.wx_auth || process.env.WXAPIKEY || process.env.WX_SERVER_APIKEY || '',
   OPENIDS: parseOpenids(),
   APPID: 'wxfeb453e6377c3137',
@@ -515,6 +543,7 @@ async function main() {
   console.log(`\n========================================`);
   console.log(`📊 汇总: 签到 ${totalSign}/${CFG.OPENIDS.length} | 任务 ${totalTasks} 个 | 最高国小豆 ${totalPoints}`);
   $.ok('所有任务执行完毕！🎉');
+  await sendToPushPlus("赵钱孙李", notifyLines.join("\n"));
 }
 
 if (require.main === module) {

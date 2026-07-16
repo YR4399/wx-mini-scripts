@@ -22,9 +22,36 @@ appid: wxfb4fb840f87fef41 | 有赞 kdt_id: 18440888
                       不填则通过 UIC 自动登录（部分接口需手机号授权）
   xbdy_lottery_alias= 抽奖活动 alias（默认 CRXvaL6AyXDg）
 */
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 const https = require('https');
+const notifyLines = [];
+const _origLog = console.log;
+console.log = function (...args) {
+  try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
+  _origLog.apply(console, args);
+};
+async function sendToPushPlus(title, content) {
+  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
+  if (!token || !content.trim()) return;
+    if (content.length > 6000) content = content.slice(-6000);
+  const payload = { token, title, content, template: "txt" };
+  try {
+    if (typeof axios !== "undefined") {
+      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
+    } else {
+      const data = JSON.stringify(payload);
+      await new Promise((resolve, reject) => {
+        const req = https.request("https://www.pushplus.plus/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+          timeout: 10000,
+        }, (res) => { res.resume(); res.on("end", resolve); });
+        req.on("error", reject); req.write(data); req.end();
+      });
+    }
+    _origLog("✅ PushPlus推送成功: " + title);
+  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
+}
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -44,7 +71,7 @@ const $ = new Env();
 
 // ==================== 配置 ====================
 const CFG = {
-  WX_SERVER: (process.env.wx_server_url || process.env.wxcodeurl || 'http://172.17.0.3:8787').replace(/\/$/, ''),
+  WX_SERVER: (process.env.wx_server_url || process.env.wxcodeurl || 'http://host.docker.internal:18788').replace(/\/$/, ''),
   WX_AUTH: process.env.wx_auth || process.env.WXAPIKEY || '',
   OPENIDS: parseOpenids(),
   APPID: 'wxfb4fb840f87fef41',
@@ -346,6 +373,7 @@ async function main() {
   console.log(`\n========================================`);
   console.log(`📊 汇总: 抽奖 ${totalDraws} 次 | 最高积分 ${maxPoints}`);
   $.ok('所有任务执行完毕！');
+  await sendToPushPlus("小白智慧打印", notifyLines.join("\n"));
 }
 
 if (require.main === module) {

@@ -10,7 +10,7 @@ OPPO商城小程序自动任务脚本（独立运行版）
    - 格式：openid#备注名（备注可选）
    - 示例：o123456789#大号&o987654321#小号
 2. wx_server_url
-   - 微信Code获取服务地址，默认：http://192.168.31.196:8787
+   - 微信Code获取服务地址，默认：http://host.docker.internal:18788
 3. wx_auth
    - wx_server 服务的鉴权密钥，必填项
 
@@ -19,13 +19,41 @@ node oppo.js
 ==================================================
 */
 const axios = require("axios");
+const notifyLines = [];
+const _origLog = console.log;
+console.log = function (...args) {
+  try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
+  _origLog.apply(console, args);
+};
+async function sendToPushPlus(title, content) {
+  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
+  if (!token || !content.trim()) return;
+    if (content.length > 6000) content = content.slice(-6000);
+  const payload = { token, title, content, template: "txt" };
+  try {
+    if (typeof axios !== "undefined") {
+      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
+    } else {
+      const data = JSON.stringify(payload);
+      await new Promise((resolve, reject) => {
+        const req = https.request("https://www.pushplus.plus/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+          timeout: 10000,
+        }, (res) => { res.resume(); res.on("end", resolve); });
+        req.on("error", reject); req.write(data); req.end();
+      });
+    }
+    _origLog("✅ PushPlus推送成功: " + title);
+  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
+}
 
 const APP = {
     name: "OPPO",
     appid: "wxe705c556754a1de2",
     version: 361,
 };
-const WX_SERVER_URL = (process.env.wx_server_url || "http://192.168.31.196:8787").replace(/\/$/, "");
+const WX_SERVER_URL = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/$/, "");
 const WX_AUTH = process.env.wx_auth || "";
 const MINI_API = "https://omoapplet-api-cn.heytap.com";
 const H5_API = "https://hd.opposhop.cn";
@@ -113,7 +141,7 @@ function todayText() {
 }
 
 async function request(options) {
-    const res = await axios.request({
+    const res = await axios.request({ proxy: false,
         timeout: 25000,
         validateStatus: () => true,
         ...options,
@@ -408,6 +436,7 @@ async function main() {
 
     const cost = ((Date.now() - startTime) / 1000).toFixed(2);
     log(`🔔${APP.name}, 结束! 耗时 ${cost} 秒`);
+    await sendToPushPlus("OPPO商城", notifyLines.join("\n"));
     process.exit(0);
 }
 

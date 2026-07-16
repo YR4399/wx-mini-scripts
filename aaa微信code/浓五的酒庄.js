@@ -37,6 +37,34 @@ appid: wx7ce1afa12935c862 | API: https://nxjz-api.plsbd.com/v8
 */
 
 const crypto = require('crypto');
+const notifyLines = [];
+const _origLog = console.log;
+console.log = function (...args) {
+  try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
+  _origLog.apply(console, args);
+};
+async function sendToPushPlus(title, content) {
+  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
+  if (!token || !content.trim()) return;
+    if (content.length > 6000) content = content.slice(-6000);
+  const payload = { token, title, content, template: "txt" };
+  try {
+    if (typeof axios !== "undefined") {
+      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
+    } else {
+      const data = JSON.stringify(payload);
+      await new Promise((resolve, reject) => {
+        const req = https.request("https://www.pushplus.plus/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+          timeout: 10000,
+        }, (res) => { res.resume(); res.on("end", resolve); });
+        req.on("error", reject); req.write(data); req.end();
+      });
+    }
+    _origLog("✅ PushPlus推送成功: " + title);
+  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
+}
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -696,6 +724,7 @@ async function main() {
     $.err('未配置账号。请设置 wx_opinion（或 nxjzCode/nxjzToken）；WCS 用 wx_server_url + wx_auth');
   }
   $.ok('所有任务执行完毕！🎉');
+  await sendToPushPlus("浓五的酒庄", notifyLines.join("\n"));
 }
 
 if (require.main === module) {
