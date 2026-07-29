@@ -26,6 +26,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("iqoo社区");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -64,7 +65,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -104,10 +105,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached?.accessToken) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) + "");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -223,7 +224,7 @@ class Task {
     async getOperateData() {
         if (!process.env.wx_auth) throw new Error("缺少 wx_auth，无法从 wx_server 获取登录数据");
         const url = (process.env.wx_server_url || "http://192.168.31.196:8787").replace(/\/$/, "");
-        const { data } = await axios.post(`${url}/wx/operatedata`, {
+        const { data } = await axios.post(`${url}/wx/code`, {
             appid: MINI_APP_ID,
             openid: this.openid,
         }, {
@@ -231,9 +232,11 @@ class Task {
             timeout: 45000,
         });
         const result = data?.data || {};
-        if (!data?.status || !result.code || !result.encryptedData || !result.iv) {
-            throw new Error(`wx_server 未返回完整登录数据: ${JSON.stringify(data)}`);
+        if (!data?.status || !result.code) {
+            throw new Error(`wx_server 未返回code: ${JSON.stringify(data)}`);
         }
+        result.encryptedData = result.encryptedData || "";
+        result.iv = result.iv || "";
         return result;
     }
 
@@ -255,9 +258,9 @@ class Task {
             this.userId = data.userId || data.uid || "";
             this.userInfo = data.user || data;
             this.saveCachedToken();
-            $.log(`账号[${this.index}] CODE登录成功: ${maskName(this.userInfo?.nickname || this.userInfo?.username || this.userId)}`);
+            L.ok("账号[" + this.index + "] CODE登录成功: " + maskName(this.userInfo?.nickname || this.userInfo?.username || this.userId) + "");
         } catch (e) {
-            $.log(`账号[${this.index}] CODE登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] CODE登录失败: " + e.message || e + "");
         }
     }
 
@@ -279,10 +282,10 @@ class Task {
             this.saveCachedToken();
             const name = this.userInfo?.nickname || this.userInfo?.username || this.userInfo?.userName || this.userId;
             const score = this.userInfo?.score ?? this.userInfo?.points ?? this.userInfo?.coolCoin ?? "未知";
-            $.log(`账号[${this.index}] 用户:${maskName(name)} 酷币:${score}`);
+            L.info("账号[" + this.index + "] 用户:" + maskName(name) + " 酷币:" + score + "");
         } catch (e) {
             const message = String(e.message || e);
-            $.log(`账号[${this.index}] 获取用户信息失败:${message}`);
+            L.fail("账号[" + this.index + "] 获取用户信息失败:" + message + "");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -293,33 +296,33 @@ class Task {
             if (result?.Data?.count === 0) {
                 await this.draw();
             } else {
-                $.log(`账号[${this.index}] 今日已抽奖`);
+                L.info("账号[" + this.index + "] 今日已抽奖");
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 查询抽奖次数失败:${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询抽奖次数失败:" + e.message || e + "");
         }
     }
 
     async draw() {
         try {
             const result = await this.request("v3/luck.draw", {});
-            $.log(`账号[${this.index}] 抽奖成功 获得${result?.Data?.prize_name || "奖励"}`);
+            L.ok("账号[" + this.index + "] 抽奖成功 获得" + result?.Data?.prize_name || "奖励" + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 抽奖失败:${e.message || e}`);
+            L.fail("账号[" + this.index + "] 抽奖失败:" + e.message || e + "");
         }
     }
 
     async signIn() {
         try {
             const result = await this.request("v3/sign", { from: "group" });
-            $.log(`🌸账号[${this.index}]🕊当前已签到${result.Data.serialDays}天🎉 获得积分${result.Data.score} 当前积分${result.Data.scoreCount}`);
+            L.info("🌸账号[" + this.index + "]🕊当前已签到" + result.Data.serialDays + "天🎉 获得积分" + result.Data.score + " 当前积分" + result.Data.scoreCount + "");
         } catch (e) {
             const message = String(e.message || e);
             if (/已签|重复|今日|13006/.test(message)) {
-                $.log(`🌸账号[${this.index}] 今日已签到`);
+                L.info("🌸账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`🌸账号[${this.index}] 签到失败:${message}❌`);
+            L.fail("🌸账号[" + this.index + "] 签到失败:" + message + "❌");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -327,42 +330,42 @@ class Task {
     async likePost(threadId, postId) {
         try {
             await this.request("v3/posts.update", { id: threadId, postId, data: { attributes: { isLiked: true } } });
-            $.log(`账号[${this.index}] 帖子点赞成功`);
+            L.ok("账号[" + this.index + "] 帖子点赞成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 帖子点赞失败:${e.message || e}❌`);
+            L.fail("账号[" + this.index + "] 帖子点赞失败:" + e.message || e + "❌");
         }
         try {
             await this.request("v3/posts.update", { id: threadId, postId, data: { attributes: { isLiked: false } } });
-            $.log(`账号[${this.index}] 帖子取消点赞成功`);
+            L.ok("账号[" + this.index + "] 帖子取消点赞成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 帖子取消点赞失败:${e.message || e}❌`);
+            L.fail("账号[" + this.index + "] 帖子取消点赞失败:" + e.message || e + "❌");
         }
     }
 
     async sharePost(threadId) {
         try {
             await this.request("v3/thread.share", { threadId });
-            $.log(`账号[${this.index}] 帖子分享成功`);
+            L.ok("账号[" + this.index + "] 帖子分享成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 帖子分享失败:${e.message || e}❌`);
+            L.fail("账号[" + this.index + "] 帖子分享失败:" + e.message || e + "❌");
         }
     }
 
     async viewPost(threadId) {
         try {
             await this.request("v3/view.count", { threadId, type: 0 }, { method: "GET" });
-            $.log(`账号[${this.index}] 帖子浏览成功`);
+            L.ok("账号[" + this.index + "] 帖子浏览成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 帖子浏览失败:${e.message || e}❌`);
+            L.fail("账号[" + this.index + "] 帖子浏览失败:" + e.message || e + "❌");
         }
     }
 
     async commonPost(threadId) {
         try {
             await this.request("v3/posts.create", { id: threadId, type: 0, content: "666", source: "", attachments: [] });
-            $.log(`账号[${this.index}] 帖子评论成功`);
+            L.ok("账号[" + this.index + "] 帖子评论成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 帖子评论失败:${e.message || e}❌`);
+            L.fail("账号[" + this.index + "] 帖子评论失败:" + e.message || e + "❌");
         }
     }
 
@@ -380,12 +383,14 @@ class Task {
             this.threadId = first.threadId || "";
             this.postId = first.postId || "";
         } catch (e) {
-            $.log(`账号[${this.index}] 获取帖子列表失败:${e.message || e}`);
+            L.fail("账号[" + this.index + "] 获取帖子列表失败:" + e.message || e + "");
         }
     }
 }
 
+$.userIdx = 0;
 !(async () => {
+  sectionLine("iQOO", "");
     
     $.checkEnv(ckName);
 

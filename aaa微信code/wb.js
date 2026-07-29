@@ -8,6 +8,7 @@ cron: 41 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("花生帮粉丝俱乐部签到任务");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -57,7 +58,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -116,10 +117,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -185,7 +186,7 @@ class Task {
             "X-Request-Lang": "zh-CN",
             "Authorization": this.token || "",
             "x-request-ts": timestamp,
-            "x-request-sign": getSign(method, `/${apiPath}`, payload, timestamp),
+            "x-request-sign": getSign(method, "/" + apiPath, payload, timestamp),
         };
     }
 
@@ -240,9 +241,9 @@ class Task {
                 mobile: login.data?.mobile || "",
             });
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: userId=${this.userId || "未知"}`);
+            L.ok("账号[" + this.index + "] 登录成功: userId=" + this.userId || "未知" );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -266,7 +267,7 @@ class Task {
         this.mobile = user.mobile || this.mobile;
         this.currentJf = user.currentJf ?? this.currentJf;
         this.saveCachedToken();
-        if (!silent) $.log(`账号[${this.index}] 用户: userId=${this.userId || "未知"} 能量${this.currentJf ?? 0}`);
+        if (!silent) L.info("账号[" + this.index + "] 用户: userId=" + (this.userId || "未知") + " 能量" + (this.currentJf ?? 0));
         return user;
     }
 
@@ -276,16 +277,16 @@ class Task {
                 signMonth: formatMonth(),
             }, "GET");
             const signList = Array.from(new Set(monthInfo.data?.signDateList || []));
-            $.log(`账号[${this.index}] 签到记录: 本月${signList.length}天 连续${monthInfo.data?.continuousSignDays || 0}天`);
+            L.info("账号[" + this.index + "] 签到记录: 本月" + signList.length + "天 连续" + monthInfo.data?.continuousSignDays || 0 + "天");
 
             const justSign = await this.request("marketing/sign/woBeiCus/v1/justSign", {}, "POST", { allowAnyCode: true });
             if (justSign.code !== 200 && /已签|签到/.test(String(justSign.message || ""))) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
             if (justSign.code !== 200) throw new Error(justSign.message || JSON.stringify(justSign));
             if (justSign.data === 0 || justSign.data === "0") {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
@@ -296,17 +297,17 @@ class Task {
             if (callback.code === 200) {
                 const rewards = Array.isArray(callback.data) ? callback.data : [];
                 const energy = rewards.find((item) => String(item.rewardType) === "1" || String(item.rewardType) === "2");
-                $.log(`账号[${this.index}] 签到成功: +${energy?.rewardValue || justSign.data || "未知"}能量`);
+                L.ok("账号[" + this.index + "] 签到成功: +" + energy?.rewardValue || justSign.data || "未知" + "能量");
             } else {
-                $.log(`账号[${this.index}] 签到回调失败: ${callback.message || callback.code}`);
+                L.fail("账号[" + this.index + "] 签到回调失败: " + callback.message || callback.code );
             }
         } catch (e) {
             const message = e.message || e;
             if (/已签|今日已签到|重复/.test(String(message))) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -339,44 +340,46 @@ class Task {
             const taskList = await this.getTaskList();
             const tasks = taskList.filter((task) => TARGET_TASKS[task.indexNo]);
             if (!tasks.length) {
-                $.log(`账号[${this.index}] 未找到目标任务`);
+                L.info("账号[" + this.index + "] 未找到目标任务");
                 return;
             }
 
             for (const task of tasks) {
                 const taskName = task.taskName || TARGET_TASKS[task.indexNo];
                 if (String(task.status) === "2") {
-                    $.log(`账号[${this.index}] ${taskName}: 已完成`);
+                    L.info("账号[" + this.index + "] " + taskName + ": 已完成");
                     continue;
                 }
 
                 if (String(task.status) === "0") {
                     const ok = await this.setTaskOk(task);
                     if (ok.code !== 200) {
-                        $.log(`账号[${this.index}] ${taskName}: 标记完成失败 ${ok.message || ok.code}`);
+                        L.fail("账号[" + this.index + "] " + taskName + ": 标记完成失败 " + ok.message || ok.code );
                         continue;
                     }
                 }
 
                 const complete = await this.completeTask(task);
                 if (complete.code === 200) {
-                    $.log(`账号[${this.index}] ${taskName}: 领取成功 +${task.awardsValue || "未知"}能量`);
+                    L.ok("账号[" + this.index + "] " + taskName + ": 领取成功 +" + task.awardsValue || "未知" + "能量");
                 } else if (complete.code === 21210108) {
-                    $.log(`账号[${this.index}] ${taskName}: 奖励已领取`);
+                    L.info("账号[" + this.index + "] " + taskName + ": 奖励已领取");
                 } else {
-                    $.log(`账号[${this.index}] ${taskName}: 领取失败 ${complete.message || complete.code}`);
+                    L.fail("账号[" + this.index + "] " + taskName + ": 领取失败 " + complete.message || complete.code );
                 }
             }
         } catch (e) {
             const message = e.message || e;
-            $.log(`账号[${this.index}] 任务中心失败: ${message}`);
+            L.fail("账号[" + this.index + "] 任务中心失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("花生帮", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

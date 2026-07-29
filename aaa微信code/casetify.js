@@ -8,6 +8,7 @@ cron: 46 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("CASETiFY 签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -52,7 +53,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -87,10 +88,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -197,9 +198,9 @@ class Task {
                 levels: user.levels,
             });
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${this.levels || "会员"} ${this.customerNo || this.memberId || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + this.levels || "会员" + " " + this.customerNo || this.memberId || "" + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
         }
     }
 
@@ -221,7 +222,7 @@ class Task {
         if (!campaignId) throw new Error("未找到积分商城活动");
         this.campaignId = campaignId;
         this.saveCachedToken();
-        if (!silent) $.log(`账号[${this.index}] 积分商城活动: ${campaignId}`);
+        if (!silent) L.info("账号[" + this.index + "] 积分商城活动: " + campaignId + "");
         return campaignId;
     }
 
@@ -233,7 +234,7 @@ class Task {
         return result.data || {};
     }
 
-    async doSign() {
+    async doSign(retried = false) {
         try {
             const before = await this.getSignInfo();
             const signDays = Array.isArray(before.signDays) ? before.signDays : [];
@@ -242,7 +243,7 @@ class Task {
                 ? before.assignDetail.find((item) => item.assignmentName && item.assignmentName.includes("单日"))
                 : null;
             if (todayStatus?.signStatus === 1 || dailyTask?.completeStatus === 1) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
@@ -250,7 +251,7 @@ class Task {
             if (sign.resultCode !== "1") {
                 const message = sign.msg || JSON.stringify(sign);
                 if (/已签|重复/.test(message)) {
-                    $.log(`账号[${this.index}] 今日已签到`);
+                    L.info("账号[" + this.index + "] 今日已签到");
                     return;
                 }
                 throw new Error(message);
@@ -260,17 +261,27 @@ class Task {
             const task = Array.isArray(after.assignDetail)
                 ? after.assignDetail.find((item) => item.assignmentName && item.assignmentName.includes("单日"))
                 : null;
-            $.log(`账号[${this.index}] 签到成功: +${task?.awardPrice || "未知"}积分`);
+            L.ok("账号[" + this.index + "] 签到成功: +" + task?.awardPrice || "未知" + "积分");
         } catch (e) {
             const message = e.message || e;
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
-            if (isTokenError(message)) this.removeCachedToken();
+            L.fail("账号[" + this.index + "] 签到失败: " + message + "");
+            if (isTokenError(message) && !retried) {
+                this.removeCachedToken();
+                L.fail("账号[" + this.index + "] 登录失效，重新登录后重试");
+                await this.loginByWxCode();
+                if (this.token) {
+                    await this.getCampaignId();
+                    return this.doSign(true);
+                }
+            }
         }
     }
 }
 
 !(async () => {
+  sectionLine("CASETiFY", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

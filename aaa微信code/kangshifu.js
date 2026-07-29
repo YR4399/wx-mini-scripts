@@ -27,6 +27,7 @@ cron: 30 10 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("康师傅畅饮社");
 const axios = require("axios");
 const fs = require("fs");
@@ -69,7 +70,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -107,10 +108,10 @@ class Task {
         if (cached?.token) {
             this.token = cached.token;
             this.member = cached.member || {};
-            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) + "");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -210,9 +211,9 @@ class Task {
             this.token = token;
             this.member = result?.data?.member || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${this.member.nickname || maskPhone(this.member.phone) || this.member.id || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + this.member.nickname || maskPhone(this.member.phone) || this.member.id || "" + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
         }
     }
 
@@ -239,10 +240,10 @@ class Task {
             const data = await this.getMemberInfo();
             const name = data?.nickname || maskPhone(data?.phone) || data?.id || "";
             const integral = data?.integral ?? data?.point ?? data?.points ?? data?.score ?? "未知";
-            $.log(`账号[${this.index}] ${prefix}用户: ${name}，积分: ${integral}`);
+            L.info("账号[" + this.index + "] " + prefix + "用户: " + name + "，积分: " + integral + "");
         } catch (e) {
             const message = String(e.message || e);
-            $.log(`账号[${this.index}] 查询用户失败: ${message}`);
+            L.fail("账号[" + this.index + "] 查询用户失败: " + message + "");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -260,7 +261,7 @@ class Task {
         try {
             const status = await this.getSignStatus();
             if (status?.signIs) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
@@ -269,21 +270,23 @@ class Task {
                 data: {},
                 form: true,
             });
-            $.log(`账号[${this.index}] 签到成功: ${result?.msg || "成功"}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + result?.msg || "成功" + "");
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|已签|重复/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message + "");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("康师傅", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (const user of $.userList) {

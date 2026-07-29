@@ -16,6 +16,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("爱果乐之家微信小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -56,7 +57,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -81,10 +82,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.token = cached;
-            $.log(`账号[${this.index}] 使用缓存token: ${maskToken(this.accessToken)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + maskToken(this.accessToken) );
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新code登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新code登录");
             }
         }
 
@@ -145,10 +146,10 @@ class Task {
     buildUrl(apiPath, query = {}) {
         const pathname = apiPath.replace(/^\/+/, "");
         const params = querystring.stringify({
-            store_id: "",
             app_id: MINI_APP_ID,
             kdt_id: KDT_ID,
-            access_token: this.accessToken,
+            access_token: (this.token && (this.token.accessToken || this.token.access_token)) || "",
+            store_id: "",
             ...query,
         });
         return `${API_BASE}/${pathname}?${params}`;
@@ -199,11 +200,8 @@ class Task {
                 headers: {
                     auth: wxAuth,
                     "content-type": "application/json",
-                },
-                timeout: 15000,
-                validateStatus: () => true,
             }
-        );
+        });
         const code = data?.code || data?.data?.code;
         if (status !== 200 || !code) throw new Error(`wx_server 获取code失败: HTTP ${status} ${JSON.stringify(data)}`);
         return code;
@@ -226,9 +224,9 @@ class Task {
             });
             this.token = data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${data?.nick_name || data?.nickName || ""} ${maskPhone(data?.mobile)}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + data?.nick_name || data?.nickName || "" + " " + maskPhone(data?.mobile) );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -244,14 +242,14 @@ class Task {
     async getPoints(label = "积分") {
         const data = await this.request({ apiPath: "wscump/integral/user_points.json" });
         const points = data?.current_points ?? data?.real_points ?? data?.total_points ?? "未知";
-        $.log(`账号[${this.index}] ${label}: ${points}积分`);
+        L.info("账号[" + this.index + "] " + label + ": " + points + "积分");
         return data;
     }
 
     async getCheckinInfo() {
         const data = await this.request({ apiPath: "wscump/checkin/check-in-info.json" });
         this.checkinId = data?.checkInId || data?.checkinId || data?.check_in_id || "";
-        $.log(`账号[${this.index}] 签到活动: checkinId=${this.checkinId || "未获取"} ownerKdtId=${data?.activityOwnerKdtId || ""}`);
+        L.info("账号[" + this.index + "] 签到活动: checkinId=" + this.checkinId || "未获取" + " ownerKdtId=" + data?.activityOwnerKdtId || "" );
         return data;
     }
 
@@ -264,21 +262,21 @@ class Task {
         this.isCheckin = !!data?.isCheckin;
         this.isOpen = data?.isOpen !== false;
         const reward = (data?.dailyRewards || []).map((item) => item?.desc).filter(Boolean).join(", ");
-        $.log(`账号[${this.index}] 签到状态: ${this.isCheckin ? "已签" : "未签"} 连续${data?.continuesDay ?? 0}天${reward ? ` 今日奖励${reward}` : ""}`);
+        L.info("账号[" + this.index + "] 签到状态: " + (this.isCheckin ? "已签" : "未签") + " 连续" + (data?.continuesDay ?? 0) + "天" + (reward ? " 今日奖励" + reward : ""));
         return data;
     }
 
     async doCheckin() {
         if (!this.checkinId) {
-            $.log(`账号[${this.index}] 未获取到签到活动，跳过`);
+            L.info("账号[" + this.index + "] 未获取到签到活动，跳过");
             return;
         }
         if (this.isCheckin) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return;
         }
         if (!this.isOpen) {
-            $.log(`账号[${this.index}] 签到活动未开启`);
+            L.info("账号[" + this.index + "] 签到活动未开启");
             return;
         }
 
@@ -291,21 +289,23 @@ class Task {
                 .map((item) => item?.infos?.title || item?.infos?.desc || "")
                 .filter(Boolean)
                 .join(", ");
-            $.log(`账号[${this.index}] 签到成功: ${data?.desc || ""}${award ? ` ${award}` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + (data?.desc || "") + (award ? " " + award : ""));
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|已经签到|重复|今日.*签|参与次数/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (e.code === -1 || e.code === 40010 || e.code === 40009 || /登录|token|access/i.test(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("爱果乐", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

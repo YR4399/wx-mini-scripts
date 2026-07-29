@@ -9,8 +9,10 @@ cron: 30 9 * * *
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const axios = require("axios");
 // ========== SSL和代理修复 ==========
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -31,9 +33,15 @@ const API_BASE = "https://chabaidao-gateway2.shuxinyc.com";
 const MARKETING_BASE = "https://md-h5-gateway.shuxinyc.com";
 const GROUP_ID = "317964";
 const MEMBER_SYSTEM_ID = "21";
-const BUSINESS_ID = process.env.cbd_business_id || "nLeSJVfnWF5Q";
+// 兜底用当前真实 businessId（每周活动轮换，自动发现优先；此值仅当发现接口全部失败时使用）
+const BUSINESS_ID = process.env.cbd_business_id || "72WpoD2wdefp";
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254193e) XWEB/19841";
+// 抓包对齐: 2026-07-29 线上版本
+const VERSION_CODE = "34710";
+const VERSION_NAME = "3.4.710";
+const REFERRER_VER = "1242";
+
+const UA = "Mozilla/5.0 (Linux; Android 16; 25113PN0EC Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0.7871.181 Mobile Safari/537.36 XWEB/1500047 MMWEBSDK/20260502 MM";
 
 class WeChatServer {
     constructor(options) {
@@ -54,16 +62,32 @@ class Task {
         this.user = user;
         this.index = index;
         this.csession = null;
+        this.cookiesByHost = {};   // 维护阿里云WAF的 acw_tc cookie
+    }
+
+    genTraceId() {
+        return crypto.randomUUID();
+    }
+
+    // 从响应头提取 acw_tc (阿里云WAF风控cookie) 并按 host 缓存
+    saveCookies(host, resp) {
+        try {
+            let sc = resp && resp.headers && resp.headers['set-cookie'];
+            if (!sc) return;
+            const arr = Array.isArray(sc) ? sc : [sc];
+            const acw = arr.map(c => String(c).split(';')[0]).filter(c => c.startsWith('acw_tc='));
+            if (acw.length) this.cookiesByHost[host] = acw.join('; ');
+        } catch (_) {}
     }
 
     getHeaders(host) {
-        return {
+        const h = {
             "Content-Type": "application/json",
             "User-Agent": UA,
             "CSESSION": this.csession || "",
-            "versionCode": "34613",
-            "versionName": "3.4.613",
-            "Referer": `https://servicewechat.com/${MINI_APP_ID}/1154/page-frame.html`,
+            "versionCode": VERSION_CODE,
+            "versionName": VERSION_NAME,
+            "Referer": `https://servicewechat.com/${MINI_APP_ID}/${REFERRER_VER}/page-frame.html`,
             "Host": host.replace("https://", "").replace("http://", ""),
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
@@ -74,6 +98,9 @@ class Task {
             "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive"
         };
+        const ck = this.cookiesByHost[host];
+        if (ck) h["Cookie"] = ck;
+        return h;
     }
 
     async login(wechat, openid) {
@@ -88,26 +115,28 @@ class Task {
             memberSystemId: MEMBER_SYSTEM_ID,
             code: code1,
             appId: MINI_APP_ID,
-            pureSign: true
+            pureSign: true,
+            traceId: this.genTraceId()
         }, {
             headers: this.getHeaders(API_BASE),
             timeout: 30000,
             validateStatus: () => true
         });
+        this.saveCookies(API_BASE, resp1);
 
         if (resp1.data?.code !== "000" || !resp1.data?.data?.token) {
             throw new Error(`首次登录失败: ${JSON.stringify(resp1.data)}`);
         }
 
         this.csession = resp1.data.data.token;
-        $.log(`账号[${this.index}] 首次登录成功`);
+        L.ok("账号[" + this.index + "] 首次登录成功");
 
         // Step 2: 获取新code并刷新登录 (pureSign=false, token=旧CSESSION)
         await $.wait(800 + Math.random() * 500);
         const { data: codeData2 } = await wechat.getCode(openid);
         const code2 = codeData2?.data?.code || codeData2?.code;
         if (!code2) {
-            $.log(`账号[${this.index}] 获取刷新code失败，使用首次登录`);
+            L.fail("账号[" + this.index + "] 获取刷新code失败，使用首次登录");
             return resp1.data.data;
         }
 
@@ -117,19 +146,21 @@ class Task {
             memberSystemId: MEMBER_SYSTEM_ID,
             code: code2,
             appId: MINI_APP_ID,
-            pureSign: false
+            pureSign: false,
+            traceId: this.genTraceId()
         }, {
             headers: this.getHeaders(API_BASE),
             timeout: 30000,
             validateStatus: () => true
         });
+        this.saveCookies(API_BASE, resp2);
 
         if (resp2.data?.code === "000" && resp2.data?.data?.token) {
             this.csession = resp2.data.data.token;
-            $.log(`账号[${this.index}] 刷新登录成功, encryptedUserPhone: ${resp2.data.data.encryptedUserPhone ? "有" : "无"}`);
+            L.ok("账号[" + this.index + "] 刷新登录成功");
             return resp2.data.data;
         } else {
-            $.log(`账号[${this.index}] 刷新登录失败: ${JSON.stringify(resp2.data).substring(0, 100)}`);
+            L.fail("账号[" + this.index + "] 刷新登录失败: " + JSON.stringify(resp2.data).substring(0, 100) + "");
             return resp1.data.data;
         }
     }
@@ -137,7 +168,7 @@ class Task {
     async fetchBusinessId(openId) {
         // 如果手动指定了 businessId，优先使用
         if (process.env.cbd_business_id) return process.env.cbd_business_id;
-        
+
         // 从缓存文件读取（每周有效）
         const cacheFile = path.join(__dirname, ".cbd_business_id");
         try {
@@ -146,54 +177,59 @@ class Task {
                 const age = Date.now() - (cache.time || 0);
                 // 缓存6天有效
                 if (age < 6 * 86400 * 1000 && cache.bId) {
-                    $.log(`使用缓存 businessId: ${cache.bId}`);
+                    L.info("使用缓存 businessId: " + cache.bId + "");
                     return cache.bId;
                 }
             }
         } catch (_) {}
-        
-        // 从广告配置自动发现
+
+        // 从广告配置自动发现 (CBD_093_member_weeksop 周签到的 bId)
         try {
-            const headers = this.getHeaders("chabaidao-gateway2.shuxinyc.com");
+            const host = "chabaidao-gateway2.shuxinyc.com";
+            const headers = this.getHeaders(host);
             headers["Accept"] = "application/json";
             const resp = await axios.post(`${API_BASE}/cbd-advert-service/resBit/front/getAdContent`, {
+                appId: MINI_APP_ID,
                 appUserId: openId || "",
                 resBitCodeList: ["CBD_093_member_weeksop"],
                 dropEnd: 1,
-                appVersion: 34642,
+                appVersion: parseInt(VERSION_CODE, 10),
                 orderType: 1,
-                diningMode: 1
+                diningMode: 1,
+                traceId: this.genTraceId()
             }, { headers, timeout: 15000, validateStatus: () => true });
-            
+            this.saveCookies(host, resp);
+
             const body = JSON.stringify(resp.data);
             // 匹配 bId=xxxx (多种格式)
             let m = body.match(/type=3[^"'\s]*bId=([A-Za-z0-9]+)/);
             if (!m) m = body.match(/"businessId":"([A-Za-z0-9]+)"/);
             if (!m) m = body.match(/"bId":"([A-Za-z0-9]+)"/);
             if (m) {
-                $.log(`自动发现签到 businessId: ${m[1]}`);
+                L.info("自动发现签到 businessId: " + m[1] + "");
                 // 缓存
-                try { fs.writeFileSync(cacheFile, JSON.stringify({bId:m[1],time:Date.now()})); } catch(_) {}
+                try { fs.writeFileSync(cacheFile, JSON.stringify({ bId: m[1], time: Date.now() })); } catch (_) {}
                 return m[1];
             }
         } catch (e) {
-            $.log(`获取 businessId 失败: ${e.message}`);
+            L.fail("获取 businessId 失败: " + e.message + "");
         }
-        $.log("使用默认 businessId");
+        L.info("使用默认 businessId (兜底): " + BUSINESS_ID);
         return BUSINESS_ID;
     }
 
     async signIn(businessId) {
+        const host = "md-h5-gateway.shuxinyc.com";
         const resp = await axios.post(`${MARKETING_BASE}/marketing/minip/activity/join/signIn`, {
-            id: "",
             businessId: businessId || BUSINESS_ID,
             activityJoinSource: 0,
-            shopId: -1
+            traceId: this.genTraceId()
         }, {
-            headers: this.getHeaders("md-h5-gateway.shuxinyc.com"),
+            headers: this.getHeaders(host),
             timeout: 30000,
             validateStatus: () => true
         });
+        this.saveCookies(host, resp);
         return resp.data;
     }
 
@@ -209,14 +245,14 @@ class Task {
 
         // 自动发现当前周的 businessId (带重试)
         let businessId = await this.fetchBusinessId(openId) || BUSINESS_ID;
-        
+
         // 签到
         await $.wait(1000 + Math.random() * 1500);
         let signResult = await this.signIn(businessId);
 
         // 如果 businessId 过期，清除缓存并重新获取
         if (signResult.code !== "000" && !(signResult.msg || "").includes("已签")) {
-            $.log("businessId 可能已失效，重新获取...");
+            L.fail("businessId 可能已失效，重新获取...");
             const cacheFile = path.join(__dirname, ".cbd_business_id");
             try { fs.unlinkSync(cacheFile); } catch (_) {}
             const newBid = await this.fetchBusinessId(openId) || BUSINESS_ID;
@@ -235,22 +271,24 @@ class Task {
                     return g.giftName || "奖励";
                 }).join("+");
             }).join(", ");
-            $.log(`账号[${this.index}] 签到成功! 获得: ${giftNames || "奖励"}`);
+            L.ok("账号[" + this.index + "] 签到成功! 获得: " + (giftNames || "奖励") + "");
         } else {
             const msg = signResult.msg || JSON.stringify(signResult);
             if (msg.includes("已签") || msg.includes("已参与")) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
             } else {
-                $.log(`账号[${this.index}] 签到失败: ${msg}`);
+                L.fail("账号[" + this.index + "] 签到失败: " + msg + "");
             }
         }
 
-        $.log(`账号[${this.index}] 任务完成`);
+        L.info("账号[" + this.index + "] 任务完成");
     }
 }
 
 !(async () => {
-    
+  sectionLine("茶白道", "");
+
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (let i = 0; i < $.userList.length; i++) {

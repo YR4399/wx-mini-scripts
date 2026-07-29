@@ -8,6 +8,7 @@ cron: 33 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("旧衣小二签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -51,7 +52,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -78,10 +79,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.session = cached;
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -171,9 +172,9 @@ class Task {
             };
             if (!this.session.token) throw new Error("登录未返回token");
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功`);
+            L.ok("账号[" + this.index + "] 登录成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -191,21 +192,23 @@ class Task {
         try {
             const res = await this.request("/api/Person/sign");
             const beans = res.data;
-            $.log(`账号[${this.index}] 签到成功${beans !== undefined ? `，获得${beans}环保币` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功" + (beans !== undefined ? ", 获得" + beans + "环保币" : ""));
         } catch (e) {
             const message = e.message || e;
             if (/已签到|今日已|重复|已经签到/.test(String(message))) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("旧衣小二", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

@@ -26,6 +26,7 @@ cron: 30 9 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("国乐酱酒");
 const axios = require("axios");
 const fs = require("fs");
@@ -61,7 +62,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -93,16 +94,16 @@ class Task {
 
     async run() {
         if (this.isLegacyToken) {
-            $.log(`账号[${this.index}] 检测到旧版token格式，先迁移到缓存`);
+            L.info("账号[" + this.index + "] 检测到旧版token格式，先迁移到缓存");
             this.saveCachedToken();
         } else {
             const cached = this.getCachedToken();
             if (cached?.token) {
                 this.applyToken(cached);
-                $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+                L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) + "");
                 if (!(await this.checkToken())) {
                     this.removeCachedToken();
-                    $.log(`账号[${this.index}] 缓存token失效，重新CODE登录`);
+                    L.fail("账号[" + this.index + "] 缓存token失效，重新CODE登录");
                 }
             }
 
@@ -191,7 +192,8 @@ class Task {
     async getOperateData() {
         if (!process.env.wx_auth) throw new Error("缺少 wx_auth，无法从 wx_server 获取登录数据");
         const url = (process.env.wx_server_url || "http://192.168.31.196:8787").replace(/\/$/, "");
-        const { data } = await axios.post(`${url}/wx/operatedata`, {
+        // 新版WCS使用 /wx/code 替代 /wx/operatedata
+        const { data } = await axios.post(`${url}/wx/code`, {
             appid: MINI_APP_ID,
             openid: this.raw,
         }, {
@@ -203,7 +205,7 @@ class Task {
         if (!data?.status || !result.code) throw new Error(`wx_server 未返回code: ${JSON.stringify(data)}`);
         let userInfo = {};
         try {
-            userInfo = JSON.parse(result.data || "{}");
+            userInfo = JSON.parse(result.userInfo || "{}");
         } catch (e) {}
         return { code: result.code, userInfo };
     }
@@ -233,9 +235,9 @@ class Task {
             this.sessionKey = data.sessionKey || "";
             this.userId = data.userId || "";
             this.saveCachedToken();
-            $.log(`账号[${this.index}] CODE登录成功: ${shortToken(this.token)}`);
+            L.ok("账号[" + this.index + "] CODE登录成功: " + shortToken(this.token) + "");
         } catch (e) {
-            $.log(`账号[${this.index}] CODE登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] CODE登录失败: " + e.message || e + "");
         }
     }
 
@@ -249,36 +251,58 @@ class Task {
     }
 
     async sign() {
-        try {
-            const result = await this.request("/sign/daily/sign");
-            $.log(`🕊账号[${this.index}] 签到成功：签到[${result.data?.spanSumDays ?? "未知"}]天🎉`);
-        } catch (e) {
-            const message = String(e.message || e);
-            if (/已签|重复|今日/.test(message)) {
-                $.log(`🕊账号[${this.index}] 今日已签到`);
+        const retryable = (m) => /高德|1015|ip解析|超时|timeout|ECONNRESET|socket|网络/.test(m || "");
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const result = await this.request("/sign/daily/sign");
+                L.ok("🕊账号[" + this.index + "] 签到成功：签到[" + result.data?.spanSumDays ?? "未知" + "]天🎉");
+                return;
+            } catch (e) {
+                const message = String(e.message || e);
+                if (/已签|重复|今日/.test(message)) {
+                    L.info("🕊账号[" + this.index + "] 今日已签到");
+                    return;
+                }
+                if (attempt < 2 && retryable(message)) {
+                    L.info("🕊账号[" + this.index + "] 签到遇高德/ip解析抖动，第" + attempt + 1 + "次重试...");
+                    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+                    continue;
+                }
+                L.fail("🕊账号[" + this.index + "] 签到失败:" + message + "⛔");
+                if (isTokenError(message)) this.removeCachedToken();
                 return;
             }
-            $.log(`🕊账号[${this.index}] 签到失败:${message}⛔`);
-            if (isTokenError(message)) this.removeCachedToken();
         }
     }
 
     async account() {
-        try {
-            const result = await this.request("/user/info");
-            this.userInfo = result.data || {};
-            this.saveCachedToken();
-            $.log(`🕊账号[${this.index}] 查询成功:总积分[${result.data?.score ?? "未知"}]🎉`);
-        } catch (e) {
-            const message = String(e.message || e);
-            $.log(`🕊账号[${this.index}] 查询失败:${message}🚫`);
-            if (isTokenError(message)) this.removeCachedToken();
+        const retryable = (m) => /高德|1015|ip解析|超时|timeout|ECONNRESET|socket|网络/.test(m || "");
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const result = await this.request("/user/info");
+                this.userInfo = result.data || {};
+                this.saveCachedToken();
+                L.ok("🕊账号[" + this.index + "] 查询成功:总积分[" + result.data?.score ?? "未知" + "]🎉");
+                return;
+            } catch (e) {
+                const message = String(e.message || e);
+                if (attempt < 2 && retryable(message)) {
+                    L.info("🕊账号[" + this.index + "] 查询遇抖动，第" + attempt + 1 + "次重试...");
+                    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+                    continue;
+                }
+                L.fail("🕊账号[" + this.index + "] 查询失败:" + message + "🚫");
+                if (isTokenError(message)) this.removeCachedToken();
+                return;
+            }
         }
     }
 }
 
 !(async () => {
+  sectionLine("国乐酱酒", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (const user of $.userList) {

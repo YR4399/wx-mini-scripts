@@ -16,6 +16,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("梦想家TSE微信小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -50,13 +51,13 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
 function maskToken(token = "") {
     const value = String(token || "");
-    return value ? `${value.slice(0, 6)}***${value.slice(-6)}` : "";
+    return value ? value.slice(0, 6) + "***" + value.slice(-6) : "";
 }
 
 function formatSignDate(date = new Date()) {
@@ -85,10 +86,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached?.access_token || cached?.accessToken) {
             this.loginResult = cached;
-            $.log(`账号[${this.index}] 使用缓存token: ${maskToken(this.accessToken)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + maskToken(this.accessToken) );
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新code登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新code登录");
             }
         }
 
@@ -101,7 +102,7 @@ class Task {
         await this.getSignConfig();
         const today = await this.getTodaySignItem();
         if (today?.daySignStatus === 2) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
         } else {
             await this.signIn(today?.dateStr);
         }
@@ -139,7 +140,7 @@ class Task {
             "Accept": "application/json, text/plain, */*",
             "appId": MINI_APP_ID,
             "version": VERSION,
-            "envVersion": "release",
+            "envVersion": "application/json",
         };
         if (withToken && this.accessToken) headers.Authorization = `bearer${this.accessToken}`;
         return headers;
@@ -172,19 +173,17 @@ class Task {
         if (!wxServerUrl || !wxAuth) throw new Error("未配置 wx_server_url 或 wx_auth");
 
         const { status, data } = await axios.post(
-            `${wxServerUrl.replace(/\/$/, "")}/wx/code`,
+            wxServerUrl + "/wx/code",
             { appid: MINI_APP_ID, openid: this.openid },
             {
                 headers: {
                     auth: wxAuth,
                     "content-type": "application/json",
-                },
-                timeout: 15000,
-                validateStatus: () => true,
+            }
             }
         );
         const code = data?.code || data?.data?.code;
-        if (status !== 200 || !code) throw new Error(`wx_server 获取code失败: HTTP ${status} ${JSON.stringify(data)}`);
+        if (status !== 200 || !code) throw new Error("wx_server 获取code失败: HTTP " + status + ": " + JSON.stringify(data));
         return code;
     }
 
@@ -202,9 +201,9 @@ class Task {
             });
             this.loginResult = data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: userId=${data?.userId || ""} token=${maskToken(this.accessToken)}`);
+            L.ok("账号[" + this.index + "] 登录成功: userId=" + data?.userId || "" + " token=" + maskToken(this.accessToken) );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -221,10 +220,10 @@ class Task {
         try {
             const result = await this.request({ apiPath: "/pointsSign/config/query" });
             const data = result?.data || {};
-            $.log(`账号[${this.index}] 签到配置: ${Number(data.signEnable) === 1 ? "已开启" : "未开启"} 日签${data.signReward ?? ""}积分`);
+            L.info("账号[" + this.index + "] 签到配置: " + Number(data.signEnable) === 1 ? "已开启" : "未开启" + " 日签" + data.signReward ?? "" + "积分");
             return data;
         } catch (e) {
-            $.log(`账号[${this.index}] 获取签到配置失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 获取签到配置失败: " + e.message || e );
             return {};
         }
     }
@@ -237,10 +236,10 @@ class Task {
             });
             const list = Array.isArray(result?.data) ? result.data : [];
             const today = list.find((item) => item?.isToday) || {};
-            $.log(`账号[${this.index}] 今日签到状态: ${today.dateStr || ""} status=${today.daySignStatus ?? "未知"}`);
+            L.info("账号[" + this.index + "] 今日签到状态: " + (today.dateStr || "") + " status=" + (today.daySignStatus ?? "未知"));
             return today;
         } catch (e) {
-            $.log(`账号[${this.index}] 获取签到列表失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 获取签到列表失败: " + e.message || e );
             return {};
         }
     }
@@ -248,7 +247,7 @@ class Task {
     async getPointsInfo(label = "积分") {
         const result = await this.request({ apiPath: "/pointsSign/user/pointsInfo/query" });
         const data = result?.data || {};
-        $.log(`账号[${this.index}] ${label}: ${data.pointsNums ?? "未知"}积分 连签${data.seriesDays ?? 0}天 今日${data.signTodayResult ? "已签" : "未签"}`);
+        L.info("账号[" + this.index + "] " + label + ": " + data.pointsNums ?? "未知" + "积分 连签" + data.seriesDays ?? 0 + "天 今日" + data.signTodayResult ? "已签" : "未签" );
         return data;
     }
 
@@ -260,21 +259,23 @@ class Task {
                 params: { date },
             });
             const data = result?.data || {};
-            $.log(`账号[${this.index}] 签到成功: +${data.signReward ?? 0}积分${data.extraSignReward ? ` 额外+${data.extraSignReward}` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + (data.signReward ?? 0) + "积分" + (data.extraSignReward ? " 额外+" + data.extraSignReward : ""));
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|重复签到/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("梦想家", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

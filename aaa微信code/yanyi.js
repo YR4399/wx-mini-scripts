@@ -4,6 +4,7 @@ cron: 30 8 * * *
 */
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("妍伊签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -94,15 +95,15 @@ class Task {
     async login() {
         // 尝试缓存 token
         if (this.loadCache()) {
-            $.log(`账号[${this.index}] 使用缓存 token`);
+            L.info("账号[" + this.index + "] 使用缓存 token");
             const valid = await this.getUserInfo();
             if (valid) return true;
-            $.log(`账号[${this.index}] 缓存 token 失效，重新登录`);
+            L.fail("账号[" + this.index + "] 缓存 token 失效，重新登录");
             this.token = null;
         }
 
         const code = await this.getWxCode();
-        $.log(`账号[${this.index}] 获取 code 成功`);
+        L.ok("账号[" + this.index + "] 获取 code 成功");
 
         const resp = await axios.post(`${API_BASE}/appLogin`, {
             appType: 1,
@@ -117,7 +118,7 @@ class Task {
         this.userId = d.userId || d.ecode;
         this.nickName = d.nickName || "";
         this.saveCache();
-        $.log(`账号[${this.index}] 登录成功: ${this.nickName} 积分过期: ${d.expires_in || '?'}s`);
+        L.ok("账号[" + this.index + "] 登录成功: " + this.nickName + " 积分过期: " + d.expires_in || '?' + "s");
         return true;
     }
 
@@ -129,7 +130,7 @@ class Task {
             });
             return resp.data && resp.data.userId;
         } catch (e) {
-            $.log(`账号[${this.index}] 验证token: ${e.response?.status || e.message}`);
+            L.info("账号[" + this.index + "] 验证token: " + e.response?.status || e.message + "");
             return false;
         }
     }
@@ -157,15 +158,15 @@ class Task {
         const d = resp.data;
         if (d?.success) {
             const reward = d.data?.signReward || 0;
-            $.log(`账号[${this.index}] 签到成功 +${reward}积分`);
+            L.ok("账号[" + this.index + "] 签到成功 +" + reward + "积分");
             return reward;
         }
-        const err = d.error; if (err === -1 || err === "-1") { $.log('already signed today'); return 0; } const msg = err || d.msg || d.message || JSON.stringify(d);
+        const err = d.error; if (err === -1 || err === "-1") { L.info("already signed today"); return 0; } const msg = err || d.msg || d.message || JSON.stringify(d);
         if (msg && (msg.toString().includes("已签") || msg.toString().includes("signed"))) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return 0;
         }
-        $.log(`账号[${this.index}] 签到失败(${resp.status}): ${msg}`);
+        L.fail("账号[" + this.index + "] 签到失败(" + resp.status + "): " + msg + "");
         return 0;
     }
 
@@ -180,35 +181,37 @@ class Task {
 
     // ========== 主流程 ==========
     async run() {
-        $.log(`\n========== 妍伊 账号[${this.index}] ${this.openid.slice(0, 8)}*** ==========`);
+        L.info("\n========== 妍伊 账号[" + this.index + "] " + this.openid.slice(0, 8) + "*** ==========");
         
         await this.login();
         const pointsBefore = await this.getPoints();
-        $.log(`账号[${this.index}] 当前积分: ${pointsBefore}`);
+        L.info("账号[" + this.index + "] 当前积分: " + pointsBefore + "");
 
         // 签到
         const signReward = await this.sign();
 
         // 查询任务
-        let tasks = []; try { tasks = await this.getTaskList(); } catch (e) { $.log(`账号[${this.index}] 获取任务列表失败: ${e.response?.status || e.message}`); }
+        let tasks = []; try { tasks = await this.getTaskList(); } catch (e) { L.fail("账号[" + this.index + "] 获取任务列表失败: " + e.response?.status || e.message + ""); }
         if (tasks.length > 0) {
-            $.log(`账号[${this.index}] 发现 ${tasks.length} 个任务`);
+            L.info("账号[" + this.index + "] 发现 " + tasks.length + " 个任务");
         }
 
         const pointsAfter = await this.getPoints();
-        $.log(`账号[${this.index}] 签到后积分: ${pointsAfter}`);
-        $.log(`账号[${this.index}] 任务完成`);
+        L.info("账号[" + this.index + "] 签到后积分: " + pointsAfter + "");
+        L.info("账号[" + this.index + "] 任务完成");
     }
 }
 
 // ========== 主入口 ==========
 !(async () => {
+  sectionLine("燕燕", "");
+$.userIdx = 0;
     $.checkEnv(ckName);
     const accounts = $.userList;
-    $.log(`共找到${accounts.length}个账号`);
+    L.info("共找到" + accounts.length + "个账号");
 
     for (let i = 0; i < accounts.length; i++) {
-        try { await new Task(accounts[i], i + 1).run(); } catch (e) { $.log(`账号[${i+1}] 异常: ${e.response?.status || e.message || e}`); }
+        try { await new Task(accounts[i], i + 1).run(); } catch (e) { L.fail("账号[" + i+1 + "] 异常: " + e.response?.status || e.message || e + ""); }
         if (i < accounts.length - 1) await $.wait(3000 + Math.random() * 5000);
     }
 })().catch((e) => $.log(e.message || e))

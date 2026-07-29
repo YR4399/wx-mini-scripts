@@ -33,6 +33,9 @@ const $ = {
     done: () => process.exit(0)
 };
 
+// 清空系统代理(容器有172.23.224.1:7890代理会拦截请求)
+["HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all_proxy"].forEach(k => process.env[k] = "");
+
 const CK_NAME = "qqpcmgr";
 const WX_SERVER_URL = (process.env.wx_server_url || "").replace(/\/$/, "");
 const WX_AUTH = process.env.wx_auth || "";
@@ -45,9 +48,10 @@ function generateGuid(account) {
     const hash = require('crypto').createHash('md5').update(String(account)).digest('hex');
     return hash.slice(0, 32);
 }
-const SDIAID = process.env.qqpcmgr_sdiaid || "2025121719435311737";
+// 天天惊喜(monthly)池 sdi_aid，也是 getLotteryStatus/doLottery 的默认池
+const SDIAID = process.env.qqpcmgr_sdiaid || "2025121115391911962";
 const LOTTERY_ID = process.env.qqpcmgr_lid || "Lottery2";
-const VERSION = process.env.qqpcmgr_version || "18.2.30612.301";
+const VERSION = process.env.qqpcmgr_version || "18.2.30648.204";
 const COMPUTER_NAME = process.env.qqpcmgr_computer || "DESKTOP-6S9P0IV";
 const USER_AGENT =
     process.env.qqpcmgr_ua ||
@@ -61,8 +65,12 @@ const LOTTERIES = process.env.qqpcmgr_lotteries
     : ["Lottery2"];
 const FORCE_LOTTERY = process.env.qqpcmgr_force_lottery === "true";
 const ENABLE_COMMENTS = process.env.qqpcmgr_comments !== "false";
-const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 10;
+const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 3;
 const COMMENT_CONTENTS = ["好用","非常实用","功能强大","推荐使用","很好用","速度很快","操作简单","体验不错","非常满意","值得推荐","简单易用","功能齐全","运行流畅","很喜欢","方便快捷"];
+// 抓包确认: 真实 App 只评论 softId=57289 (/softwareDetail/57289 发布评论返回 code=0)
+const COMMENT_SOFTID = parseInt(process.env.qqpcmgr_comment_softid) || 57289;
+const COMMENT_MIN_DELAY = parseInt(process.env.qqpcmgr_comment_min_delay) || 8000;
+const COMMENT_MAX_DELAY = parseInt(process.env.qqpcmgr_comment_max_delay) || 12000;
 const QQPCMGR_CLIENT_VER = "18.2.30648.204";
 
 function splitAccounts(raw = "") {
@@ -284,7 +292,7 @@ function normalizeProfile(payload, guid) {
     };
 }
 
-async function createAuth(profile, cookie) {
+async function createAuth(profile, cookie, sdiAid) {
     const { data, status } = await axios.request({
         method: "POST",
         url: "https://sdi.m.qq.com/public/auth/create",
@@ -292,7 +300,7 @@ async function createAuth(profile, cookie) {
             "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "sec-ch-ua": '"Chromium";v="109"',
-            sdiaid: SDIAID,
+            sdiaid: sdiAid || SDIAID,
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             Origin: "https://sdi.3g.qq.com",
@@ -322,7 +330,7 @@ async function createAuth(profile, cookie) {
     return { status, data };
 }
 
-async function getLotteryStatus(sessionKey, cookie, lotteryId = LOTTERY_ID) {
+async function getLotteryStatus(sessionKey, cookie, lotteryId = LOTTERY_ID, sdiaidHeader) {
     const { data, status } = await axios.request({
         method: "GET",
         url: `https://sdi.m.qq.com/private/lottery/lotteryStatus?lid=${lotteryId}`,
@@ -330,7 +338,7 @@ async function getLotteryStatus(sessionKey, cookie, lotteryId = LOTTERY_ID) {
             "User-Agent": USER_AGENT,
             "sec-ch-ua": '"Chromium";v="109"',
             sessionkey: sessionKey,
-            sdiaid: SDIAID,
+            sdiaid: sdiaidHeader || SDIAID,
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             Origin: "https://sdi.3g.qq.com",
@@ -369,7 +377,7 @@ async function doLottery(sessionKey, cookie, lotteryId = LOTTERY_ID, sdiaidHeade
             "Accept-Language": "zh-CN,zh;q=0.9",
             Cookie: cookie,
         },
-        data: { lid: "Lottery2" },
+        data: { lid: lotteryId },
         timeout: 20000,
         validateStatus: () => true,
     });
@@ -427,29 +435,47 @@ async function postComment(cookie, profile, softId, content, score) {
 
 async function runSoftwareComments(cookie, profile, index, displayName) {
   if (!ENABLE_COMMENTS) { $.log("Comment disabled"); return 0; }
-  const cf = path.join(__dirname, ".cache", "qqpcmgr_comment_offset.json");
-  let offsets = {}; try { offsets = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
-  const key = profile.openid || "account_"+index;
-  let nextId = offsets[key] || 27026;
+
+  // 防止账号后续环节(抽奖等)异常触发整段重试时，重复评论快速耗尽账号评论配额
+  globalThis._commentedAccounts = globalThis._commentedAccounts || new Set();
+  if (globalThis._commentedAccounts.has(index)) {
+    $.log(`[账号${index}] [${displayName}] 本进程已评论过，跳过（避免重试重复评论）`);
+    return 0;
+  }
+
+  // 仅当评论类任务仍处于待完成时才评论；任务已完成/不存在则跳过，节省配额
+  const pending = globalThis._commentTaskPending ? globalThis._commentTaskPending[index] : undefined;
+  if (pending === false) {
+    $.log(`[账号${index}] [${displayName}] 评论任务已完成/不存在，跳过评论`);
+    return 0;
+  }
+
+  // 抓包确认: 真实 App 固定评论 softId=COMMENT_SOFTID (57289), 不停遍历会导致 3020
+  const sid = COMMENT_SOFTID;
   let ok = 0, fail = 0;
-  $.log("Commenting (max "+MAX_COMMENTS+", start "+nextId+")...");
+  $.log(`[账号${index}] [${displayName}] Commenting on softId=${sid} (max ${MAX_COMMENTS}, 慢速)`);
   for (let i = 0; i < MAX_COMMENTS; i++) {
-    const sid = nextId++;
     const txt = COMMENT_CONTENTS[Math.floor(Math.random()*COMMENT_CONTENTS.length)];
     const scr = Math.floor(Math.random()*2)+4;
     const r = await postComment(cookie, profile, sid, txt, scr);
-    if (r && r.code === 0) {
-      ok++; fail=0; offsets[key] = sid + 1;
-      try { fs.writeFileSync(cf, JSON.stringify(offsets)); } catch {}
-      $.log("  OK "+(i+1)+": sid="+sid+", score="+scr);
-      await new Promise(r => setTimeout(r, 2000+Math.random()*1000));
+    const ec = r && r.code;
+    if (ec === 0) {
+      ok++; fail = 0;
+      $.log(`[账号${index}] [${displayName}]   ✅ OK ${i+1}: sid=${sid}, score=${scr} "${txt}"`);
     } else {
-      const ec = (r && r.code) || "?"; fail++;
-      $.log("  FAIL "+(i+1)+": sid="+sid+" code="+ec);
-      if (fail >= 30) { $.log("  Stopped"); break; }
+      fail++;
+      $.log(`[账号${index}] [${displayName}]   ❌ FAIL ${i+1}: sid=${sid} code=${ec ?? "?"} ${r && r.message ? "| " + r.message : ""}`);
+      if (ec === 3020) { $.log(`[账号${index}] [${displayName}]   ⚠️ softId=${sid} 不支持/已达评论上限，停止`); break; }
+      if (fail >= 3) { $.log(`[账号${index}] [${displayName}]   ⚠️ 连续失败过多，停止`); break; }
     }
+    // 每条都慢速间隔, 避免风控 (用户要求慢一点)
+    const d = COMMENT_MIN_DELAY + Math.random() * (COMMENT_MAX_DELAY - COMMENT_MIN_DELAY);
+    $.log(`[账号${index}] [${displayName}]   ⏳ 等待 ${Math.round(d/1000)}s`);
+    await sleep(d);
   }
-  $.log("Done: "+ok+"/"+MAX_COMMENTS);
+  $.log(`[账号${index}] [${displayName}] 评论完成: ${ok}/${MAX_COMMENTS}`);
+  if (ok > 0) globalThis._commentedAccounts.add(index);
+  return ok;
 }
 
 async function doTaskReport(profile, cookie, taskId, taskName) {
@@ -493,6 +519,182 @@ async function doTaskReport(profile, cookie, taskId, taskName) {
         validateStatus: () => true,
     });
     return { status, data };
+}
+
+// ====== 活动任务执行 ======
+
+const DO_ACTIVITY_TASKS = process.env.qqpcmgr_activity_tasks !== "false";
+
+async function getActivityTasks(profile, cookie) {
+    // 活动任务列表可能来自不同的接口
+    // 尝试从 luban 获取活动任务
+    const urls = [
+        "https://luban.m.qq.com/api/public/pcmgr/v2-rights?action=getActivityTasks"
+    ];
+    for (const url of urls) {
+        try {
+            const { data, status } = await axios.request({
+                method: "GET", url,
+                headers: {
+                    "User-Agent": USER_AGENT,
+                    "sec-ch-ua": '"Chromium";v="109"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                    Origin: "https://webcdn.m.qq.com",
+                    "Sec-Fetch-Site": "same-site",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Dest": "empty",
+                    Referer: "https://webcdn.m.qq.com/",
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    Cookie: cookie,
+                },
+                timeout: 20000,
+                validateStatus: () => true,
+            });
+            if (status === 200) return { status, data, url };
+        } catch (e) {}
+    }
+    return { status: 0, data: null, url: "" };
+}
+
+async function completeTask(taskId, taskName, profile, cookie, index, displayName) {
+    // 尝试通过 luban API 完成任务
+    const { data, status } = await axios.request({
+        method: "POST",
+        url: "https://luban.m.qq.com/api/public/pcmgr/v2-rights/completeTask",
+        headers: {
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            "sec-ch-ua": '"Chromium";v="109"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            Origin: "https://webcdn.m.qq.com",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            Referer: "https://webcdn.m.qq.com/",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            Cookie: cookie,
+        },
+        data: {
+            taskId: String(taskId),
+            taskName: taskName,
+            accountid: profile.account,
+            loginkey: profile.loginKey,
+            commonid: profile.commonid || profile.openid,
+            client_guid: profile.guid,
+            acctype: 2,
+        },
+        timeout: 20000,
+        validateStatus: () => true,
+    });
+    return { status, data };
+}
+
+async function doActivityTask(taskId, taskName, profile, cookie, sessionKey, index, displayName) {
+    $.log(`[账号${index}] [${displayName}]   🏃 执行活动任务 [${taskName}]`);
+
+    // 1. 先上报任务事件
+    try {
+        await doTaskReport(profile, cookie, taskId, taskName);
+    } catch (e) {}
+
+    // 2. 尝试完成任务
+    const result = await completeTask(taskId, taskName, profile, cookie, index, displayName);
+    if (result.status === 200 && result.data?.ret === 0) {
+        $.log(`[账号${index}] [${displayName}]   ✅ 活动任务 [${taskName}] 完成!`);
+        return true;
+    }
+
+    // 3. 如果 luban API 失败，尝试直接通过 jprx 完成任务
+    try {
+        const { data, status } = await axios.request({
+            method: "POST",
+            url: "https://jprx.m.qq.com/data/3092/forward",
+            headers: {
+                "User-Agent": USER_AGENT,
+                "Content-Type": "application/json",
+                "sec-ch-ua": '"Chromium";v="109"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                Origin: "https://webcdn.m.qq.com",
+                "Sec-Fetch-Site": "same-site",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+                Referer: "https://webcdn.m.qq.com/",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                Cookie: cookie,
+            },
+            data: JSON.stringify({
+                req: {
+                    task_id: taskId,
+                    accountid: profile.account,
+                    loginkey: profile.loginKey,
+                    commonid: profile.commonid || profile.openid,
+                    client_guid: profile.guid,
+                    acctype: 2,
+                },
+            }),
+            timeout: 20000,
+            validateStatus: () => true,
+        });
+        if (status === 200) {
+            $.log(`[账号${index}] [${displayName}]   ✅ 活动任务 [${taskName}] 通过 jprx 完成`);
+            return true;
+        }
+    } catch (e) {}
+
+    $.log(`[账号${index}] [${displayName}]   ⚠️ 活动任务 [${taskName}] 可能失败 (API 可能不支持直接完成)`);
+    return false;
+}
+
+async function runActivityTasks(sessionKey, cookie, profile, index, displayName) {
+    if (!DO_ACTIVITY_TASKS) { $.log(`[账号${index}] [${displayName}] 活动任务已禁用`); return; }
+    
+    $.log(`[账号${index}] [${displayName}] 获取活动任务列表...`);
+    
+    // 从任务列表获取活动任务 (已有的 getTasks 接口)
+    const taskList = await getTasks(profile, cookie);
+    if (taskList.status !== 200 || taskList.data?.ret !== 0) {
+        $.log(`[账号${index}] [${displayName}] 获取任务列表失败，跳过活动任务`);
+        return;
+    }
+    
+    const resp = taskList.data?.data?.resp;
+    if (!resp || resp.result !== 0) return;
+    
+    const tasks = resp.item_list || [];
+    
+    // 筛选出可点击且未完成的任务，但排除设置类任务 (task_type 3)
+    const activityTasks = tasks.filter(t => 
+        t.can_click === true && 
+        (!t.status_text || !t.status_text.includes("已完成")) &&
+        t.task_type !== 3
+    );
+    
+    if (activityTasks.length === 0) {
+        $.log(`[账号${index}] [${displayName}] 没有待完成的活动任务`);
+        return;
+    }
+    
+    $.log(`[账号${index}] [${displayName}] 找到 ${activityTasks.length} 个待完成的活动任务`);
+    
+    let done = 0;
+    for (const task of activityTasks) {
+        const ok = await doActivityTask(task.task_id, task.task_desc || "未知任务", 
+            profile, cookie, sessionKey, index, displayName);
+        if (ok) done++;
+        await sleep(1000 + Math.random() * 1000);
+    }
+    
+    $.log(`[账号${index}] [${displayName}] 活动任务完成: ${done}/${activityTasks.length}`);
+    
+    // 完成活动任务后重新获取一次任务列表，看成长值是否变化
+    const updated = await getTasks(profile, cookie);
+    if (updated.status === 200 && updated.data?.data?.resp) {
+        const newResp = updated.data.data.resp;
+        $.log(`[账号${index}] [${displayName}] 更新后成长值: ${newResp.total_growth_value} Lv.${newResp.curr_lv}`);
+    }
 }
 
 async function validateCookie(cookie) {
@@ -584,6 +786,9 @@ async function runAccount(account, index, remark = "") {
 
     await runSoftwareComments(cookie, profile, index, displayName);
 
+    // 执行活动任务
+    await runActivityTasks(sessionKey, cookie, profile, index, displayName);
+
     await runHomeConfig(cookie, index, displayName);
     const userLevel = globalThis.lubanConfig?.[index]?.userLevel || 0;
     const lotteries = await runLotteries(sessionKey, cookie, index, displayName, profile);
@@ -615,7 +820,13 @@ async function runTasks(sessionKey, cookie, profile, index, displayName = "") {
     $.log(`[账号${index}] [${displayName}] 升级还需: ${resp.next_lv_still_need_num} 成长值 (进度 ${resp.next_lv_progress}%)`);
 
     const tasks = resp.item_list || [];
-    $.log(`[账号${index}] [${displayName}] 获取到 ${tasks.length} 个任务:`);
+    // 记录评论类任务是否仍处于待完成，供 runSoftwareComments 判断是否值得评论
+    globalThis._commentTaskPending = globalThis._commentTaskPending || {};
+    globalThis._commentTaskPending[index] = tasks.some(t =>
+        (t.task_desc || "").includes("评论") &&
+        t.can_click === true &&
+        !(t.status_text || "").includes("已完成"));
+    $.log(`[账号${index}] [${displayName}] 获取到 ${tasks.length} 个任务 (评论任务待完成: ${globalThis._commentTaskPending[index]})`);
     
     let completedCount = 0;
     let availableCount = 0;
@@ -676,16 +887,17 @@ async function runHomeConfig(cookie, index, displayName = "") {
     }
 
     const levelLotteries = config.data?.level || [];
-    const dailyLotteries = config.data?.daily || [];
+    // 真实响应中"天天惊喜"在 monthly 数组(autoHide:true)，daily 字段通常为空
+    const dailyLotteries = config.data?.daily || config.data?.monthly || [];
     
     $.log(`[账号${index}] [${displayName}] 等级抽奖模块: ${levelLotteries.length} 个`);
     for (const lv of levelLotteries) {
         $.log(`[账号${index}] [${displayName}]   - ${lv.title} (Lv.${lv.min_level}-${lv.max_level}, sdi_aid=${lv.sdi_aid}, pool=${lv.adi_draw_pool_id})`);
     }
     
-    $.log(`[账号${index}] [${displayName}] 每日抽奖模块: ${dailyLotteries.length} 个`);
+    $.log(`[账号${index}] [${displayName}] 每日抽奖模块(含天天惊喜): ${dailyLotteries.length} 个`);
     for (const daily of dailyLotteries) {
-        $.log(`[账号${index}] [${displayName}]   - ${daily.title} (aid=${daily.aid}, pool=${daily.draw_pool_id})`);
+        $.log(`[账号${index}] [${displayName}]   - ${daily.title} (sdi_aid=${daily.sdi_aid}, pool=${daily.draw_pool_id || daily.adi_draw_pool_id})`);
     }
     
     globalThis.lubanConfig = globalThis.lubanConfig || {};
@@ -696,20 +908,32 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     $.log(`[账号${index}] [${displayName}] 🎲 ${lotteryName}`);
     
     if (lotteryType === "等级抽奖") {
-                // level pool: getLotteryStatus with pool sessionKey (like 10:03)
-        const pa = await createAuth(profile, cookie, sdiAid || lotteryId);
+        // 抓包确认: 真实 App 所有抽奖 lid 均为 Lottery2, 靠 sdiaid 表头区分奖池
+        const pa = await createAuth(profile, cookie, sdiAid || SDIAID);
         const lk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
-        const st = await getLotteryStatus(lk, cookie, lotteryId);
-        if (st.status === 200 && st.data?.code === 0) {
-          if (st.data.message) { $.log("   " + st.data.message); return { name: lotteryName, type: lotteryType, status: st.status, data: st.data }; }
+        const st = await getLotteryStatus(lk, cookie, "Lottery2", sdiAid || SDIAID);
+        if (st.status !== 200 || st.data?.code !== 0) {
+            const code = st.data?.code;
+            if (code === -10) throw new Error(`LOGIN_EXPIRED:${st.data?.message || "登录态过期"}`);
+            $.log(`[账号${index}] [${displayName}]   ❌ 获取状态失败: ${st.data?.message || "未知错误"}`);
+            return { name: lotteryName, type: lotteryType, status: st.status, data: st.data };
         }
-        const lottery2 = await doLottery(lk, cookie, lotteryId, sdiAid || lotteryId);
+        const sd = st.data.data || {};
+        if (sd.drawLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 已达抽奖上限`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达抽奖上限", data: {} } }; }
+        if (sd.winLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 已达中奖上限`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达中奖上限", data: {} } }; }
+        if (!sd.canReceive && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 当前不可抽奖`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "当前不可抽奖", data: {} } }; }
+        const lottery2 = await doLottery(lk, cookie, "Lottery2", sdiAid || SDIAID);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
         $.log("   " + result2);
         return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
     }
 
-    const status = await getLotteryStatus(sessionKey, cookie, lotteryId);
+    // 所有抽奖 lid 均为 Lottery2，靠 sdiaid 表头区分奖池（含天天惊喜）。
+    // 注意：此处不能用 lotteryId（那是 draw_pool_id 如 26WX_ttjx），否则 doLottery 返回异常响应。
+    // 按当前池 sdiAid 重新 createAuth 获取对应 sessionKey（与等级抽奖分支一致，避免跨池 session 不匹配）
+    const pa = await createAuth(profile, cookie, sdiAid || SDIAID);
+    const lk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
+    const status = await getLotteryStatus(lk, cookie, LOTTERY_ID, sdiAid || SDIAID);
     
     if (status.status !== 200 || status.data?.code !== 0) {
         const code = status.data?.code;
@@ -755,7 +979,7 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
         };
     }
     
-    const lottery = await doLottery(sessionKey, cookie, lotteryId);
+    const lottery = await doLottery(lk, cookie, LOTTERY_ID, sdiAid || SDIAID);
     const result = formatLotteryResult({ status: lottery.status, data: lottery.data });
     $.log(`[账号${index}] [${displayName}]   ${result}`);
     
@@ -796,17 +1020,18 @@ async function runLotteries(sessionKey, cookie, index, displayName = "", profile
             
             if (luban.dailyLotteries && luban.dailyLotteries.length > 0) {
                 for (const daily of luban.dailyLotteries) {
-                    const drawPoolId = daily.draw_pool_id;
-                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, daily.title, "每日抽奖", index, displayName, profile);
+                    const drawPoolId = daily.draw_pool_id || daily.adi_draw_pool_id;
+                    const result = await runSingleLottery(sessionKey, cookie, drawPoolId, daily.title, "每日抽奖", index, displayName, profile, daily.sdi_aid);
                     results.push(result);
                     await sleep(1500);
                 }
             } else {
-                const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName, profile);
+                // 兜底：真实天天惊喜池 sdi_aid=2025121115391911962
+                const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName, profile, SDIAID);
                 results.push(result);
             }
         } else {
-            const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName, profile);
+            const result = await runSingleLottery(sessionKey, cookie, "Lottery2", "天天惊喜", "每日抽奖", index, displayName, profile, SDIAID);
             results.push(result);
         }
     }
@@ -841,12 +1066,11 @@ function formatLotteryResult(result) {
         const prize = d.prize || d.giftName || d.name || "";
         if (prize) { return "🎉 " + prize; }
         if (d.leftChance && Object.keys(d.leftChance).length === 0 && data.code === 0) {
-            return "⏭️ 今日已抽奖";
+            return "✅ 已抽奖";
         }
         if (data.message && data.message.includes("已达") && data.message.includes("上限")) { return "⏭️ " + data.message; }
         if (data.message && data.message.includes("当前不可")) { return "⏭️ " + data.message; }
         if (data.code !== 0 && data.message) {
-            if (data.message.includes("活动id:") || data.message.includes("日志id")) { return "✅ 已抽奖"; }
             return "💫 " + data.message;
         }
         return "✅ 完成";

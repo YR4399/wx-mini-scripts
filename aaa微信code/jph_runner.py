@@ -10,491 +10,384 @@ except ImportError:
         return False
 # ========== 推送通知结束 ==========
 
-#!/usr/bin/env python3
-"""君品荟签到+花园 - 支持从宿主机或容器内运行
-滑块验证码: 本地模板匹配 + AES-ECB 加密
-花园功能: sessionKey保存、签到、高粱收获
+"""君品荟商城签到 - 仅商城签到功能
+- 签到检测: POST /api/customer/daily/checkTodaySignIn
+- 签到执行: POST /api/customer/daily/fillSignIn (需滑块验证)
+- 滑块: /api/captcha/get → 2captcha 识别 → /api/captcha/check → fillSignIn
 """
-import os, sys, subprocess
+import os, sys, subprocess, json, time, base64, io
 for _k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
     os.environ.pop(_k, None)
 os.environ['NO_PROXY'] = '*'
 
-def _ensure(pkg, pip_name=None):
-    try:
-        __import__(pkg)
-    except ImportError:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pip_name or pkg, '-q', '--break-system-packages'])
-_ensure('numpy'); _ensure('scipy'); _ensure('PIL', 'Pillow'); _ensure('requests'); _ensure('Crypto', 'pycryptodome')
-
-import json, time, io
-import numpy as np
 import requests
-from PIL import Image
-from scipy.signal import correlate2d
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-
 requests.packages.urllib3.disable_warnings()
 
 APPID = 'wx8d41cdc44c8aeaab'
 BASE = 'https://fm.exijiu.com'
-GARDEN_BASE = 'https://apimallwm.exijiu.com'
-ENABLE_GARDEN = False  # 花园改由 junpinhui.js 执行
-ENABLE_GARDEN = False  # 花园改由 junpinhui.js 执行
 AUTH_BASIC = 'Basic d2VjaGF0OndlY2hhdF9zZWNyZXQ='
-WCS_AUTH = '976dc5b3977cd2cbb8c61ddd32e9f885'
+WCS_LOCAL = 'http://host.docker.internal:18788'
 WCS_INTERNAL = 'http://172.17.0.3:8787'
+WCS_AUTH = '1509ea7aca117dcbb7e635c0c007d528'
+TWOCAPTCHA_KEY = '56c8245006ed3a5bbd407639dbc7cf8c'
+# AES 加密密钥
+AES_KEY = '7d3a8b9f2c1e5d4a'.encode()
 
 ACCOUNTS = [
-    ('owNAX6j83m4TzrbIA5R3iNXM1iY0', '陌白'),
-    ('owNAX6ue8pWjcCwrfF-A3M9pgMNw', '陌白白'),
-    ('owNAX6vYHRZK81cK3dEFTonp9RzA', 'ww'),
+    ('oLvh-0ydiGAnlYBAVXbouPVAxXN4', '陌白'),
+    ('oLvh-06JSe-78wETfzEs0o0cPAJU', '陌白白'),
+    ('oLvh-07UPzQLJuCGIanokS7cdggM', 'ww'),
 ]
 
+UA = ('Mozilla/5.0 (Linux; Android 14; 2106118C Build/UKQ1.231003.002; wv) '
+      'AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/146.0.7680.178 '
+      'Mobile Safari/537.36')
+
+def _headers(token=None):
+    """构建请求头 — 不设置 Accept-Encoding，避免 brotli 压缩导致解析失败"""
+    h = {
+        'Content-Type': 'application/json; charset=utf-8',
+        'User-Agent': UA,
+        'Referer': f'https://servicewechat.com/{APPID}/218/page-frame.html',
+        'AppID': APPID,
+        'App-Version': '1.7',
+        'Authorization': AUTH_BASIC,
+    }
+    if token:
+        h['X-Access-Token'] = token
+    return h
+
+# ============================================================
+# WCS 登录
+# ============================================================
+def _get_wcs_url():
+    for url in [WCS_INTERNAL, WCS_LOCAL]:
+        try:
+            r = requests.post(f'{url}/wx/code', json={'openid': '__probe__'},
+                              headers={'auth': WCS_AUTH, 'Content-Type': 'application/json'},
+                              timeout=3, proxies={'http': None, 'https': None})
+            if r.status_code == 200:
+                return url
+        except Exception:
+            continue
+    return WCS_LOCAL
 
 def get_wx_code(openid):
+    wcs_url = _get_wcs_url()
     body = {"openid": openid, "appid": APPID}
-    body_str = json.dumps(body)
     try:
-        cmd = f'wget -qO- --no-proxy --timeout=15 --post-data=\'{body_str}\' --header="auth: {WCS_AUTH}" --header="Content-Type: application/json" {WCS_INTERNAL}/wx/code'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30, encoding='utf-8', errors='replace')
-        if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout)
-            if data.get('status') and data.get('data', {}).get('code'):
-                return data['data']['code']
-    except Exception:
-        pass
-    try:
-        r = requests.post(f'{WCS_INTERNAL}/wx/code', json=body,
+        r = requests.post(f'{wcs_url}/wx/code', json=body,
                           headers={'auth': WCS_AUTH, 'Content-Type': 'application/json'},
-                          timeout=30, proxies={'http': None, 'https': None})
+                          timeout=15, proxies={'http': None, 'https': None})
         data = r.json()
-        if data.get('status') and data.get('data', {}).get('code'):
+        if data.get('status') and isinstance(data.get('data'), dict) and data['data'].get('code'):
             return data['data']['code']
-    except Exception:
-        pass
+        if data.get('success') and isinstance(data.get('data'), dict) and data['data'].get('code'):
+            return data['data']['code']
+        print(f'  ⚠️ code 返回: {json.dumps(data, ensure_ascii=False)[:200]}')
+    except Exception as e:
+        print(f'  ❌ code 请求失败: {e}')
     return None
 
-
 def login(code):
-    h = {'Content-Type': 'application/json', 'appid': APPID, 'authorization': AUTH_BASIC, 'app-version': '1.0.0'}
-    r = requests.post(f'{BASE}/api/v2/login/wxMiniSilentLogin', json={'code': code}, headers=h, timeout=15, verify=False)
-    d = r.json()
-    if d.get('success'):
-        return d['data']['token'], d['data'].get('phone', '')
+    try:
+        r = requests.post(f'{BASE}/api/v2/login/wxMiniSilentLogin', json={'code': code},
+                          headers=_headers(), timeout=30, verify=False)
+        d = r.json()
+        if d.get('success'):
+            return d['data']['token'], d['data'].get('phone', '')
+        msg = d.get('message', '未知')
+        print(f'  ⚠️ 登录失败: {msg}')
+    except Exception as e:
+        print(f'  ❌ 登录异常: {e}')
     return None, None
 
-
-def make_h(token):
-    return {'X-Access-Token': token, 'Content-Type': 'application/json', 'appid': APPID, 'authorization': AUTH_BASIC, 'app-version': '1.0.0'}
-
-
+# ============================================================
+# 商城签到
+# ============================================================
 def check_sign(token):
-    r = requests.post(f'{BASE}/api/customer/daily/checkTodaySignIn', json={}, headers=make_h(token), timeout=15, verify=False)
-    return r.json().get('data', False)
+    """检查今日是否已签到"""
+    try:
+        r = requests.post(f'{BASE}/api/customer/daily/checkTodaySignIn', json={},
+                          headers=_headers(token), timeout=10, verify=False)
+        d = r.json()
+        if d.get('success'):
+            # data 是布尔值: True=已签到, False=未签到
+            return bool(d.get('data', False))
+    except Exception as e:
+        print(f'  ⚠️ 签到状态异常: {e}')
+    return False
+
+def aes_encrypt_ecb(data_dict, secret_key):
+    """AES-ECB 加密 - 与 JS 脚本一致"""
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import pad
+        key = (secret_key or AES_KEY)[:16]
+        if len(key) != 16:
+            key = key[:16].ljust(16, b'\0')
+        data_str = json.dumps(data_dict, separators=(',', ':'), ensure_ascii=False)
+        data_bytes = data_str.encode('utf-8')
+        cipher = AES.new(key, AES.MODE_ECB)
+        encrypted = cipher.encrypt(pad(data_bytes, 16))
+        return base64.b64encode(encrypted).decode('utf-8')
+    except ImportError:
+        print('  ⚠️ pycryptodome 未安装，无法加密')
+        return None
+    except Exception as e:
+        print(f'  ⚠️ 加密异常: {e}')
+        return None
+
+def _submit_2captcha(image_path):
+    """上传文件到 2captcha 获取验证码 ID
+    返回 (captcha_id, None) 或 (None, error_msg)
+    """
+    try:
+        with open(image_path, 'rb') as f:
+            r = requests.post('https://2captcha.com/in.php',
+                              data={'key': TWOCAPTCHA_KEY, 'method': 'normal', 'softid': '234'},
+                              files={'file': (os.path.basename(image_path), f, 'image/png')},
+                              timeout=45)
+        txt = r.text.strip()
+        if txt.startswith('OK|'):
+            return txt.split('|')[1], None
+        return None, txt
+    except Exception as e:
+        return None, str(e)
 
 
-def detect_gap(bg_b64, slider_b64):
-    import base64 as b64
-    bg = np.array(Image.open(io.BytesIO(b64.b64decode(bg_b64))).convert('L'))
-    if slider_b64:
-        sl = np.array(Image.open(io.BytesIO(b64.b64decode(slider_b64))).convert('L'))
-        bg_n = (bg - bg.mean()) / (bg.std() + 1e-6)
-        sl_n = (sl - sl.mean()) / (sl.std() + 1e-6)
-        corr = correlate2d(bg_n, sl_n, mode='valid')
-        return int(np.unravel_index(np.argmax(corr), corr.shape)[1])
-    from scipy import ndimage
-    edge = np.abs(ndimage.sobel(bg, axis=1)).mean(axis=0)
-    edge[:50] = 0
-    return int(np.argmax(edge))
+def _poll_2captcha(captcha_id, timeout=120):
+    """轮询 2captcha 获取识别结果
+    返回 (x_coord, None) 或 (None, error_msg)
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            r = requests.get(f'https://2captcha.com/res.php',
+                             params={'key': TWOCAPTCHA_KEY, 'action': 'get', 'id': captcha_id},
+                             timeout=45)
+            txt = r.text.strip()
+            if txt.startswith('OK|'):
+                result = txt.split('|')[1]
+                # 2captcha 返回的是文本，对于缺口图片就是 X 坐标数字
+                try:
+                    return int(result.strip()), None
+                except ValueError:
+                    return None, f'无法解析结果: {result}'
+            elif txt == 'CAPTCHA_NOT_READY':
+                time.sleep(5)
+                continue
+            else:
+                return None, txt
+        except Exception as e:
+            return None, str(e)
+    return None, 'timeout'
 
 
 def solve_captcha(token):
-    h = make_h(token)
-    r = requests.post(f'{BASE}/api/captcha/get', json={}, headers=h, timeout=15, verify=False)
-    d = r.json()
-    if not d.get('success'):
-        return None
-    rd = d['data']['repData']
-    ct, sk = rd['token'], rd['secretKey']
-    x = detect_gap(rd['originalImageBase64'], rd.get('jigsawImageBase64', ''))
-    print(f"  缺口: x={x}")
-    import base64
-    pd = json.dumps({"x": round(x), "y": 5, "t": int(time.time()*1000), "sk": sk[:16]}, separators=(',',':'))
-    enc = base64.b64encode(AES.new(sk.encode(), AES.MODE_ECB).encrypt(pad(pd.encode(), 16))).decode()
-    r2 = requests.post(f'{BASE}/api/captcha/check', json={'token': ct, 'pointJson': enc}, headers=h, timeout=15, verify=False)
-    if r2.json().get('data',{}).get('success'):
-        print("  ✅ 验证码通过")
-        return ct
-    print(f"  ❌ 验证码失败: {r2.json().get('data',{}).get('repMsg','')}")
-    return None
+    """滑块验证码完整流程: get → 2captcha识别 → check"""
+    try:
+        # Step 1: 获取滑块图片
+        r = requests.post(f'{BASE}/api/captcha/get', json={'captchaType': 'blockPuzzle'},
+                          headers=_headers(token), timeout=20, verify=False)
+        d = r.json()
+        if not d.get('success'):
+            msg = d.get('message', '')
+            if '频繁' in msg or '10分钟' in msg:
+                print('  ⚠️ 接口限流，等待后重试...')
+                time.sleep(10)
+                return solve_captcha(token)
+            print(f'  ⚠️ 获取滑块失败: {msg}')
+            return False
 
+        rep_data = d['data'].get('repData', {})
+        captcha_token = rep_data.get('token', '')
+        secret_key = rep_data.get('secretKey', '')
+        back_img_b64 = rep_data.get('originalImageBase64', '')
+        slide_img_b64 = rep_data.get('jigsawImageBase64', '')
+
+        if not captcha_token or not back_img_b64:
+            print('  ⚠️ 滑块数据不完整')
+            return False
+
+        # Step 2: 拼接图片提交 2captcha
+        try:
+            from PIL import Image
+            back_data = base64.b64decode(back_img_b64)
+            slide_data = base64.b64decode(slide_img_b64)
+            back_img = Image.open(io.BytesIO(back_data)).convert('RGB')
+            slide_img = Image.open(io.BytesIO(slide_data)).convert('RGB')
+
+            # 缩小滑块图放在背景图下方，方便工人识别
+            slide_small = slide_img.resize((back_img.width // 3, slide_img.height // 3))
+            combined = Image.new('RGB', (back_img.width, back_img.height + slide_small.height), (255, 255, 255))
+            combined.paste(back_img, (0, 0))
+            combined.paste(slide_small, (0, back_img.height))
+
+            img_path = '/tmp/captcha_combined.png'
+            combined.save(img_path)
+        except Exception as e:
+            print(f'  ❌ 图片处理失败: {e}')
+            return False
+
+        print('  🧩 提交 2captcha 识别...')
+        captcha_id, err = _submit_2captcha(img_path)
+        if not captcha_id:
+            print(f'  ❌ 2captcha 提交失败: {err}')
+            return False
+        print(f'  📋 任务ID: {captcha_id}')
+
+        x, err = _poll_2captcha(captcha_id)
+        if x is None:
+            print(f'  ❌ 2captcha 识别失败: {err}')
+            return False
+        print(f'  🔍 2captcha 识别 x={x}')
+
+        # Step 3: 加密坐标
+        point_json = aes_encrypt_ecb({'x': x, 'y': 5}, secret_key)
+        if not point_json:
+            return False
+
+        # Step 4: 提交校验
+        r = requests.post(f'{BASE}/api/captcha/check',
+                          json={'captchaType': 'blockPuzzle', 'pointJson': point_json, 'token': captcha_token},
+                          headers=_headers(token), timeout=30, verify=False)
+        d = r.json()
+        if d.get('success'):
+            print('  ✅ 滑块验证通过')
+            return True
+        else:
+            msg = d.get('message', '未知')
+            print(f'  ⚠️ 滑块校验失败: {msg}')
+            # 如果限流，等待后重试
+            if '频繁' in msg or '10分钟' in msg:
+                print('  ⚠️ 接口限流，等待后重试...')
+                time.sleep(15)
+                return solve_captcha(token)
+            return False
+
+    except Exception as e:
+        print(f'  ❌ 滑块异常: {e}')
+        return False
 
 def do_sign(token, code):
-    h = make_h(token)
-    for i in range(3):
-        ct = solve_captcha(token)
-        body = {'code': code, 'channelCode': 'xj_mall_wx_applet'}
-        if ct: body['captchaToken'] = ct
-        r = requests.post(f'{BASE}/api/customer/daily/fillSignIn', json=body, headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'): return True, d.get('data',{}).get('resultDesc','成功')
-        if '验证码' in d.get('message','') and i < 2:
-            print(f"  重试 ({i+2}/3)..."); time.sleep(2); continue
-        return False, d.get('message','未知')
-    return False, '重试用完'
-
-from _log_tee import enable as _enable_tee
-
-
-# ==================== 花园功能 ====================
-
-def garden_make_h(token):
-    return {
-        'X-Access-Token': token,
-        'Content-Type': 'application/json',
-        'AppID': APPID,
-        'Authorization': AUTH_BASIC,
-        'App-Version': '1.0.0',
-        'Referer': 'https://servicewechat.com/{}/0/page-frame.html'.format(APPID),
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.40',
-    }
-
-
-def garden_save_session_key(token, code):
-    h = garden_make_h(token)
-    try:
-        r = requests.get(f'{GARDEN_BASE}/garden/wechat/saveSessionKey?code={code}', headers=h, timeout=15, verify=False)
-        try:
-            d = r.json()
-            if d.get('success'):
-                print("  ✅ 花园sessionKey保存成功")
-                return True
-            print(f"  ⚠️ 花园sessionKey: {d.get('message', '未知')}")
-            return False
-        except Exception:
-            if r.status_code == 200:
-                print("  ✅ 花园sessionKey已保存")
-                return True
-            print(f"  ⚠️ 花园sessionKey: HTTP {r.status_code}")
-            return False
-    except Exception as e:
-        print(f"  ❌ 花园sessionKey异常: {e}")
+    """执行商城签到（需先过滑块）"""
+    # 先过滑块
+    print('  🧩 执行滑块验证...')
+    if not solve_captcha(token):
+        print('  ❌ 滑块验证失败，跳过签到')
         return False
 
-
-def garden_get_member_info(token):
-    h = garden_make_h(token)
+    # 提交签到
     try:
-        r = requests.get(f'{GARDEN_BASE}/garden/Gardenmemberinfo/getMemberInfo', headers=h, timeout=15, verify=False)
+        r = requests.post(f'{BASE}/api/customer/daily/fillSignIn',
+                          json={'code': code, 'channelCode': 'xj_mall_wx_applet'},
+                          headers=_headers(token), timeout=30, verify=False)
         d = r.json()
         if d.get('success'):
-            info = d.get('data', {})
-            print(f"  🌱 等级: {info.get('level_name', '未知')}, 积分: {info.get('integration', 0)}, 浇水: {info.get('water', 0)}, 施肥: {info.get('manure', 0)}, 高粱: {info.get('sorghum', 0)}, 小麦: {info.get('wheat', 0)}")
-            return info
-        print(f"  ⚠️ 花园信息: {d.get('message', '未知')}")
-        return None
-    except Exception as e:
-        print(f"  ❌ 花园信息异常: {e}")
-        return None
-
-
-def garden_get_sorghum_index(token):
-    h = garden_make_h(token)
-    try:
-        r = requests.get(f'{GARDEN_BASE}/garden/sorghum/index', headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            fields = d.get('data', [])
-            planted = [f for f in fields if f.get('status', -1) > 0]
-            print(f"  🌾 高粱田: {len(planted)}/{len(fields)} 块已种植")
-            return fields
-        return []
-    except Exception as e:
-        print(f"  ❌ 高粱信息异常: {e}")
-        return []
-
-
-def garden_encrypt_data(session_key, ts=None):
-    """生成花园加密数据 - hex编码"""
-    if ts is None:
-        ts = int(time.time() * 1000)
-    try:
-        key = session_key[:16].encode()
-        data = json.dumps({'ts': ts}, separators=(',',':')).encode()
-        cipher = AES.new(key, AES.MODE_ECB)
-        encrypted = cipher.encrypt(pad(data, 16))
-        return ts, encrypted.hex()
-    except Exception:
-        return ts, None
-
-
-def garden_sign(token, session_key):
-    h = garden_make_h(token)
-    ts, enc = garden_encrypt_data(session_key)
-    if not enc:
-        print("  ❌ 加密失败")
-        return False
-    try:
-        r = requests.post(f'{GARDEN_BASE}/garden/sign/dailySign', json={'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            print("  ✅ 花园签到成功!")
+            print('  ✅ 签到成功!')
             return True
         msg = d.get('message', '')
-        if '已签' in msg:
-            print("  ✅ 花园今日已签到")
+        if '已签到' in msg or 'today' in msg.lower() or 'already' in msg.lower():
+            print('  ✅ 今日已签到')
             return True
-        print(f"  ⚠️ 花园签到: {msg}")
+        print(f'  ⚠️ 签到: {msg}')
         return False
     except Exception as e:
-        print(f"  ❌ 花园签到异常: {e}")
+        print(f'  ❌ 签到异常: {e}')
         return False
 
+# ============================================================
+# 主处理流程
+# ============================================================
+def process(openid, name):
+    print(f'\n{"="*50}')
+    print(f'  处理账号: {name} ({openid[:15]}...)')
+    print(f'{"="*50}')
 
-def garden_harvest(token, session_key, field_id):
-    h = garden_make_h(token)
-    ts, enc = garden_encrypt_data(session_key)
-    if not enc:
-        print("  ❌ 加密失败")
-        return False
-    try:
-        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/harvest', json={'id': field_id, 'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            data = d.get('data', {})
-            print(f"  ✅ 收获成功! 高粱+{data.get('sorghum', 0)} 小麦+{data.get('wheat', 0)}")
-            return True
-        print(f"  ⚠️ 收获: {d.get('message', '未知')}")
-        return False
-    except Exception as e:
-        print(f"  ❌ 收获异常: {e}")
-        return False
-
-
-def garden_seed(token, session_key, field_id, crop_type=1):
-    """种植 - type: 1=高粱, 2=小麦"""
-    h = garden_make_h(token)
-    ts, enc = garden_encrypt_data(session_key)
-    if not enc:
-        print("  ❌ 加密失败")
-        return False
-    try:
-        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/seed', json={'id': field_id, 'type': crop_type, 'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            crop_name = '高粱' if crop_type == 1 else '小麦'
-            print(f"  ✅ 种植{crop_name}成功!")
-            return True
-        print(f"  ⚠️ 种植: {d.get('message', '未知')}")
-        return False
-    except Exception as e:
-        print(f"  ❌ 种植异常: {e}")
-        return False
-
-
-def garden_watering(token, session_key, field_id):
-    """浇水"""
-    h = garden_make_h(token)
-    ts, enc = garden_encrypt_data(session_key)
-    if not enc:
-        print("  ❌ 加密失败")
-        return False
-    try:
-        r = requests.post(f'{GARDEN_BASE}/garden/sorghum/watering', json={'id': field_id, 'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            print(f"  💧 浇水成功!")
-            return True
-        print(f"  ⚠️ 浇水: {d.get('message', '未知')}")
-        return False
-    except Exception as e:
-        print(f"  ❌ 浇水异常: {e}")
-        return False
-
-
-def garden_share(token, session_key):
-    """每日分享"""
-    h = garden_make_h(token)
-    ts, enc = garden_encrypt_data(session_key)
-    if not enc:
-        print("  ❌ 加密失败")
-        return False
-    try:
-        r = requests.post(f'{GARDEN_BASE}/garden/gardenmemberinfo/dailyShare', json={'ts': ts, 'encryptData': enc, 'version': 14}, headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            data = d.get('data', {})
-            if data.get('isTodayFirstShare'):
-                print(f"  ✅ 分享成功! 水+{data.get('water', 0)} 肥料+{data.get('manure', 0)}")
-            else:
-                print(f"  ✅ 今日已分享")
-            return True
-        print(f"  ⚠️ 分享: {d.get('message', '未知')}")
-        return False
-    except Exception as e:
-        print(f"  ❌ 分享异常: {e}")
-        return False
-
-
-def garden_get_tasks(token):
-    """获取任务列表"""
-    h = garden_make_h(token)
-    try:
-        r = requests.get(f'{GARDEN_BASE}/garden/tasks/index', headers=h, timeout=15, verify=False)
-        d = r.json()
-        if d.get('success'):
-            tasks = d.get('data', {})
-            return tasks
-        return {}
-    except Exception as e:
-        print(f"  ❌ 任务列表异常: {e}")
-        return {}
-
-
-def process(openid, remark):
-    print(f"\n{'='*50}\n账号: {remark} ({openid[:12]}...)\n{'='*50}")
-
+    # 获取 code
     code = get_wx_code(openid)
-    if not code:
-        print("  ❌ 获取 code 失败")
+    if not code or len(code) < 10:
+        print('  ❌ 获取 code 失败')
         return False
-    print(f"  ✅ code: {code[:20]}...")
+    print('  ✅ 获取 code 成功')
 
+    # 登录
     token, phone = login(code)
     if not token:
-        print("  ❌ 登录失败")
+        print('  ❌ 登录失败')
         return False
-    print(f"  ✅ 登录成功 ({phone})")
+    print(f'  ✅ 登录成功 (手机: {phone})')
+    time.sleep(1)
 
     # 商城签到
-    print("\n  [商城签到]")
-    if check_sign(token):
-        print("  ✅ 今日已签到")
+    print('\n  [商城签到]')
+    is_signed = check_sign(token)
+    if is_signed:
+        print('  ✅ 今日已签到')
     else:
-        print("  签到中...")
-        ok, msg = do_sign(token, code)
-        if ok:
-            print(f"  ✅ {msg}")
-        else:
-            print(f"  ❌ {msg}")
+        print('  ⏳ 尚未签到，执行签到...')
+        do_sign(token, code)
 
-    # 花园功能 — 需要单独获取一次 code，避免被商城登录消费过
-    if not ENABLE_GARDEN:
-        print("  🌱 花园已关闭 (由 junpinhui.js 执行)")
-        return True
-    print("\n  [花园]")
-    code2 = get_wx_code(openid)
-    if code2:
-        print(f"  ✅ 花园code: {code2[:20]}...")
-        garden_save_session_key(token, code2)
-    else:
-        print("  ⚠️ 花园code获取失败")
-        garden_save_session_key(token, code)
-    time.sleep(1)
-
-    member_info = garden_get_member_info(token)
-    time.sleep(1)
-
-    # 花园签到 — 需要 session_key 加密，标记为跳过
-    print("\n  [花园签到]")
-    garden_sign(token, code2)
-    time.sleep(1)
-
-    # 每日分享
-    print("\n  [每日分享]")
-    garden_share(token, code2)
-    time.sleep(1)
-
-    # 任务列表
-    print("\n  [任务]")
-    tasks = garden_get_tasks(token)
-    if tasks:
-        task_items = tasks.items() if isinstance(tasks, dict) else enumerate(tasks) if isinstance(tasks, list) else []
-        for idx, task in task_items:
-            tid = idx if isinstance(tasks, list) else task
-            status = "✅" if (task.get('status') if isinstance(task, dict) else 1) == 1 else "⏳"
-            print(f"  {status} {task.get('name', task if isinstance(task,str) else '未知')}: {task.get('reward', '')}")
-    time.sleep(1)
-
-    # 获取地块信息
-    print("\n  [种植管理]")
-    sorghum_fields = garden_get_sorghum_index(token)
-    time.sleep(1)
-
-    if sorghum_fields:
-        for field in sorghum_fields:
-            field_id = field.get('id')
-            status = field.get('status', -1)
-            serial = field.get('serial_number', '?')
-            water_num = field.get('water_num', 0)
-            manure_num = field.get('manure_num', 0)
-            volumn = field.get('volumn', 0)
-
-            if status == -1:
-                # 未开垦，跳过
-                continue
-            elif status == 0:
-                # 空地，种植高粱
-                print(f"  地块{serial}: 空地，开始种植...")
-                garden_seed(token, code2, field_id, crop_type=1)
-                time.sleep(1)
-            elif status == 10:
-                # 种植中，浇水
-                print(f"  地块{serial}: 种植中 (浇水{water_num}/{volumn})")
-                if member_info and member_info.get('water', 0) > 0:
-                    garden_watering(token, code, field_id)
-                    time.sleep(1)
-            elif status == 2:
-                # 可收获
-                print(f"  地块{serial}: 可收获!")
-                garden_harvest(token, code2, field_id)
-                time.sleep(1)
-                # 收获后种植
-                garden_seed(token, code2, field_id, crop_type=1)
-                time.sleep(1)
-
-    # 再次获取会员信息显示最终状态
-    print("\n  [最终状态]")
-    garden_get_member_info(token)
-
+    print(f'\n  ✅ {name} 处理完成')
     return True
 
-
 def main():
-    print(f"{'='*50}\n君品荟 签到+花园\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*50}")
-    ok = 0
-    for oid, rm in ACCOUNTS:
-        try:
-            if process(oid, rm): ok += 1
-        except Exception as e:
-            print(f"  ❌ {e}")
-        time.sleep(3)
-    print(f"\n完成: {ok}/{len(ACCOUNTS)} 成功")
+    NL = chr(10); print(NL + '  🌸 君品荟商城签到 - 开始执行' + NL)
+    MAX_ATTEMPTS = int(os.environ.get('JPH_MAX_ATTEMPTS', '5'))
+    MAX_TOTAL_RUNS = int(os.environ.get('JPH_MAX_TOTAL_RUNS', '8'))
+    account_status = {}
+    account_data = {name: (openid, name) for openid, name in ACCOUNTS}
+    for name in account_data:
+        account_status[name] = False
+    total_run = 0
+    bar = '=' * 50
+    while any(not account_status[n] for n in account_data):
+        total_run += 1
+        remaining = [n for n in account_data if not account_status[n]]
+        if total_run > MAX_TOTAL_RUNS:
+            print('⚠️ 已达总轮数上限 ' + str(MAX_TOTAL_RUNS) + '，停止重试')
+            break
+        if not remaining:
+            break
+        attempt_count = {n: 1 for n in remaining}
+        print(bar)
+        print(f'  🔄 第 {total_run} 轮，待处理账号: {", ".join(remaining)}')
+        print(f'{bar}')
+        for name in remaining:
+            openid, _ = account_data[name]
+            attempts = attempt_count[name]
+            if attempts > MAX_ATTEMPTS:
+                print('⛔ ' + name + ' 已达最大重试次数 ' + str(MAX_ATTEMPTS) + '，跳过')
+                continue
+            try:
+                print('▶ [' + name + '] 第 ' + str(attempts) + '/' + str(MAX_ATTEMPTS) + ' 次尝试...')
+                ok = process(openid, name)
+                if ok:
+                    account_status[name] = True
+                    print(f'  ✅ {name} 第 {attempts} 次成功！')
+                else:
+                    attempt_count[name] = attempts + 1
+                    wait = min(30 + (attempts - 1) * 10, 120)
+                    print(f'  ⏳ {name} 第 {attempts} 次失败，等待 {wait} 秒后重试...')
+                    time.sleep(wait)
+            except Exception as e:
+                print('❌ ' + name + ' 异常: ' + str(e))
+                attempt_count[name] = attempts + 1
+                time.sleep(30)
+        time.sleep(5)
+    print(bar)
+    print('  执行完成 - 汇总')
+    print(bar)
+    summary_lines = []
+    for name in account_data:
+        status = '✅' if account_status[name] else '❌'
+        print(f'  {name}: {status}')
+        summary_lines.append(f'{name}: {status}')
+    summary = chr(10).join(summary_lines)
+    print(chr(10) + '  📝 汇总:' + chr(10) + summary)
+    push_notify(title='君品荟签到结果', content=summary)
 
 
 if __name__ == '__main__':
-    import io
-    _tee_out, _tee_err = _enable_tee()
-    try:
-        main()
-    except SystemExit:
-        pass
-    except Exception as e:
-        print(f'脚本异常: {e}')
-    finally:
-        sys.stdout = _tee_out.original
-
-        sys.stderr = _tee_err.original
-
-        _logs = _tee_out.getvalue()
-    if _logs.strip():
-        print(_logs)
-        try:
-            push_notify('jph_runner 签到结果', _logs[-2000:])
-        except:
-            pass
-
-
-
+    main()

@@ -3,6 +3,7 @@
 cron: 30 8 * * *
 */
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("甘源食品");
 const axios = require("axios");
 const fs = require("fs");
@@ -29,7 +30,7 @@ function readCache() {
 }
 function writeCache(c) {
     try { fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(c, null, 2), "utf8"); }
-    catch (e) { $.log(`缓存写入失败: ${e.message}`); }
+    catch (e) { L.fail("缓存写入失败: " + e.message + ""); }
 }
 
 class Task {
@@ -127,7 +128,7 @@ class Task {
         this.mobile = d.mobile || "";
         if (!this.token) throw new Error(`登录未返回 token`);
         this.saveCache();
-        $.log(`账号[${this.index}] 登录成功 uid=${this.userId} ${this.mobile}`);
+        L.ok("账号[" + this.index + "] 登录成功 uid=" + this.userId + " " + this.mobile + "");
     }
 
     async get(path, params = {}) {
@@ -163,11 +164,11 @@ class Task {
             this.sessionId = cached.sessionId;
             this.userId = cached.userId;
             this.mobile = cached.mobile;
-            $.log(`账号[${this.index}] 使用缓存 uid=${this.userId}`);
+            L.info("账号[" + this.index + "] 使用缓存 uid=" + this.userId + "");
             try {
                 await this.get("/wscuser/membercenter/stats.json", { currentKdtId: KDT_ID, version: "2.211.6.103" });
             } catch {
-                $.log(`账号[${this.index}] 缓存失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存失效，重新登录");
                 this.token = "";
             }
         }
@@ -198,25 +199,27 @@ class Task {
             const result = resp2.data;
             if (result?.code === 0 || result?.data?.success) {
                 const award = result?.data?.list?.[0]?.infos?.title || "+奖励";
-                $.log(`账号[${this.index}] 签到成功: ${award}`);
+                L.ok("账号[" + this.index + "] 签到成功: " + award + "");
             } else if (/已达最大参与|已签到|已签|already|limit/i.test(result?.msg || "")) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
             } else {
-                $.log(`账号[${this.index}] 签到失败: ${result?.msg || JSON.stringify(result)}`);
+                L.fail("账号[" + this.index + "] 签到失败: " + result?.msg || JSON.stringify(result) + "");
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 签到异常: ${e.message}`);
+            L.fail("账号[" + this.index + "] 签到异常: " + e.message + "");
         }
 
         // 积分
         try {
             const stats = await this.get("/wscuser/membercenter/stats.json", { currentKdtId: KDT_ID, version: "2.211.6.103" });
-            $.log(`账号[${this.index}] 当前积分: ${stats?.stats?.points ?? "?"}`);
+            L.info("账号[" + this.index + "] 当前积分: " + stats?.stats?.points ?? "?" + "");
         } catch {}
     }
 }
 
 !(async () => {
+  sectionLine("甘源食品", "");
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const user of $.userList) {
         await new Task(user).run();

@@ -1,4 +1,4 @@
-// ========== 推送通知 ==========
+  // ========== 推送通知 ==========
 const { sendPushNotify } = require("./_push_helper");
 // ========== 推送通知结束 ==========
 
@@ -8,6 +8,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("BLUE DASH 布鲁大师签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -51,7 +52,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -72,10 +73,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -119,7 +120,7 @@ class Task {
 
     applyToken(data = {}) {
         const accessToken = data.accessToken || data.access_token || "";
-        this.authorization = data.authorization || data.Authorization || (accessToken ? `Bearer ${accessToken}` : "");
+        this.authorization = data.authorization || data.Authorization || (accessToken ? "Bearer " + accessToken : "");
         this.refreshToken = data.refreshToken || data.refresh_token || "";
     }
 
@@ -137,7 +138,7 @@ class Task {
     async request({ method = "GET", apiPath, params = {}, data = {}, skipToken = false }) {
         const options = {
             method,
-            url: `${API_BASE}${apiPath}`,
+            url: API_BASE + apiPath,
             headers: this.getHeaders(method === "POST" ? { "Content-Type": "application/json" } : {}),
             timeout: 15000,
             validateStatus: () => true,
@@ -179,9 +180,9 @@ class Task {
             });
             this.applyToken(data);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功`);
+            L.ok("账号[" + this.index + "] 登录成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -198,7 +199,7 @@ class Task {
         const data = await this.request({ apiPath: "/app-api/member/user/get" });
         this.user = data || {};
         this.saveCachedToken();
-        $.log(`账号[${this.index}] 用户: ${data?.nickname || ""} ${maskPhone(data?.mobile) || ""} 积分=${data?.score ?? "未知"}`);
+        L.info("账号[" + this.index + "] 用户: " + (data?.nickname || "") + " " + (maskPhone(data?.mobile) || "") + " 积分=" + (data?.score ?? "未知"));
         return data;
     }
 
@@ -214,16 +215,16 @@ class Task {
             const list = data?.pageResult?.list || [];
             const today = new Date().toISOString().slice(0, 10);
             this.isTodaySign = list.some((item) => item?.date === today);
-            $.log(`账号[${this.index}] 签到记录: 连续${data?.coiledDay || 0}天 今日=${this.isTodaySign ? "已签" : "未签"}`);
+            L.info("账号[" + this.index + "] 签到记录: 连续" + data?.coiledDay || 0 + "天 今日=" + this.isTodaySign ? "已签" : "未签" );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询签到记录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询签到记录失败: " + e.message || e );
             if (e.code === 401 || /token|登录|授权/i.test(String(e.message || e))) this.removeCachedToken();
         }
     }
 
     async doSign() {
         if (this.isTodaySign) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return;
         }
         try {
@@ -231,21 +232,23 @@ class Task {
                 method: "POST",
                 apiPath: "/app-api/member/sign-log/sign",
             });
-            $.log(`账号[${this.index}] 签到成功: +${data?.score ?? data ?? "未知"}积分`);
+            L.ok("账号[" + this.index + "] 签到成功: +" + data?.score ?? data ?? "未知" + "积分");
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|重复|今日.*签/i.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (e.code === 401 || /token|登录|授权/i.test(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("布鲁大师", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

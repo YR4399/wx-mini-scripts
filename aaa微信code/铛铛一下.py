@@ -552,7 +552,7 @@ def run_account(index: int, total: int, openid: str) -> Dict[str, Any]:
             print(f"⚠️ [签到] {result['signMsg']}")
 
         lottery_info = api_get(server, LOTTERY_INFO_URL, token, proxies)
-        member_count = int(lottery_info.get("data", {}).get("member_count", 0) or 0)
+        member_count = int((lottery_info.get("data") or {}).get("member_count", 0) or 0)
         print(f"🎰 [抽奖] 当前可抽奖 {member_count} 次")
 
         prize_list: List[str] = []

@@ -230,6 +230,7 @@ class Task {
 
 !(async () => {
     
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (let user of $.userList) {

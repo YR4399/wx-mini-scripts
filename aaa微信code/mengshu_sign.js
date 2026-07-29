@@ -5,6 +5,7 @@
 // 依赖: wcs.js, _push_helper.js
 
 const { Env } = require("../tools/env");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const { sendPushNotify } = require("./_push_helper");
 const WeChatServer = require("./wcs.js");
 
@@ -23,17 +24,17 @@ const wcs = new WeChatServer({
 
 function todayStr() {
     const d = new Date();
-    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    return d.getFullYear() + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + String(d.getDate()).padStart(2, "0");
 }
 
 function headers(token) {
     return {
-        "Content-Type": "application/json",
-        Authorization: `bearer${token}`,
+        "Content-Type": "",
+        Authorization: "bearer " + token,
         appId: APPID,
         version: VERSION,
         envVersion: "release",
-        "xy-extra-data": `appid=${APPID};version=${VERSION};envVersion=release;senceId=1007`,
+        "xy-extra-data": "appid=" + APPID + ";version=" + VERSION + ";envVersion=release;senceId=1007",
         "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF",
     };
@@ -53,12 +54,12 @@ class Task {
         // WCS 获取 code
         const { data: codeRes } = await wcs.getCode(this.openid);
         if (!codeRes.status) {
-            $.log(`[${this.idx}] WCS获取code失败: ${JSON.stringify(codeRes)}`);
+            L.fail("[" + this.idx + "] WCS获取code失败: " + JSON.stringify(codeRes) );
             return;
         }
 
         // code 换 token
-        await this.login(codeRes.data.code);
+        await this.login(codeRes.data.data.code);
         if (!this.token) return;
 
         // 查询积分信息
@@ -70,7 +71,8 @@ class Task {
         // 检查今日是否已签到
         const today = signList.find((d) => d.isToday);
         if (today && (today.daySignStatus === 2 || today.daySignStatus === 6)) {
-            $.log(`[${this.idx}] 今日已签到, 连签${this.seriesDays}天, 积分${this.points}`);
+            this.signed = true;
+                L.info("[" + this.idx + "] 今日已签到, 连签" + this.seriesDays + "天, 积分" + this.points );
             return;
         }
 
@@ -83,8 +85,7 @@ class Task {
             const fs = require('fs');
 const path = require('path');
 const axios = require("axios");
-            const { data } = await axios.post(
-                `${BASE}/dtapi/appLogin`,
+            const { data } = await axios.post(BASE + "/dtapi/appLogin",
                 { principal: code, appType: 1 },
                 {
                     headers: {
@@ -100,12 +101,12 @@ const axios = require("axios");
             );
             if (data.access_token) {
                 this.token = data.access_token;
-                $.log(`[${this.idx}] 登录成功`);
+                L.ok("[" + this.idx + "] 登录成功");
             } else {
-                $.log(`[${this.idx}] 登录失败: ${JSON.stringify(data)}`);
+                L.fail("[" + this.idx + "] 登录失败: " + JSON.stringify(data) );
             }
         } catch (e) {
-            $.log(`[${this.idx}] 登录异常: ${e.message}`);
+            L.fail("[" + this.idx + "] 登录异常: " + e.message );
         }
     }
 
@@ -114,7 +115,7 @@ const axios = require("axios");
             const fs = require('fs');
 const path = require('path');
 const axios = require("axios");
-            const { data } = await axios.get(`${BASE}/dtapi/pointsSign/user/pointsInfo/query`, {
+            const { data } = await axios.get(BASE + "/dtapi/pointsSign/user/pointsInfo/query", {
                 headers: headers(this.token),
                 timeout: 10000,
             });
@@ -122,10 +123,10 @@ const axios = require("axios");
                 this.points = data.data.pointsNums || 0;
                 this.seriesDays = data.data.seriesDays || 0;
                 this.signed = data.data.signTodayResult || false;
-                $.log(`[${this.idx}] 积分=${this.points}, 连签=${this.seriesDays}天`);
+                L.info("[" + this.idx + "] 积分=" + this.points + ", 连签=" + this.seriesDays + "天");
             }
         } catch (e) {
-            $.log(`[${this.idx}] 查询积分失败: ${e.message}`);
+            L.fail("[" + this.idx + "] 查询积分失败: " + e.message );
         }
     }
 
@@ -134,7 +135,7 @@ const axios = require("axios");
             const fs = require('fs');
 const path = require('path');
 const axios = require("axios");
-            const { data } = await axios.get(`${BASE}/dtapi/pointsSign/user/sign/list`, {
+            const { data } = await axios.get(BASE + "/dtapi/pointsSign/user/sign/list", {
                 params: { v4Flag: true },
                 headers: headers(this.token),
                 timeout: 10000,
@@ -143,7 +144,7 @@ const axios = require("axios");
                 return data.data;
             }
         } catch (e) {
-            $.log(`[${this.idx}] 查询签到列表失败: ${e.message}`);
+            L.fail("[" + this.idx + "] 查询签到列表失败: " + e.message );
         }
         return [];
     }
@@ -153,7 +154,7 @@ const axios = require("axios");
             const fs = require('fs');
 const path = require('path');
 const axios = require("axios");
-            const { data } = await axios.get(`${BASE}/dtapi/pointsSign/user/sign`, {
+            const { data } = await axios.get(BASE + "/dtapi/pointsSign/user/sign", {
                 params: { date: todayStr() },
                 headers: headers(this.token),
                 timeout: 10000,
@@ -161,27 +162,30 @@ const axios = require("axios");
             if (data.error === 0 && data.data) {
                 const reward = data.data.signReward || 0;
                 const extra = data.data.extraSignReward || 0;
-                $.log(`[${this.idx}] 签到成功: +${reward}积分${extra > 0 ? ` 额外+${extra}` : ""}, 当前${this.points + reward}积分`);
+                this.signed = true;
+                L.ok("[" + this.idx + "] 签到成功: +" + reward + "积分" + (extra > 0 ? " 额外+" + extra : "") + ", 当前" + (this.points + reward) + "积分");
             } else {
-                $.log(`[${this.idx}] 签到失败: ${JSON.stringify(data)}`);
+                L.fail("[" + this.idx + "] 签到失败: " + JSON.stringify(data) );
             }
         } catch (e) {
-            $.log(`[${this.idx}] 签到异常: ${e.message}`);
+            L.fail("[" + this.idx + "] 签到异常: " + e.message );
         }
     }
 }
 
 !(async () => {
+  sectionLine("萌叔", "");
     $.sendMsg = async () => {}; $.log = async () => {};
+$.userIdx = 0;
     $.checkEnv(CK_NAME);
 
     const openids = $.userList;
     if (!openids.length) {
-        $.log(`未配置 ${CK_NAME}`);
+        L.info("未配置 " + CK_NAME );
         return;
     }
 
-    $.log(`共${openids.length}个账号`);
+    L.info("共" + openids.length + "个账号");
 
     const summaries = [];
     for (let i = 0; i < openids.length; i++) {
@@ -204,7 +208,7 @@ const axios = require("axios");
         lines.push("| # | 积分 | 连签 | 签到 |");
         lines.push("|---|------|------|------|");
         for (const s of summaries) {
-            lines.push(`| ${s.idx} | ${s.points} | ${s.seriesDays}天 | ${s.signed ? "✅" : "❌"} |`);
+            lines.push("| " + s.idx + " | " + s.points + " | " + s.seriesDays + "天 | " + (s.signed ? "✅" : "❌") + " |");
         }
         await sendPushNotify("萌叔宝贝鹅基地签到结果", lines.join("\n"));
     } catch (e) {}

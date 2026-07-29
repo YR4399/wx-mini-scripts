@@ -8,6 +8,7 @@ cron: 31 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("金巴厘杯中空间签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -50,7 +51,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -64,8 +65,8 @@ function rewardText(flowList) {
     const point = last.leftPoint;
     const day = last.signInDay;
     return [
-        point !== undefined ? `积分+${point}` : "",
-        day !== undefined ? `连续${day}天` : "",
+        point !== undefined ? "积分+" + point : "",
+        day !== undefined ? "连续" + day + "天" : "",
     ].filter(Boolean).join("，");
 }
 
@@ -80,12 +81,12 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.session = cached;
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
-                $.log(`账号[${this.index}] 缓存token失效，尝试刷新`);
+                L.fail("账号[" + this.index + "] 缓存token失效，尝试刷新");
                 if (!(await this.refreshToken())) {
                     this.removeCachedToken();
-                    $.log(`账号[${this.index}] 刷新失败，重新登录`);
+                    L.fail("账号[" + this.index + "] 刷新失败，重新登录");
                 }
             }
         }
@@ -160,7 +161,7 @@ class Task {
     async loginByWxCode() {
         try {
             const code = await this.getLoginCode();
-            const res = await this.request(`/cgs-api/wxApi/getCodeToSession/${encodeURIComponent(code)}`, {}, "");
+            const res = await this.request("/cgs-api/wxApi/getCodeToSession/" + encodeURIComponent(code), {});
             const data = res.data || {};
             this.session = {
                 token: data.token || "",
@@ -169,9 +170,9 @@ class Task {
             };
             if (!this.session.token) throw new Error("登录未返回token");
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功`);
+            L.ok("账号[" + this.index + "] 登录成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -208,20 +209,22 @@ class Task {
             const info = await this.getSignInfo();
             const text = rewardText(info.pointFlowList);
             if (info.todaySignInFlag) {
-                $.log(`账号[${this.index}] 今日已签到${text ? `，${text}` : ""}`);
+                L.info("账号[" + this.index + "] 今日已签到" + (text ? "，" + text : ""));
                 return;
             }
-            $.log(`账号[${this.index}] 签到完成${text ? `，${text}` : ""}`);
+            L.info("账号[" + this.index + "] 签到完成" + (text ? "，" + text : ""));
         } catch (e) {
             const message = e.message || e;
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("金巴厘", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

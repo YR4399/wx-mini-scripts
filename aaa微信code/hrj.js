@@ -8,6 +8,7 @@ cron: 36 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("好人家签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -27,8 +28,7 @@ const MINI_APP_ID = "wx160c589739c6f8b0";
 const PAGE_VERSION = "116";
 const API_HOST = "https://xapi.weimob.com";
 const API_BASE = `${API_HOST}/api3`;
-const TOKEN_CACHE_FILE = path.join(__dirname, "hrj_token_cache.json");
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
+const TOKEN_CACHE_FILE = path.join(__dirname, "hrj_token_cache.json"); const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
 const FORM_BASIC_INFO = {
     bosId: "4021565647273",
@@ -86,7 +86,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -96,7 +96,7 @@ function isTokenError(message) {
 
 function rewardText(items) {
     if (!Array.isArray(items) || !items.length) return "";
-    return items.map((item) => `${item.key || "奖励"}${item.value || ""}`).join(" ");
+    return items.map((item) => (item.key || "奖励") + "=" + (item.value || "")).join(" ");
 }
 
 class Task {
@@ -110,10 +110,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.session = cached;
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -161,6 +161,50 @@ class Task {
         this.session = {};
     }
 
+
+    async checkToken() {
+        if (!this.session.token) return false;
+        try {
+            const r = await this.request("/onecrm/mactivity/sign/misc/sign/activity/c/signMainInfo", {
+                customInfo: this.customInfo(),
+            });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async request(path, data = {}) {
+        const url = API_BASE + path;
+        const res = await axios.post(url, data, {
+            headers: { ...this.getHeaders(), "X-WX-Token": this.session.token || "" },
+            timeout: 15000,
+            validateStatus: () => true,
+        });
+        if (res.status !== 200) throw new Error("HTTP " + res.status);
+        if (res.data && res.data.errcode && String(res.data.errcode) !== "0") {
+            const err = new Error(res.data.errmsg || "API error: " + res.data.errcode);
+            err.data = res.data;
+            throw err;
+        }
+        return res.data && res.data.data || {};
+    }
+
+    customInfo() {
+        return {
+            wid: this.session.wid,
+            bosId: this.session.bosId,
+            cid: this.session.cid,
+            scope: this.session.scope,
+            status: this.session.status,
+            sourceType: this.session.sourceType,
+            source: this.session.source,
+            token: this.session.token,
+            latestExpireTime: this.session.latestExpireTime,
+            expireTime: this.session.expireTime,
+            uuid: this.session.uuid,
+        };
+    }
     getHeaders() {
         return {
             "Content-Type": "application/json",
@@ -177,23 +221,22 @@ class Task {
             appid: MINI_APP_ID,
             basicInfo: { ...ONECRM_BASIC_INFO },
             extendInfo: { ...EXTEND_INFO },
-            i18n: {
-                language: "zh",
-                timezone: "8",
-            },
-            ...data,
+                i18n: {
+                    language: "zh",
+                    timezone: "UTC"
+                }
         };
     }
-
-    async request(apiPath, data = {}) {
-        const res = await axios.post(`${API_BASE}${apiPath}`, this.buildWosBody(data), {
-            headers: this.getHeaders(),
-            timeout: 20000,
+    async createOrder() {
+        const body = this.buildWosBody();
+        const res = await axios.post(API_BASE + "/wos/sync/order/create", body, {
+            headers: { ...this.getHeaders() },
+            timeout: 15000,
             validateStatus: () => true,
         });
-        if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
-        if (`${res.data?.errcode}` !== "0") {
-            const error = new Error(res.data?.errmsg || `接口错误: ${res.data?.errcode || "unknown"}`);
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+        if ((res.data?.errcode || "") !== "0") {
+            const error = new Error(res.data?.errmsg || "接口错误: " + (res.data?.errcode || "unknown"));
             error.data = res.data;
             throw error;
         }
@@ -215,16 +258,16 @@ class Task {
                 basicInfo: { ...FORM_BASIC_INFO },
                 env: "production",
                 extendInfo: { ...EXTEND_INFO },
-                is_pre_fetch_open: true,
-                parentVid: 0,
-                pid: "",
-                storeId: "",
-                code,
-                queryAuthConfig: true,
+                i18n: {
+                    is_pre_fetch_open: true,
+                    parentVid: 0,
+                    pid: "",
+                    storeId: "UTC"
+                }
             };
             delete loginBody.basicInfo.productInstanceId;
 
-            const res = await axios.post(`${API_HOST}/fe/mapi/user/loginX`, loginBody, {
+            const res = await axios.post(API_HOST + "/fe/mapi/user/loginX", loginBody, {
                 headers: {
                     "Content-Type": "application/json",
                     "User-Agent": USER_AGENT,
@@ -236,31 +279,13 @@ class Task {
                 validateStatus: () => true,
             });
             if (res.status !== 200 || Number(res.data?.errcode) !== 0) {
-                throw new Error(res.data?.errmsg || res.data?.errormsg || `HTTP ${res.status}`);
+                throw new Error(res.data?.errmsg || res.data?.errormsg || "HTTP " + res.status + "");
             }
             this.session = res.data.data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: wid ${this.session.wid || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: wid " + this.session.wid || "" );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
-        }
-    }
-
-    async checkToken() {
-        try {
-            await this.getSignMainInfo(true);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    customInfo(extra = {}) {
-        return {
-            ...ONECRM_BASIC_INFO,
-            source: 0,
-            wid: this.session.wid,
-            ...extra,
+            L.fail("账号[" + this.index + "] 登录失败: " + (e.message || "unknown"));
         };
     }
 
@@ -269,7 +294,7 @@ class Task {
             customInfo: this.customInfo(),
         });
         if (!silent) {
-            $.log(`账号[${this.index}] 签到状态: ${data?.hasSign ? "今日已签" : "今日未签"} ${rewardText(data?.signForwardMsg)}`);
+            L.info("账号[" + this.index + "] 签到状态: " + data?.hasSign ? "今日已签" : "今日未签" + " " + rewardText(data?.signForwardMsg) );
         }
         return data || {};
     }
@@ -278,7 +303,7 @@ class Task {
         try {
             const info = await this.getSignMainInfo();
             if (info.hasSign) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
@@ -289,21 +314,23 @@ class Task {
                 rewardText(data?.fixedReward),
                 rewardText(data?.extraReward),
             ].filter(Boolean).join(" ");
-            $.log(`账号[${this.index}] 签到成功${rewards ? `: ${rewards}` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功" + (rewards ? ": " + rewards : ""));
         } catch (e) {
             const message = e.message || e;
             if (/已签|重复|今日已|60070013000332/.test(String(message))) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("好人家", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

@@ -314,6 +314,7 @@ class Task {
 
 !(async () => {
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

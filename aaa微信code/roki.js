@@ -8,6 +8,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("老板电器ROKI签到");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -56,7 +57,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -105,10 +106,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token: ${shortValue(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortValue(this.token) + "");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -236,9 +237,9 @@ class Task {
             this.applyToken(data);
             if (!this.token) throw new Error(`登录响应未返回 token: ${JSON.stringify(result)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: token=${shortValue(this.token)}`);
+            L.ok("账号[" + this.index + "] 登录成功: token=" + shortValue(this.token) + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
         }
     }
 
@@ -259,7 +260,7 @@ class Task {
             const name = this.userInfo.nickName || this.userInfo.nickname || this.userInfo.name || this.userInfo.id || "未知";
             const mobile = this.userInfo.mobile ? ` ${maskPhone(this.userInfo.mobile)}` : "";
             const points = this.userInfo.points ?? this.userInfo.memberPoints ?? "未知";
-            $.log(`账号[${this.index}] 用户: ${name}${mobile} 积分=${points} 今日签到=${this.userInfo.todayIsCheckIn ? "是" : "否"}`);
+            L.info("账号[" + this.index + "] 用户: " + name + "" + mobile + " 积分=" + points + " 今日签到=" + this.userInfo.todayIsCheckIn ? "是" : "否" + "");
         }
         return this.userInfo;
     }
@@ -267,7 +268,7 @@ class Task {
     async signIn() {
         try {
             if (Number(this.userInfo.todayIsCheckIn) === 1 || this.userInfo.todayIsCheckIn === true) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
@@ -276,10 +277,10 @@ class Task {
                 apiPath: "/user/check-in-record/check-in",
                 data: {},
             });
-            $.log(`账号[${this.index}] 签到成功: ${result.message || result.msg || "ok"}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + result.message || result.msg || "ok" + "");
             await this.getUserInfo(false);
         } catch (e) {
-            $.log(`账号[${this.index}] 签到失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + e.message || e + "");
             if (isTokenError(e)) this.removeCachedToken();
         }
     }
@@ -289,9 +290,9 @@ class Task {
             const result = await this.request({ apiPath: "/user/check-in-record/recent/record" });
             const data = result.data || {};
             const days = data.consecutiveDays ?? data.continuousDays ?? data.days ?? "未知";
-            $.log(`账号[${this.index}] 连续签到: ${days}天`);
+            L.info("账号[" + this.index + "] 连续签到: " + days + "天");
         } catch (e) {
-            $.log(`账号[${this.index}] 查询签到记录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询签到记录失败: " + e.message || e + "");
         }
     }
 
@@ -300,15 +301,17 @@ class Task {
             const result = await this.request({ apiPath: "/user/member/points" });
             const data = result.data || {};
             const points = data.points ?? data.availablePoints ?? data.totalPoints ?? data;
-            $.log(`账号[${this.index}] 当前积分: ${typeof points === "object" ? JSON.stringify(points) : points}`);
+            L.info("账号[" + this.index + "] 当前积分: " + typeof points === "object" ? JSON.stringify(points) : points + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 查询积分失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询积分失败: " + e.message || e + "");
         }
     }
 }
 
 !(async () => {
+  sectionLine("老板电器", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

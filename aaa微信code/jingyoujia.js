@@ -8,6 +8,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("劲友家小程序签到");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -52,7 +53,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -85,10 +86,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -153,7 +154,7 @@ class Task {
         const upperMethod = method.toUpperCase();
         const options = {
             method: upperMethod,
-            url: `${API_BASE}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
+            url: API_BASE + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
             headers: this.getHeaders(notAuth ? { Authorization: "none" } : {}),
             timeout: 20000,
             validateStatus: () => true,
@@ -162,8 +163,8 @@ class Task {
         else options.data = data;
 
         const { data: result, status } = await axios.request(options);
-        if (status !== 200) throw new Error(`HTTP ${status}: ${JSON.stringify(result)}`);
-        if (!result || (Number(result.code) !== 200 && String(result.code) !== "200")) {
+        if (status !== 200) throw new Error("HTTP " + status + ": " + JSON.stringify(result));
+        if (!result || (Number(result.code) !== 200 && String(result.code) !== 200)) {
             throw new Error(result?.msg || result?.message || JSON.stringify(result));
         }
         return result.data;
@@ -188,9 +189,9 @@ class Task {
             this.token = data?.accessToken || "";
             if (!this.token) throw new Error(`登录响应未返回 accessToken: ${JSON.stringify(data)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功`);
+            L.ok("账号[" + this.index + "] 登录成功");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -208,9 +209,9 @@ class Task {
             const data = await this.request({ apiPath: "/app/jingyoujia/customer/detail" });
             this.userInfo = data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 会员: ${data?.nickName || data?.nickname || "未知"} ${maskPhone(data?.mobile || "")}`);
+            L.info("账号[" + this.index + "] 会员: " + data?.nickName || data?.nickname || "未知" + " " + maskPhone(data?.mobile || "") );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询会员失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询会员失败: " + e.message || e );
             if (isTokenError(e.message || e)) this.removeCachedToken();
         }
     }
@@ -219,9 +220,9 @@ class Task {
         try {
             const data = await this.request({ apiPath: "/app/jingyoujia/customer/queryCustIntegral" });
             this.points = data?.usableIntegral ?? data?.integral ?? data?.custIntegral ?? data?.points ?? "";
-            $.log(`账号[${this.index}] 当前积分: ${this.points === "" ? JSON.stringify(data) : this.points}`);
+            L.info("账号[" + this.index + "] 当前积分: " + this.points === "" ? JSON.stringify(data) : this.points );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询积分失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询积分失败: " + e.message || e );
         }
     }
 
@@ -229,15 +230,15 @@ class Task {
         try {
             const data = await this.request({ apiPath: "/app/jingyoujia/taskContinuousRecord/findCheckTask" });
             if (!data || !data.id) {
-                $.log(`账号[${this.index}] 当前无签到活动`);
+                L.info("账号[" + this.index + "] 当前无签到活动");
                 return;
             }
             this.task = data;
             const start = String(data.startTime || "").slice(0, 10);
             const end = String(data.endTime || "").slice(0, 10);
-            $.log(`账号[${this.index}] 签到活动: taskId=${data.id}${start || end ? ` ${start}-${end}` : ""}`);
+            L.info("账号[" + this.index + "] 签到活动: taskId=" + data.id + (start || end ? " " + start + "-" + end : "") + ")");
         } catch (e) {
-            $.log(`账号[${this.index}] 获取签到活动失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 获取签到活动失败: " + e.message || e );
         }
     }
 
@@ -249,16 +250,16 @@ class Task {
                 params: { taskId: this.task.id },
             });
             this.record = data || {};
-            $.log(`账号[${this.index}] 签到状态: 连续${data?.continuousNum ?? 0}天 今日=${data?.todayFinish ? "已签" : "未签"}`);
+            L.info("账号[" + this.index + "] 签到状态: 连续" + data?.continuousNum ?? 0 + "天 今日=" + data?.todayFinish ? "已签" : "未签" );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询签到状态失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询签到状态失败: " + e.message || e );
         }
     }
 
     async signIn() {
         if (!this.task?.id) return;
         if (this.record?.todayFinish) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return;
         }
         try {
@@ -270,19 +271,19 @@ class Task {
                 },
             });
             const integral = data?.currentSignIntegral ?? data?.integral ?? "";
-            $.log(`账号[${this.index}] 签到成功${integral !== "" ? `: +${integral}积分` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功" + (integral !== "" ? ": +" + integral + "积分" : "") + ")");
             await this.finishTask();
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|重复|todayFinish/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
             if (/20230529|captcha|验证码|滑块/.test(message)) {
-                $.log(`账号[${this.index}] 签到需要验证码，已跳过`);
+                L.info("账号[" + this.index + "] 签到需要验证码，已跳过");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -299,13 +300,15 @@ class Task {
                 },
             });
         } catch (e) {
-            $.log(`账号[${this.index}] 完成任务上报失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 完成任务上报失败: " + e.message || e );
         }
     }
 }
 
 !(async () => {
+  sectionLine("劲友家", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

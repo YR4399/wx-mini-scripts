@@ -8,6 +8,7 @@ cron: 25 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("盈客宝电玩签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -53,7 +54,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -73,7 +74,7 @@ function monthRange() {
 
 function shortToken(token = "") {
     const value = String(token).replace(/^Token\s+/i, "");
-    return value ? `${value.slice(0, 4)}***${value.slice(-4)}` : "";
+    return value ? value.slice(0, 4) + "***" + value.slice(-4) : "";
 }
 
 class Task {
@@ -91,10 +92,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) );
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -160,7 +161,7 @@ class Task {
     async request({ method = "GET", apiPath, params = {}, data = {}, skipToken = false }) {
         const options = {
             method,
-            url: `${API_BASE}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
+            url: API_BASE + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
             headers: this.getHeaders(),
             timeout: 20000,
             validateStatus: () => true,
@@ -212,9 +213,9 @@ class Task {
             });
             this.applyToken(data);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${this.customerName || ""} openId=${this.openId || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + this.customerName || "" + " openId=" + this.openId || "" );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -231,10 +232,10 @@ class Task {
         try {
             const data = await this.request({ apiPath: "/ykb_huiyuan/api/v1/MemberMine/Info" });
             const name = data?.Name || data?.NickName || this.customerName || "未知";
-            const phone = data?.Phone ? ` ${maskPhone(data.Phone)}` : "";
-            $.log(`账号[${this.index}] 会员: ${name}${phone} 代币=${data?.ARTotalIntegral ?? 0}`);
+            const phone = data?.Phone ? maskPhone(data.Phone) : "";
+            L.info("账号[" + this.index + "] 会员: " + name  + phone + " 代币=" + data?.ARTotalIntegral ?? 0 );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询会员信息失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询会员信息失败: " + e.message || e );
             if (/token|登录|授权|非法请求|1500000004/i.test(String(e.message || e))) this.removeCachedToken();
         }
     }
@@ -252,30 +253,32 @@ class Task {
             const dailyReward = Array.isArray(detail?.RewardRules)
                 ? detail.RewardRules.find((item) => item.CycleType === "Daily")
                 : null;
-            const rewardText = dailyReward ? `${dailyReward.Amount}${dailyReward.RewardAlias || ""}` : "未知";
-            $.log(`账号[${this.index}] 签到状态: 已连续${detail?.Days ?? 0}天 今日奖励=${rewardText}`);
+            const rewardText = dailyReward ? String(dailyReward.Amount) + " " + (dailyReward.RewardAlias || "") : "未知";
+            L.info("账号[" + this.index + "] 签到状态: 已连续" + detail?.Days ?? 0 + "天 今日奖励=" + rewardText );
 
             if (detail?.IsCheckIn) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
             const result = await this.request({
                 apiPath: "/ykb_huiyuan/api/v1/MemberCheckIn/Submit",
             });
-            $.log(`账号[${this.index}] 签到成功${result?.Message ? `: ${result.Message}` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功" + (result?.Message ? ": " + result.Message : ""));
 
             detail = await this.getSignDetail();
-            $.log(`账号[${this.index}] 签到后累计: ${detail?.Days ?? 0}天`);
+            L.info("账号[" + this.index + "] 签到后累计: " + detail?.Days ?? 0 + "天");
         } catch (e) {
-            $.log(`账号[${this.index}] 签到失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + e.message || e );
             if (/token|登录|授权|非法请求|1500000004/i.test(String(e.message || e))) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("盈客宝", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

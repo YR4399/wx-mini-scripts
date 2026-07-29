@@ -1,5 +1,6 @@
 // ========== 推送通知 ==========
 const { sendPushNotify } = require("./_push_helper");
+const { sectionLine } = require("./_decor.js");
 // ========== 推送通知结束 ==========
 
 /*
@@ -58,7 +59,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -83,7 +84,7 @@ class Task {
         const cachedToken = this.getCachedToken();
         if (cachedToken) {
             this.ck = cachedToken;
-            $.log(`账号[${this.index}]  使用缓存token验证`);
+            L.info("账号[" + this.index + "]  使用缓存token验证");
             await this.user_info();
         }
 
@@ -180,17 +181,17 @@ class Task {
                 this.openId = result.data.openid
 
                 this.unionId = result.data.unionid
-                $.log(`账号[${this.index}]  code2Session成功`);
+                L.ok("账号[" + this.index + "]  code2Session成功");
                 return true
             } else {
-                $.log(`账号[${this.index}]  code2Session失败❌ ${result.msg || ""}`);
+                L.fail("账号[" + this.index + "]  code2Session失败❌ " + result.msg || "" + "");
                 this.ckStatus = false
 
                 console.log(result);
                 return false
             }
         } catch (e) {
-            $.log(`账号[${this.index}]  code2Session异常❌ ${e.message || e}`);
+            L.fail("账号[" + this.index + "]  code2Session异常❌ " + e.message || e + "");
             this.ckStatus = false
             return false
         }
@@ -217,14 +218,14 @@ class Task {
                 this.ckStatus = !!this.ck;
                 this.mobilePhone = result.data.mobilePhone;
                 this.saveCachedToken();
-                $.log(`账号[${this.index}]  登录成功: [${maskPhone(this.mobilePhone) || "未绑定手机号"}]`);
+                L.ok("账号[" + this.index + "]  登录成功: [" + maskPhone(this.mobilePhone) || "未绑定手机号" + "]");
             } else {
-                $.log(`账号[${this.index}]  登录失败❌ ${result.msg || ""}`);
+                L.fail("账号[" + this.index + "]  登录失败❌ " + result.msg || "" + "");
                 this.ckStatus = false;
                 console.log(result);
             }
         } catch (e) {
-            $.log(`账号[${this.index}]  登录异常❌ ${e.response?.data?.msg || e.message || e}`);
+            L.fail("账号[" + this.index + "]  登录异常❌ " + e.response?.data?.msg || e.message || e + "");
             this.ckStatus = false;
         }
     }
@@ -253,17 +254,17 @@ class Task {
             let { data: result } = await axios.request(options);
             if (result.code == 0) {
                 this.mobilePhone = result.data.mobilePhone;
-                $.log(`账号[${this.index}]  用户CK有效: [${result.data.mobilePhone}] 雪王币剩余[${result.data.customerPoint}]`);
+                L.info("账号[" + this.index + "]  用户CK有效: [" + result.data.mobilePhone + "] 雪王币剩余[" + result.data.customerPoint + "]");
                 this.ckStatus = true
 
             } else {
-                $.log(`账号[${this.index}]  用户CK失效:,原因未知！`);
+                L.fail("账号[" + this.index + "]  用户CK失效:,原因未知！");
                 this.ckStatus = false
 
                 console.log(result);
             }
         } catch (e) {
-            $.log(`账号[${this.index}]  用户信息校验异常❌ ${e.response?.data?.msg || e.message || e}`);
+            L.fail("账号[" + this.index + "]  用户信息校验异常❌ " + e.response?.data?.msg || e.message || e + "");
             this.ckStatus = false
         }
     }
@@ -302,12 +303,12 @@ class Task {
                 this.activityUrl = res?.data.loginUrl;
                 return res?.data.loginUrl;
             } else {
-                $.log(`获取跳转Url失败！原因未知！${res.msg}`);
+                L.fail("获取跳转Url失败！原因未知！" + res.msg + "");
 
             }
 
         } catch (e) {
-            $.log(`❌获取跳转Url失败！原因为${e}`);
+            L.fail("❌获取跳转Url失败！原因为" + e + "");
         }
     }
     ObjectKeys2LowerCase(e) { return e = Object.fromEntries(Object.entries(e).map((([e, t]) => [e.toLowerCase(), t]))), new Proxy(e, { get: function (e, t, r) { return Reflect.get(e, t.toLowerCase(), r) }, set: function (e, t, r, n) { return Reflect.set(e, t.toLowerCase(), r, n) } }) }
@@ -334,12 +335,12 @@ class Task {
 
             let [wdata4, w_ts, _ac, wdata3, dcustom] = session.match(/(wdata4|w_ts|_ac|wdata3|dcustom)=.+?;/g)
             this.session = wdata4 + w_ts + _ac + wdata3 + dcustom;
-            $.log(`✅ 获取活动token成功！`)
+            L.ok("✅ 获取活动token成功！")
 
 
         } catch (e) {
 
-            $.log(`⛔️ 获取活动token失败！${e}`);
+            L.fail("⛔️ 获取活动token失败！" + e + "");
         }
     }
     async activityIndex() {
@@ -358,10 +359,10 @@ class Task {
             }
 
             await axios.request(opts);
-            $.log(`✅ 访问雪王铺:调用成功!`);
+            L.ok("✅ 访问雪王铺:调用成功!");
         } catch (e) {
 
-            $.log(`⛔️ 访问雪王铺:调用失败!${e}`);
+            L.fail("⛔️ 访问雪王铺:调用失败!" + e + "");
         }
     }
     async task_signin() {
@@ -390,11 +391,11 @@ class Task {
             let { data: result } = await axios.request(options);
             //console.log(result);
             if (result.code == 0) {
-                $.log(`账号[${this.index}]  签到成功:累计签到 [${result.data.ruleValueGrowth}]天 本次获得[${result.data.ruleValuePoint}]币`);
+                L.ok("账号[" + this.index + "]  签到成功:累计签到 [" + result.data.ruleValueGrowth + "]天 本次获得[" + result.data.ruleValuePoint + "]币");
                 this.ckStatus = true
 
             } else {
-                $.log(`账号[${this.index}]  签到:失败 ❌ 了呢,原因未知！`);
+                L.fail("账号[" + this.index + "]  签到:失败 ❌ 了呢,原因未知！");
                 console.log(result);
             }
         } catch (e) {
@@ -461,7 +462,10 @@ dOGyw/X4SFyodv8AEloqd81yGg==
 }
 
 !(async () => {
+  sectionLine("蜜雪冰城", "");
+  sectionLine("蜜雪冰城", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (let user of $.userList) {

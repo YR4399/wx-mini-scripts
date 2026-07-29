@@ -26,6 +26,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("千金健康生活微信小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -64,17 +65,17 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
 function shortToken(token = "") {
-    return token ? `${token.slice(0, 8)}***${token.slice(-6)}` : "";
+    return token ? token.slice(0, 8) + "***" + token.slice(-6) : "";
 }
 
 function maskPhone(phone = "") {
     const text = String(phone || "");
-    return /^1\d{10}$/.test(text) ? `${text.slice(0, 3)}****${text.slice(7)}` : text;
+    return /^1\d{10}$/.test(text) ? text.slice(0, 3) + "****" + text.slice(7) : text;
 }
 
 function getContent(result) {
@@ -100,9 +101,9 @@ class Task {
         const cached = this.getCachedToken();
         if (cached?.accessToken) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) );
             if (!(await this.checkToken())) {
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
                 this.removeCachedToken();
             }
         }
@@ -221,9 +222,9 @@ class Task {
             if (!this.token || !this.tenId) throw new Error(`登录响应缺少token/tenId: ${JSON.stringify(data)}`);
 
             this.saveCachedToken();
-            $.log(`账号[${this.index}] CODE登录成功: tenId=${this.tenId} openid=${this.wxOpenid}`);
+            L.ok("账号[" + this.index + "] CODE登录成功: tenId=" + this.tenId + " openid=" + this.wxOpenid );
         } catch (e) {
-            $.log(`账号[${this.index}] CODE登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] CODE登录失败: " + e.message || e );
         }
     }
 
@@ -240,7 +241,7 @@ class Task {
         const data = await this.api("/api/crm/rest/v2/customer/info", {});
         this.customerInfo = data || {};
         if (log) {
-            $.log(`账号[${this.index}] 会员: ${this.customerInfo.cstName || this.customerInfo.cstId || ""} ${maskPhone(this.customerInfo.phone || "")} 积分=${this.customerInfo.pointall ?? this.customerInfo.points ?? "未知"}`);
+            L.info("账号[" + this.index + "] 会员: " + (this.customerInfo.cstName || this.customerInfo.cstId || "") + " " + maskPhone(this.customerInfo.phone || "") + " 积分=" + (this.customerInfo.pointall ?? this.customerInfo.points ?? "未知"));
         }
         return data;
     }
@@ -255,9 +256,9 @@ class Task {
     async signIn() {
         try {
             const status = await this.getSignTaskStatus();
-            $.log(`账号[${this.index}] 签到状态: status=${status.status ?? ""} buttonType=${status.buttonType || ""}`);
+            L.info("账号[" + this.index + "] 签到状态: status=" + (status.status ?? "") + " buttonType=" + (status.buttonType || "") );
             if ([1, 2, 55].includes(Number(status.status)) || /已完成|已签到/i.test(String(status.buttonType || ""))) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
 
@@ -266,17 +267,19 @@ class Task {
                 taskCode: SIGN_TASK_CODE,
             });
             const awards = (data.givenRecords || []).map((item) => item.awardName).filter(Boolean).join("+");
-            $.log(`账号[${this.index}] 签到成功${awards ? `，获得${awards}` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功" + (awards ? "，获得" + awards : ""));
         } catch (e) {
             const message = e.message || String(e);
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("千金健康", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const item of $.userList) {
         if (!item) continue;

@@ -8,6 +8,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("植白说小程序");
 const axios = require("axios");
 const fs = require("fs");
@@ -49,7 +50,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -79,10 +80,10 @@ class Task {
         if (cached?.token) {
             this.token = cached.token;
             this.userInfo = cached.userInfo || {};
-            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) + "");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -183,9 +184,9 @@ class Task {
             this.token = token;
             this.userInfo = result?.data?.userInfo || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${this.userInfo.nickname || maskPhone(this.userInfo.mobile) || this.userId}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + this.userInfo.nickname || maskPhone(this.userInfo.mobile) || this.userId + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
         }
     }
 
@@ -206,10 +207,10 @@ class Task {
                 data: { userId: this.userId },
             });
             const integer = result?.data?.integer ?? result?.data?.integral ?? result?.data?.point ?? "未知";
-            $.log(`🌸账号[${this.index}] ${prefix}积分: ${integer}🎉`);
+            L.info("🌸账号[" + this.index + "] " + prefix + "积分: " + integer + "🎉");
         } catch (e) {
             const message = String(e.message || e);
-            $.log(`🌸账号[${this.index}] 获取积分失败: ${message}❌`);
+            L.fail("🌸账号[" + this.index + "] 获取积分失败: " + message + "❌");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -220,28 +221,30 @@ class Task {
                 data: { userId: this.userId },
             });
             if (status?.data?.isSign) {
-                $.log(`🌸账号[${this.index}] 今日已签到`);
+                L.info("🌸账号[" + this.index + "] 今日已签到");
                 return;
             }
 
             await this.request("home/sign", {
                 data: { userId: this.userId },
             });
-            $.log(`🌸账号[${this.index}] 签到成功🎉`);
+            L.ok("🌸账号[" + this.index + "] 签到成功🎉");
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|已签|重复/.test(message)) {
-                $.log(`🌸账号[${this.index}] 今日已签到`);
+                L.info("🌸账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`🌸账号[${this.index}] 签到失败: ${message}❌`);
+            L.fail("🌸账号[" + this.index + "] 签到失败: " + message + "❌");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("植白说", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (const user of $.userList) {

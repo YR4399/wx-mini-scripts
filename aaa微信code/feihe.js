@@ -285,6 +285,7 @@ class Task {
 
 !(async () => {
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     if (!$.userCount) return;
 

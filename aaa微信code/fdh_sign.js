@@ -3,6 +3,7 @@
 cron: 30 8 * * *
 */
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine } = require("./_decor");
 const $ = new Env("福东海");
 const axios = require("axios");
 const fs = require("fs");
@@ -29,7 +30,7 @@ function readCache() {
 }
 function writeCache(c) {
     try { fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(c,null,2),"utf8"); }
-    catch(e) { $.log(`缓存写入失败: ${e.message}`); }
+    catch(e) { L.fail("缓存写入失败: " + e.message);
 }
 
 class Task {
@@ -93,7 +94,7 @@ class Task {
         this.mobile = d.mobile || "";
         if (!this.token) throw new Error(`登录未返回 sessionId: ${JSON.stringify(resp.data)}`);
         this.saveCache();
-        $.log(`账号[${this.index}] 登录成功 uid=${this.userId} ${this.mobile}`);
+        L.ok("账号[" + this.index + "] 登录成功 uid=" + this.userId + " " + this.mobile );
     }
 
     async get(path, params = {}) {
@@ -116,11 +117,11 @@ class Task {
             this.token = cached.token;
             this.userId = cached.userId;
             this.mobile = cached.mobile;
-            $.log(`账号[${this.index}] 使用缓存 uid=${this.userId}`);
+            L.info("账号[" + this.index + "] 使用缓存 uid=" + this.userId );
             try {
                 await this.get("/wscuser/membercenter/stats.json", { currentKdtId: KDT_ID, version: "2.233.4.101" });
             } catch {
-                $.log(`账号[${this.index}] 缓存失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存失效，重新登录");
                 this.token = "";
             }
         }
@@ -131,18 +132,18 @@ class Task {
         try {
             const status = await this.get("/wscump/checkin/get_activity_by_yzuid_v2.json", { checkinId: CHECKIN_ID });
             if (status?.isCheckin) {
-                $.log(`账号[${this.index}] 今日已签到 (连续${status.continuesDay}天)`);
+                L.info("账号[" + this.index + "] 今日已签到 (连续" + status.continuesDay + "天)");
                 if (status.rewards?.length) {
                     const prize = status.rewards.find(r => !r.fetched);
-                    if (prize) $.log(`  连续签到奖励待领取: ${prize.duration}天`);
+                    if (prize) L.info("  连续签到奖励待领取: " + prize.duration + "天");
                 }
             } else {
-                const extraData = JSON.stringify({ is_weapp: 1, sid: this.token, userId: this.userId, version: "2.233.4.101", client: "weapp" });
+                const extraData = JSON.stringify({ is_weapp: 1, sid: this.token, userId: this.userId, version: "2.233.4.101", client: "weapp"});
                 const url = `${API_BASE}/wscump/checkin/checkinV2.json?app_id=${MINI_APP_ID}&kdt_id=${KDT_ID}&access_token=${this.token}&checkinId=${CHECKIN_ID}&userId=${this.userId}`;
                 const resp2 = await axios.get(url, {
                     headers: {
                         ...this.headers,
-                        "Cookie": `KDTSESSIONID=${this.token}`,
+                        Cookie: `KDTSESSIONID=${this.token}`,
                         "Extra-Data": extraData,
                     },
                     timeout: 15000,
@@ -150,26 +151,28 @@ class Task {
                 });
                 const result = resp2.data;
                 if (result?.code === 0 || result?.success) {
-                    $.log(`账号[${this.index}] 签到成功: +10积分`);
+                    L.ok("账号[" + this.index + "] 签到成功: +10积分");
                 } else if (/已达最大参与|已签到|已签|already|limit/i.test(result?.msg || "")) {
-                    $.log(`账号[${this.index}] 今日已签到`);
+                    L.info("账号[" + this.index + "] 今日已签到");
                 } else {
-                    $.log(`账号[${this.index}] 签到失败: ${result?.msg || JSON.stringify(result)}`);
+                    L.fail("账号[" + this.index + "] 签到失败: " + (result?.msg || JSON.stringify(result)));
                 }
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 签到异常: ${e.message}`);
+            L.fail("账号[" + this.index + "] 签到异常: " + e.message );
         }
 
         // 查询积分
         try {
             const stats = await this.get("/wscuser/membercenter/stats.json", { currentKdtId: KDT_ID, version: "2.233.4.101" });
-            $.log(`账号[${this.index}] 当前积分: ${stats?.stats?.points ?? "?"}`);
+            L.info("x e8 x90 x88x e6 x80 xbbx e5 x8f x8c[" + this.index + "] x e5 x85 xbbx e5 x89 x8dx e7 x94 xafx e5 xbc x95: " + (stats?.stats?.points ?? "?"));
         } catch {}
     }
 }
 
 !(async () => {
+sectionLine("福东海签到", "");
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const user of $.userList) {
         await new Task(user).run();
@@ -178,3 +181,5 @@ class Task {
     const _logs = $.notifyStr || [];
     if (_logs.length > 0) await sendPushNotify(origin_title, _logs.join("\n"));
   }).finally(() => $.done());
+
+}

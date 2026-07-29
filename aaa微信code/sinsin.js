@@ -16,6 +16,7 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("sinsin微信小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -54,7 +55,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -79,10 +80,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.token = cached;
-            $.log(`账号[${this.index}] 使用缓存session: ${maskToken(this.sessionId)}`);
+            L.info("账号[" + this.index + "] 使用缓存session: " + maskToken(this.sessionId) );
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存session失效，重新code登录`);
+                L.fail("账号[" + this.index + "] 缓存session失效，重新code登录");
             }
         }
 
@@ -140,10 +141,10 @@ class Task {
     buildUrl(apiPath, query = {}) {
         const pathname = apiPath.replace(/^\/+/, "");
         const params = querystring.stringify({
-            store_id: "",
             app_id: MINI_APP_ID,
             kdt_id: KDT_ID,
-            access_token: this.accessToken,
+            access_token: (this.token && (this.token.accessToken || this.token.access_token)) || "",
+            store_id: "",
             ...query,
         });
         return `${API_BASE}/${pathname}?${params}`;
@@ -154,7 +155,7 @@ class Task {
             "User-Agent": USER_AGENT,
             "Referer": `https://servicewechat.com/${MINI_APP_ID}/54/page-frame.html`,
             "Extra-Data": this.buildExtraData(),
-            "Cookie": this.sessionId ? `KDTSESSIONID=${this.sessionId}; yz_log_seqb=1` : "",
+            "Cookie": this.sessionId ? "KDTSESSIONID=" + this.sessionId + "; yz_log_seqb=1" : "",
             "Accept": "application/json, text/plain, */*",
             ...extra,
         };
@@ -186,15 +187,13 @@ class Task {
         if (!wxServerUrl || !wxAuth) throw new Error("未配置 wx_server_url 或 wx_auth");
 
         const { status, data } = await axios.post(
-            `${wxServerUrl.replace(/\/$/, "")}/wx/code`,
+            wxServerUrl + "/wx/code",
             { appid: MINI_APP_ID, openid: this.openid },
             {
                 headers: {
                     auth: wxAuth,
                     "content-type": "application/json",
-                },
-                timeout: 15000,
-                validateStatus: () => true,
+            }
             }
         );
         const code = data?.code || data?.data?.code || data?.phoneCode || data?.data?.phoneCode;
@@ -206,7 +205,7 @@ class Task {
         try {
             const code = await this.getWxCode();
             const { status, data } = await axios.post(
-                `${UIC_BASE}/passport/general/auth.json`,
+                UIC_BASE + "/passport/general/auth.json",
                 {
                     appId: MINI_APP_ID,
                     code,
@@ -220,8 +219,6 @@ class Task {
                         "Referer": `https://servicewechat.com/${MINI_APP_ID}/54/page-frame.html`,
                         "X-Requested-With": "XMLHttpRequest",
                     },
-                    timeout: 15000,
-                    validateStatus: () => true,
                 }
             );
             if (status !== 200 || data?.code !== 0 || !data?.data?.sessionId) {
@@ -229,9 +226,9 @@ class Task {
             }
             this.token = data.data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${data.data?.nickName || data.data?.nickname || ""} ${maskPhone(data.data?.mobile)}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + data.data?.nickName || data.data?.nickname || "" + " " + maskPhone(data.data?.mobile) );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -247,20 +244,20 @@ class Task {
     async getPoints(label = "积分") {
         const data = await this.request({ apiPath: "wscump/integral/user_points.json" });
         const points = data?.current_points ?? data?.real_points ?? data?.total_points ?? "未知";
-        $.log(`账号[${this.index}] ${label}: ${points}积分`);
+        L.info("账号[" + this.index + "] " + label + ": " + points + "积分");
         return data;
     }
 
     async getCheckinInfo() {
         const data = await this.request({ apiPath: "wscump/checkin/show_checkin_page_v2.json" });
         this.checkinId = data?.checkinId || data?.checkin_id || "";
-        $.log(`账号[${this.index}] 签到活动: checkinId=${this.checkinId || "未获取"} isShow=${data?.isShow} showPage=${data?.showPage}`);
+        L.info("账号[" + this.index + "] 签到活动: checkinId=" + this.checkinId || "未获取" + " isShow=" + data?.isShow + " showPage=" + data?.showPage );
         return data;
     }
 
     async doCheckin() {
         if (!this.checkinId) {
-            $.log(`账号[${this.index}] 未获取到签到活动，跳过`);
+            L.info("账号[" + this.index + "] 未获取到签到活动，跳过");
             return;
         }
         try {
@@ -272,25 +269,27 @@ class Task {
                 .map((item) => item?.infos?.title || item?.infos?.desc || "")
                 .filter(Boolean)
                 .join(", ");
-            $.log(`账号[${this.index}] 签到成功: ${data?.desc || ""}${award ? ` ${award}` : ""}`);
+L.ok("账号[" + this.index + "] 签到成功: " + (data?.desc || "") + (award ? " " + award : ""));
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|已经签到|重复|今日.*签|参与次数|最大参与次数/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
             if (/手机号未授权|mobile.*authorized/i.test(message)) {
-                $.log(`账号[${this.index}] 签到失败: 用户手机号未授权，请先在小程序内完成手机号授权`);
+                L.fail("账号[" + this.index + "] 签到失败: 用户手机号未授权，请先在小程序内完成手机号授权");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (e.code === -1 || e.code === 40010 || e.code === 40009 || /登录|token|session|access/i.test(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("SINSIN", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

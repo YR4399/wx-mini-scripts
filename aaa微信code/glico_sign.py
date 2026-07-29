@@ -3,6 +3,21 @@ urllib3.disable_warnings()
 ssl._create_default_https_context=ssl._create_unverified_context
 for k in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy"):os.environ.pop(k,None)
 
+from requests.exceptions import Timeout, ConnectionError, ReadTimeout, ConnectTimeout
+def _req_retry(method, url, attempts=3, **kw):
+    """对 crm.glico.cn 偶发 Read timed out / 连接抖动做自动重试"""
+    last = None
+    for i in range(attempts):
+        try:
+            return method(url, **kw)
+        except (Timeout, ConnectionError, ReadTimeout, ConnectTimeout) as e:
+            last = e
+            if i < attempts - 1:
+                time.sleep(1.5 * (i + 1))
+                continue
+            raise
+    raise last
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -265,20 +280,20 @@ class GlicoClient:
 
     def _get(self, path, params=None):
         url = f'{API_BASE}{path}'
-        resp = requests.get(url, params=params, verify=False,
-                            headers=make_headers(self.token), timeout=15)
+        resp = _req_retry(requests.get, url, params=params, verify=False,
+                          headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _post(self, path, data=None, params=None):
         url = f'{API_BASE}{path}'
-        resp = requests.post(url, json=(data or {}), params=params, verify=False,
-                             headers=make_headers(self.token), timeout=15)
+        resp = _req_retry(requests.post, url, json=(data or {}), params=params, verify=False,
+                          headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _put(self, path, data=None):
         url = f'{API_BASE}{path}'
-        resp = requests.put(url, json=(data or {}), verify=False,
-                            headers=make_headers(self.token), timeout=15)
+        resp = _req_retry(requests.put, url, json=(data or {}), verify=False,
+                          headers=make_headers(self.token), timeout=15)
         return self._handle_resp(resp)
 
     def _handle_resp(self, resp):
@@ -334,7 +349,8 @@ def login_with_code(code):
     """
     # Step 1: code 换 token
     log.info('[登录] Step 1: code 换 token...')
-    resp = requests.post(
+    resp = _req_retry(
+        requests.post,
         f'{API_BASE}/auth/signin_oauth_weixin_mp',
         json={'code': code},
         headers=make_headers(),
@@ -353,7 +369,8 @@ def login_with_code(code):
 
     # Step 2: 验证 token 有效性（拉取会员信息）
     time.sleep(random.uniform(0.3, 0.8))
-    profile_resp = requests.get(
+    profile_resp = _req_retry(
+        requests.get,
         f'{API_BASE}/profile',
         headers=make_headers(token),
         timeout=15,

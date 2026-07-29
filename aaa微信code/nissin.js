@@ -8,6 +8,7 @@ cron: 28 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("日清食品签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -50,7 +51,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -77,10 +78,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -144,17 +145,15 @@ class Task {
     async request({ method = "GET", apiPath, data, params, skipToken = false }) {
         const options = {
             method,
-            url: `${API_BASE}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
-            headers: this.getHeaders(method === "POST" ? { "Content-Type": "application/json" } : {}),
-            timeout: 15000,
-            validateStatus: () => true,
+            url: API_BASE + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
+            headers: this.getHeaders(method === "POST" ? { "Content-Type": "application/json" } : {})
         };
         if (params) options.params = params;
         if (data !== undefined) options.data = data;
         if (skipToken) delete options.headers.Authorization;
 
         const { status, data: result, headers } = await axios.request(options);
-        if (status !== 200) throw new Error(`HTTP ${status}: ${JSON.stringify(result)}`);
+        if (status !== 200) throw new Error("HTTP " + status + ": " + JSON.stringify(result));
         if (headers && headers["auth-status"] === "false") {
             const err = new Error("Auth-Status=false");
             err.code = 900001;
@@ -187,7 +186,7 @@ class Task {
                     invitorMemberId: 0,
                 },
             });
-            this.redOpenId = openData.openId || "";
+            this.redOpenId = openData.openId || ""
             if (!this.redOpenId) throw new Error(`auth/getOpenId 未返回 openId: ${JSON.stringify(openData)}`);
 
             const loginData = await this.request({
@@ -203,9 +202,9 @@ class Task {
                 redOpenId: this.redOpenId,
             });
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: userId=${this.userId || "未知"}`);
+            L.ok("账号[" + this.index + "] 登录成功: userId=" + this.userId || "未知" );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -223,9 +222,9 @@ class Task {
             const data = await this.request({ apiPath: "/auth/user/current" });
             this.user = data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 用户: ${data?.nickname || data?.name || ""} ${maskPhone(data?.mobile) || ""}`);
+            L.info("账号[" + this.index + "] 用户: " + data?.nickname || data?.name || "" + " " + maskPhone(data?.mobile) || "" );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询用户失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询用户失败: " + e.message || e );
             if (isTokenError(e)) this.removeCachedToken();
         }
     }
@@ -234,14 +233,14 @@ class Task {
         const data = await this.request({ apiPath: "/sign-in/statistics" });
         this.signInfo = data || {};
         if (!silent) {
-            $.log(`账号[${this.index}] 签到状态: ${data?.hasSignedToday ? "已签" : "未签"} 连续${data?.continuousDays || 0}天 总${data?.totalDays || 0}天 今日${data?.todayPoints ?? "未知"}积分`);
+            L.info("账号[" + this.index + "] 签到状态: " + (data?.hasSignedToday ? "已签" : "未签") + " 连续" + (data?.continuousDays || 0) + "天 总" + (data?.totalDays || 0) + "天 今日" + (data?.todayPoints ?? "未知") + "积分");
         }
         return data;
     }
 
     async doSign() {
         if (this.signInfo?.hasSignedToday) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return;
         }
         try {
@@ -250,15 +249,15 @@ class Task {
                 apiPath: "/sign-in",
                 data: {},
             });
-            $.log(`账号[${this.index}] 签到成功: +${data ?? "未知"}积分`);
+            L.ok("账号[" + this.index + "] 签到成功: +" + data ?? "未知" + "积分");
             await this.getSignInInfo();
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|重复|今日.*签/i.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (isTokenError(e)) this.removeCachedToken();
         }
     }
@@ -268,7 +267,7 @@ class Task {
             const data = await this.request({ apiPath: "/taskCenter/getEffectiveTask" });
             return Array.isArray(data) ? data : [];
         } catch (e) {
-            $.log(`账号[${this.index}] 查询任务列表失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询任务列表失败: " + e.message || e );
             if (isTokenError(e)) this.removeCachedToken();
             return [];
         }
@@ -279,7 +278,7 @@ class Task {
             const beforeTasks = await this.getTaskList();
             const gameTask = beforeTasks.find((item) => item?.ruleType === "PLAY_GAME");
             if (gameTask) {
-                $.log(`账号[${this.index}] 玩游戏任务: ${gameTask.complete ? "已完成" : "未完成"}`);
+                L.info("账号[" + this.index + "] 玩游戏任务: " + gameTask.complete ? "已完成" : "未完成" );
             }
 
             const gameConfig = await this.request({ apiPath: "/game/config" });
@@ -302,25 +301,27 @@ class Task {
                 validateStatus: () => true,
             });
             if (page.status >= 200 && page.status < 400) {
-                $.log(`账号[${this.index}] 已进入游戏: ${gameConfig?.shareTitle || "日清消消乐"} 剩余次数=${playCount ?? "未知"}`);
+                L.info("账号[" + this.index + "] 已进入游戏: " + (gameConfig?.shareTitle || "日清消消乐") + " 剩余次数=" + (playCount ?? "未知"));
             } else {
-                $.log(`账号[${this.index}] 进入游戏页面异常: HTTP ${page.status}`);
+                L.fail("账号[" + this.index + "] 进入游戏页面异常: HTTP " + page.status );
             }
 
             const afterTasks = await this.getTaskList();
             const updatedGameTask = afterTasks.find((item) => item?.ruleType === "PLAY_GAME");
             if (updatedGameTask) {
-                $.log(`账号[${this.index}] 玩游戏任务更新: ${updatedGameTask.complete ? "已完成" : "未完成"}`);
+                L.info("账号[" + this.index + "] 玩游戏任务更新: " + updatedGameTask.complete ? "已完成" : "未完成" );
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 进入游戏失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 进入游戏失败: " + e.message || e );
             if (isTokenError(e)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("日清食品", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

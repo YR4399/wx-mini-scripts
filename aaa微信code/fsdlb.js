@@ -25,6 +25,7 @@ cron: 30 9 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("逢三得利吧小程序");
 const axios = require("axios");
 const fs = require("fs");
@@ -72,7 +73,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -109,10 +110,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
+            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) + "");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -220,9 +221,9 @@ class Task {
             this.userInfo = data?.thirdUsrIf || {};
             if (!this.token) throw new Error(`登录响应未返回token: ${JSON.stringify(data)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${maskPhone(this.userInfo.phone) || this.userInfo.oid || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + maskPhone(this.userInfo.phone) || this.userInfo.oid || "" + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
         }
     }
 
@@ -247,14 +248,14 @@ class Task {
                     miniappId: MINIAPP_ID,
                 },
             });
-            $.log(`🕊账号[${this.index}] 签到成功:${data?.integralToastText || "成功"}🎉`);
+            L.ok("🕊账号[" + this.index + "] 签到成功:" + data?.integralToastText || "成功" + "🎉");
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|已签|重复/.test(message)) {
-                $.log(`🕊账号[${this.index}] 今日已签到`);
+                L.info("🕊账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`🕊账号[${this.index}] 签到失败:${message}🚫`);
+            L.fail("🕊账号[" + this.index + "] 签到失败:" + message + "🚫");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -265,17 +266,19 @@ class Task {
                 path: "/user/auth/member/integral/union/flow/list",
                 params: { pageNo: 1, pageSize: 10, dataType: "SCORE" },
             });
-            $.log(`🕊账号[${this.index}] 查询成功:总积分[${data?.totalScore ?? "未知"}]🎉`);
+            L.ok("🕊账号[" + this.index + "] 查询成功:总积分[" + data?.totalScore ?? "未知" + "]🎉");
         } catch (e) {
             const message = String(e.message || e);
-            $.log(`🕊账号[${this.index}] 查询失败:${message}🚫`);
+            L.fail("🕊账号[" + this.index + "] 查询失败:" + message + "🚫");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("三得利", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
 
     for (const openid of $.userList) {

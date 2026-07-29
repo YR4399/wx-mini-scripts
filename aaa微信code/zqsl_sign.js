@@ -276,7 +276,8 @@ async function miniLogin(openid, cache) {
     return null;
   }
   const authCode = r.data.data.token;
-  const userId = JSON.parse(Buffer.from(authCode.split('.')[1], 'base64').toString()).sub.userId;
+  const jwtSub = JSON.parse(Buffer.from(authCode.split('.')[1], 'base64').toString()).sub;
+  const userId = (typeof jwtSub === 'string' ? JSON.parse(jwtSub) : jwtSub).userId;
   $.ok(`登录成功! userId=${userId}`);
 
   // Save to cache
@@ -381,7 +382,7 @@ async function processAccount(openid, cache) {
   $.info(`\n======== 账号: ${openid} ========`);
   const summary = { sign: false, tasks: 0, taskAwards: 0, points: 0, dice: 0, diceRolled: 0 };
 
-  // Step 1: Mini-program login (with cache)
+  // Step 1: Mini-program login (with cache + auto-refresh on expiry)
   let authData = cache[openid];
   if (authData && authData.authCode) {
     $.info('使用缓存的登录凭证...');
@@ -390,9 +391,18 @@ async function processAccount(openid, cache) {
     if (!authData) { $.err('登录失败，跳过此账号'); return summary; }
   }
 
-  // Step 2: Game backend login
-  const gameToken = await gameLogin(authData.authCode);
-  if (!gameToken) { $.err('游戏登录失败，跳过此账号'); return summary; }
+  // Step 2: Game backend login (缓存凭证失败则刷新重试一次)
+  let gameToken = await gameLogin(authData.authCode);
+  if (!gameToken) {
+    // 缓存的 authCode 虽 JWT 未过期，但游戏后端可能已判失效 → 重新登录拿新凭证
+    $.info('缓存凭证已失效，重新登录获取新凭证...');
+    delete cache[openid];
+    saveCache(cache);
+    authData = await miniLogin(openid, cache);
+    if (!authData) { $.err('重新登录失败，跳过此账号'); return summary; }
+    gameToken = await gameLogin(authData.authCode);
+    if (!gameToken) { $.err('游戏登录失败，跳过此账号'); return summary; }
+  }
 
   // Step 3: Get RSA keys
   const rsaKeys = await getRsaKeys(gameToken);

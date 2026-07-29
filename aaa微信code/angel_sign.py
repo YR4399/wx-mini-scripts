@@ -586,7 +586,7 @@ if __name__ == "__main__":
     import io
 
 
-    _tee_out, _tee_err = _enable_tee()
+    _log_capture, _tee_err = _enable_tee()
 
     # Make logging also write to _log_capture (fix empty push issue)
     _capture_handler = logging.StreamHandler(_log_capture)

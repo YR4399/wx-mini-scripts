@@ -4,6 +4,7 @@ cron: 30 8 * * *
 */
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("梦百合");
 const axios = require("axios");
 const fs = require("fs");
@@ -70,7 +71,7 @@ class Task {
         this.token = resp.data?.data?.access_token || resp.data?.data?.token || resp.data?.data || "";
         if (!this.token) throw new Error("登录未返回token");
         this.saveCache();
-        $.log("账号[" + this.index + "] 登录成功");
+        L.ok("账号[" + this.index + "] 登录成功");
     }
 
     async get(path, extra = {}) {
@@ -89,7 +90,7 @@ class Task {
             this.guestToken = cached.guestToken || this.guestToken;
             try {
                 await this.get("/v1/account/info");
-                $.log("账号[" + this.index + "] 使用缓存token");
+                L.info("账号[" + this.index + "] 使用缓存token");
             } catch (e) {
                 $.log("账号[" + this.index + "] 缓存失效: " + e.message);
                 this.token = "";
@@ -109,9 +110,9 @@ class Task {
                 validateStatus: () => true,
             });
             if (resp.data?.code === 1) {
-                $.log("账号[" + this.index + "] 签到成功: +" + (resp.data?.data || "积分"));
+                L.ok("账号[" + this.index + "] 签到成功: +" + (resp.data?.data || "积分"));
             } else if (/已签到|已签|already/i.test(resp.data?.msg || "")) {
-                $.log("账号[" + this.index + "] 今日已签到");
+                L.info("账号[" + this.index + "] 今日已签到");
             } else {
                 $.log("账号[" + this.index + "] 签到失败: " + (resp.data?.msg || JSON.stringify(resp.data)));
             }
@@ -123,16 +124,17 @@ class Task {
         try {
             const info = await this.get("/v1/account/info");
             const authInfo = info?.authInfo || {};
-            $.log("账号[" + this.index + "] 积分:" + (authInfo.integral || 0) + " | " + (authInfo.levelName || "会员"));
+            L.info("账号[" + this.index + "] 积分:" + (authInfo.integral || 0) + " | " + (authInfo.levelName || "会员"));
         } catch {}
     }
 }
 
 async function main() {
+$.userIdx = 0;
     $.checkEnv(ckName);
     const users = $.userList || [];
-    if (!users.length) { $.log("未配置wx_opinion"); return; }
-    $.log("共" + users.length + "个账号");
+    if (!users.length) { L.info("未配置wx_opinion"); return; }
+    L.info("共" + users.length + "个账号");
     const results = [];
     for (const user of users) {
         try {

@@ -16,6 +16,7 @@ cron: 38 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("烈儿宝贝小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -60,7 +61,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -101,10 +102,11 @@ class Task {
             const cached = this.getCachedToken();
             if (cached) {
                 this.applyToken(cached);
-                $.log(`账号[${this.index}] 使用缓存token`);
+                L.info("账号[" + this.index + "] 使用缓存token");
                 if (!(await this.checkToken())) {
                     this.removeCachedToken();
-                    $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                    L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+
                 }
             }
         }
@@ -168,7 +170,7 @@ class Task {
             appId: MINI_APP_ID,
             version: APP_VERSION,
             envVersion: ENV_VERSION,
-            "xy-extra-data": `appid=${MINI_APP_ID};version=${APP_VERSION};envVersion=${ENV_VERSION};`,
+            "xy-extra-data": "appid=" + MINI_APP_ID + ";version=" + APP_VERSION + ";envVersion=" + ENV_VERSION + ";",
             ...extra,
         };
         if (this.authorization) headers.Authorization = this.authorization;
@@ -220,9 +222,9 @@ class Task {
             this.applyToken(data);
             if (!this.authorization) throw new Error(`登录未返回token: ${JSON.stringify(data)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: userId=${data.userId || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: userId=" + data.userId || "" );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -248,7 +250,7 @@ class Task {
         if (log) {
             const name = data.nickName || data.memberName || data.userId || "未知";
             const mobile = data.userMobile || data.mobile || "";
-            $.log(`账号[${this.index}] 用户: ${name}${mobile ? ` ${maskMobile(mobile)}` : ""}`);
+            L.info("账号[" + this.index + "] 用户: " + name + (mobile ? " " + maskMobile(mobile) : ""));
         }
         return data;
     }
@@ -259,11 +261,11 @@ class Task {
                 method: "GET",
                 apiPath: "/pointsSign/user/pointsInfo/query",
             });
-            $.log(`账号[${this.index}] 积分: ${data?.pointsNums ?? "未知"} 连签=${data?.seriesDays ?? 0} 今日=${data?.signTodayResult ? "已签" : "未签"}`);
+            L.info("账号[" + this.index + "] 积分: " + data?.pointsNums ?? "未知" + " 连签=" + data?.seriesDays ?? 0 + " 今日=" + data?.signTodayResult ? "已签" : "未签" );
             return data;
         } catch (e) {
             const message = e.message || e;
-            $.log(`账号[${this.index}] 查询积分失败: ${message}`);
+            L.fail("账号[" + this.index + "] 查询积分失败: " + message );
             if (/token|登录|授权|401/i.test(String(message))) this.removeCachedToken();
         }
     }
@@ -279,17 +281,17 @@ class Task {
             const todayItem = Array.isArray(data) ? data.find((item) => item?.isToday || item?.dateStr === today) : null;
             this.todayDate = todayItem?.dateStr || today;
             this.isTodaySign = Number(todayItem?.daySignStatus) === 2 || Boolean(todayItem?.sign);
-            $.log(`账号[${this.index}] 签到状态: ${this.todayDate} ${this.isTodaySign ? "已签" : "未签"}`);
+            L.info("账号[" + this.index + "] 签到状态: " + this.todayDate + " " + this.isTodaySign ? "已签" : "未签" );
         } catch (e) {
             const message = e.message || e;
-            $.log(`账号[${this.index}] 查询签到状态失败: ${message}`);
+            L.fail("账号[" + this.index + "] 查询签到状态失败: " + message );
             if (/token|登录|授权|401/i.test(String(message))) this.removeCachedToken();
         }
     }
 
     async doSign() {
         if (this.isTodaySign) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return;
         }
         try {
@@ -299,21 +301,23 @@ class Task {
                 apiPath: "/pointsSign/user/sign",
                 params: { date },
             });
-            $.log(`账号[${this.index}] 签到成功: +${data?.signReward ?? data?.reward ?? "未知"}积分`);
+            L.ok("账号[" + this.index + "] 签到成功: +" + data?.signReward ?? data?.reward ?? "未知" + "积分");
         } catch (e) {
             const message = String(e.message || e);
             if (/已签|重复|今日.*签/i.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + message );
             if (/token|登录|授权|401/i.test(message)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("烈儿宝贝", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

@@ -8,6 +8,7 @@ cron: 35 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("大参林小程序签到");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -56,7 +57,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -65,7 +66,7 @@ function todayText() {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    return y + "-" + m + "-" + day;
 }
 
 function maskPhone(phone = "") {
@@ -101,10 +102,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -166,7 +167,7 @@ class Task {
         const token = this.token;
         const options = {
             method: upperMethod,
-            url: `${base}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
+            url: base + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
             headers: this.getHeaders(),
             timeout: 20000,
             validateStatus: () => true,
@@ -174,7 +175,7 @@ class Task {
         };
 
         if (token && urlToken) {
-            if (options.url.includes("?")) options.url += `&mini_token=${encodeURIComponent(token)}`;
+            if (options.url.includes("?")) options.url += "&mini_token=" + encodeURIComponent(token);
             else options.url += `?mini_token=${encodeURIComponent(token)}`;
         }
 
@@ -200,7 +201,7 @@ class Task {
         try {
             const code = await this.getLoginCode();
             const result = await axios.request({
-                method: "POST",
+                method: POST,
                 url: `${CRM_BASE}/member-center/entrance/registryByWeiXinCode`,
                 headers: this.getHeaders(),
                 data: {
@@ -230,27 +231,10 @@ class Task {
             };
             if (!this.token) throw new Error(`登录响应未返回token: ${JSON.stringify(body)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功${this.userInfo.phone ? `: ${maskPhone(this.userInfo.phone)}` : ""}`);
+            L.ok("账号[" + this.index + "] 登录成功" + (this.userInfo.phone ? ": " + maskPhone(this.userInfo.phone) : ""));
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message);
         }
-    }
-
-    async checkToken() {
-        try {
-            await this.getSignInfo(false);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    async getSignInfo(needLog = true) {
-        const data = await this.request({
-            base: SIGN_BASE,
-            apiPath: "/integralmall/signTemp/getByUser.do",
-            raw: true,
-        });
         if (!isSuccess(data)) throw new Error(getMessage(data));
         const result = data?.data?.result || data?.datas?.result || {};
         this.signInfo = result;
@@ -270,8 +254,8 @@ class Task {
         if (needLog) {
             const userSign = result.userSign || {};
             const signed = this.isSignedToday(userSign.signDate);
-            $.log(`账号[${this.index}] 会员: ${this.userInfo.name || "未知"} ${maskPhone(phone)}`);
-            $.log(`账号[${this.index}] 签到状态: 连续${userSign.signDay ?? userSign.successionDay ?? 0}天 今日=${signed ? "已签" : "未签"}`);
+            L.info("账号[" + this.index + "] 会员: " + this.userInfo.name || "未知" + " " + maskPhone(phone) );
+            L.info("账号[" + this.index + "] 签到状态: 连续" + userSign.signDay ?? userSign.successionDay ?? 0 + "天 今日=" + signed ? "已签" : "未签" );
         }
         return result;
     }
@@ -289,23 +273,20 @@ class Task {
     async signIn() {
         const userSign = this.signInfo?.userSign || {};
         if (this.isSignedToday(userSign.signDate)) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return;
         }
 
         const mobile = this.userInfo.phone || this.userInfo.mobile;
         if (!mobile) {
-            $.log(`账号[${this.index}] 签到失败: 未获取到会员手机号`);
+            L.fail("账号[" + this.index + "] 签到失败: 未获取到会员手机号");
             return;
         }
 
         try {
             await this.request({
                 base: SIGN_BASE,
-                apiPath: "/integralmall/userSign/updateFormId.do",
-                data: {
-                    remind: false,
-                },
+                apiPath: "",
             }).catch(() => {});
 
             const timestamp = Math.round(Date.now() / 1000);
@@ -326,60 +307,48 @@ class Task {
             });
 
             if (Number(result.status) === 1 || /今日已签到/.test(getMessage(result))) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
             if (!isSuccess(result)) throw new Error(getMessage(result));
 
             const data = result.data || {};
             if (data.yearPointFull) {
-                $.log(`账号[${this.index}] 签到成功，本年积分已达上限`);
+                L.ok("账号[" + this.index + "] 签到成功，本年积分已达上限");
                 return;
             }
             const integral = data.integral ?? result.message ?? "";
-            $.log(`账号[${this.index}] 签到成功${integral !== "" && integral !== "0" ? `: +${integral}积分` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + (integral !== "" && integral !== "0" ? ":" + integral + "积分" : ""));
         } catch (e) {
             const message = String(e.message || e);
             if (/今日已签到|已签到/.test(message)) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
-            $.log(`账号[${this.index}] 签到失败: ${message}`);
-            if (isTokenError(message)) this.removeCachedToken();
+            L.fail("账号[" + this.index + "] 签到失败: " + e.message);
         }
-    }
-
-    // ========== 任务相关 ==========
-
-    async getTaskList() {
         try {
-            const result = await this.request({
-                base: ACTIVITY_BASE,
-                method: "GET",
-                apiPath: "/dc-biz-activity/applet/ginsengTask/userTasks",
-                params: {
-                    activityId: ACTIVITY_ID,
-                    storeNo: STORE_NO,
-                },
-                raw: true,
-                urlToken: true,
-            });
+                const result = await axios.request({
+                    method: "GET",
+                    apiPath: "/dc-biz-activity/applet/ginsengTask/userTasks",
+                    params: {
+                        activityId: ACTIVITY_ID,
+                        storeNo: STORE_NO,
+                    },
+                    raw: true,
+                    urlToken: true,
+                });
             if (!isSuccess(result)) {
-                $.log(`账号[${this.index}] 获取任务列表失败: ${getMessage(result)}`);
+                L.fail("账号[" + this.index + "] 获取任务列表失败: " + getMessage(result) );
                 return [];
             }
             const taskInfos = result?.datas?.userTaskInfos || [];
             return taskInfos;
         } catch (e) {
-            $.log(`账号[${this.index}] 获取任务列表异常: ${e.message || e}`);
-            return [];
+            L.fail("账号[" + this.index + "] 获取任务列表异常: " + e.message);
         }
-    }
-
-    async completeTask(taskId) {
         try {
-            const result = await this.request({
-                base: ACTIVITY_BASE,
+            const result2 = await axios.request({
                 method: "POST",
                 apiPath: "/dc-biz-activity/applet/gameTask/addTaskRecord",
                 data: {
@@ -390,11 +359,11 @@ class Task {
                 raw: true,
                 urlToken: true,
             });
-            if (!isSuccess(result)) {
-                return { ok: false, msg: getMessage(result) };
+            if (!isSuccess(result2)) {
+                return { ok: false, msg:getMessage(result2) };
             }
-            const data = result?.datas || {};
-            return { ok: true, awardNum: data.awardNum || 0, msg: getMessage(result) };
+            const data = result2?.datas || {};
+            return { ok: true, awardNum: data.awardNum || 0, msg: getMessage(result2) };
         } catch (e) {
             return { ok: false, msg: e.message || String(e) };
         }
@@ -414,12 +383,12 @@ class Task {
                 urlToken: true,
             });
             if (!isSuccess(result)) {
-                $.log(`账号[${this.index}] 查询水滴失败: ${getMessage(result)}`);
+                L.fail("账号[" + this.index + "] 查询水滴失败: " + getMessage(result) );
                 return;
             }
             const dripList = result?.datas || [];
             if (!dripList.length) {
-                $.log(`账号[${this.index}] 无待领取水滴`);
+                L.info("账号[" + this.index + "] 无待领取水滴");
                 return;
             }
 
@@ -428,12 +397,12 @@ class Task {
             for (const item of dripList) {
                 if (item.dripRecordIds && item.dripRecordIds.length) {
                     allIds.push(...item.dripRecordIds);
-                    $.log(`账号[${this.index}] 待领取: ${item.dripNum}g水滴 (${item.dripRecordIds.length}条记录)`);
+                    L.info("账号[" + this.index + "] 待领取: " + item.dripNum + "g水滴 (" + item.dripRecordIds.length + "条记录)");
                 }
             }
 
             if (!allIds.length) {
-                $.log(`账号[${this.index}] 无待领取水滴记录`);
+                L.info("账号[" + this.index + "] 无待领取水滴记录");
                 return;
             }
 
@@ -451,20 +420,20 @@ class Task {
 
             if (isSuccess(claimResult)) {
                 const totalDrip = dripList.reduce((sum, item) => sum + (item.dripNum || 0), 0);
-                $.log(`账号[${this.index}] ✅ 领取水滴成功: +${totalDrip}g (${allIds.length}条记录)`);
+                L.ok("账号[" + this.index + "] ✅ 领取水滴成功: +" + totalDrip + "g (" + allIds.length + "条记录)");
             } else {
-                $.log(`账号[${this.index}] ❌ 领取水滴失败: ${getMessage(claimResult)}`);
+                L.fail("账号[" + this.index + "] ❌ 领取水滴失败: " + getMessage(claimResult) );
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 领取奖励异常: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 领取奖励异常: " + e.message || e );
         }
     }
 
     async doTasks() {
-        $.log(`账号[${this.index}] --- 开始做任务 ---`);
+        L.info("账号[" + this.index + "] --- 开始做任务 ---");
         const taskList = await this.getTaskList();
         if (!taskList.length) {
-            $.log(`账号[${this.index}] 无任务列表`);
+            L.info("账号[" + this.index + "] 无任务列表");
             return;
         }
 
@@ -492,9 +461,9 @@ class Task {
                 const res = await this.completeTask(taskId);
                 if (res.ok) {
                     completedCount++;
-                    $.log(`账号[${this.index}] ✅ ${showTaskName} +${awardDrip}水滴`);
+                    L.info("账号[" + this.index + "] ✅ " + showTaskName + " +" + awardDrip + "水滴");
                 } else {
-                    $.log(`账号[${this.index}] ❌ ${showTaskName}: ${res.msg}`);
+                    L.info("账号[" + this.index + "] ❌ " + showTaskName + ": " + res.msg );
                     break; // 失败则跳过该任务
                 }
                 await new Promise(r => setTimeout(r, 1500)); // 延迟
@@ -515,10 +484,10 @@ class Task {
             for (const t of freshList) {
                 totalDrip += (t.completeNum || 0) * (t.awardDrip || 0);
             }
-            $.log(`账号[${this.index}] 任务完成, 今日水滴约: ${totalDrip}g`);
+            L.info("账号[" + this.index + "] 任务完成, 今日水滴约: " + totalDrip + "g");
         } catch (e) { /* ignore */ }
 
-        $.log(`账号[${this.index}] --- 任务结束 ---`);
+        L.info("账号[" + this.index + "] --- 任务结束 ---");
     }
 
     async watering() {
@@ -536,7 +505,7 @@ class Task {
             });
 
             if (!isSuccess(levelInfo)) {
-                $.log(`账号[${this.index}] 获取等级信息失败: ${getMessage(levelInfo)}`);
+                L.fail("账号[" + this.index + "] 获取等级信息失败: " + getMessage(levelInfo) );
                 return;
             }
 
@@ -546,10 +515,10 @@ class Task {
             const usedDripNum = levelData.usedDripNum || 0;
             const availableDrip = dripTotal - usedDripNum;
 
-            $.log(`账号[${this.index}] 当前等级: ${levelName}, 可用水滴: ${availableDrip}g`);
+            L.info("账号[" + this.index + "] 当前等级: " + levelName + ", 可用水滴: " + availableDrip + "g");
 
             if (availableDrip <= 0) {
-                $.log(`账号[${this.index}] 无可用浇水水滴`);
+                L.info("账号[" + this.index + "] 无可用浇水水滴");
                 return;
             }
 
@@ -568,7 +537,7 @@ class Task {
             });
 
             if (!isSuccess(result)) {
-                $.log(`账号[${this.index}] 浇水失败: ${getMessage(result)}`);
+                L.fail("账号[" + this.index + "] 浇水失败: " + getMessage(result) );
                 return;
             }
 
@@ -576,18 +545,20 @@ class Task {
             const upgrade = data.upgrade || false;
             const newLevel = data.ginsengLevels?.[0];
             if (upgrade && newLevel) {
-                $.log(`账号[${this.index}] 🌱 浇水成功! 升级到: ${newLevel.levelName} (Lv.${newLevel.level})`);
+                L.ok("账号[" + this.index + "] 🌱 浇水成功! 升级到: " + newLevel.levelName + " (Lv." + newLevel.level + ")");
             } else {
-                $.log(`账号[${this.index}] 💧 浇水成功! 使用${availableDrip}g水滴`);
+                L.ok("账号[" + this.index + "] 💧 浇水成功! 使用" + availableDrip + "g水滴");
             }
         } catch (e) {
-            $.log(`账号[${this.index}] 浇水异常: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 浇水异常: " + e.message || e );
         }
     }
 }
 
 !(async () => {
+  sectionLine("大参林", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

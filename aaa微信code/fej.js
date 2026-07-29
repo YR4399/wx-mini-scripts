@@ -8,6 +8,7 @@ cron: 20 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("敷尔佳小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -54,7 +55,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e );
     }
 }
 
@@ -77,10 +78,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存token`);
+            L.info("账号[" + this.index + "] 使用缓存token");
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
             }
         }
 
@@ -160,7 +161,7 @@ class Task {
     async request({ method = "GET", path: apiPath, params = {}, data = {}, skipToken = false }) {
         const options = {
             method,
-            url: `${API_BASE}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
+            url: API_BASE + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
             headers: this.getHeaders(method === "POST" ? { "Content-Type": "application/json" } : {}),
             timeout: 15000,
             validateStatus: () => true,
@@ -203,9 +204,9 @@ class Task {
             this.applyToken(data);
             this.userInfo = data || {};
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: ${data.nick_name || ""} ${maskPhone(data.mobile) || ""}`);
+            L.ok("账号[" + this.index + "] 登录成功: " + data.nick_name || "" + " " + maskPhone(data.mobile) || "" );
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
         }
     }
 
@@ -223,15 +224,15 @@ class Task {
         try {
             const data = await this.request({ path: "/wscump/checkin/show_checkin_page_v2.json" });
             this.checkinId = data?.checkinId;
-            $.log(`账号[${this.index}] 签到活动: checkinId=${this.checkinId || "未获取"} isShow=${!!data?.isShow}`);
+            L.info("账号[" + this.index + "] 签到活动: checkinId=" + this.checkinId || "未获取" + " isShow=" + !!data?.isShow );
         } catch (e) {
-            $.log(`账号[${this.index}] 获取签到活动失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 获取签到活动失败: " + e.message || e );
         }
     }
 
     async doCheckin() {
         if (!this.checkinId) {
-            $.log(`账号[${this.index}] 未获取到 checkinId，跳过签到`);
+            L.info("账号[" + this.index + "] 未获取到 checkinId，跳过签到");
             return;
         }
         try {
@@ -240,9 +241,9 @@ class Task {
                 params: { checkinId: this.checkinId },
             });
             const awards = (data?.list || []).map((item) => item?.infos?.title).filter(Boolean).join(", ");
-            $.log(`账号[${this.index}] 签到成功: ${data?.desc || ""}${awards ? ` ${awards}` : ""}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + (data?.desc || "") + (awards ? " " + awards : ""));
         } catch (e) {
-            $.log(`账号[${this.index}] 签到失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + e.message || e );
             if (/access_token|token|登录|授权|请先登录/i.test(String(e.message || e))) this.removeCachedToken();
         }
     }
@@ -250,15 +251,17 @@ class Task {
     async getPoints() {
         try {
             const data = await this.request({ path: "/wscump/integral/user_points.json" });
-            $.log(`账号[${this.index}] 当前积分: ${data?.current_points ?? data?.real_points ?? "未知"}`);
+            L.info("账号[" + this.index + "] 当前积分: " + data?.current_points ?? data?.real_points ?? "未知" );
         } catch (e) {
-            $.log(`账号[${this.index}] 查询积分失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询积分失败: " + e.message || e );
         }
     }
 }
 
 !(async () => {
+  sectionLine("敷尔佳", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();

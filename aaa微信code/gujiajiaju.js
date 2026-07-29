@@ -15,6 +15,7 @@ cron: 41 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("顾家小程序签到");
 const axios = require("axios");
 const fs = require("fs");
@@ -67,7 +68,7 @@ function writeTokenCache(cache) {
   try {
     fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
   } catch (e) {
-    $.log(`写入token缓存失败: ${e.message || e}`);
+    L.fail("写入token缓存失败: " + e.message || e + "");
   }
 }
 
@@ -252,26 +253,26 @@ class Task {
     this.userInfo = info.data;
     this.applyToken(info.data);
     const name = this.userInfo.nickName || this.userInfo.name || this.memberId || "未知";
-    $.log(`账号[${this.index}] 用户: ${name}`);
+    L.info("账号[" + this.index + "] 用户: " + name + "");
   }
 
   async ensureLogin() {
     const cached = this.getCachedToken();
     if (cached) {
       this.applyToken(cached);
-      $.log(`账号[${this.index}] 使用缓存token`);
+      L.info("账号[" + this.index + "] 使用缓存token");
       try {
         await this.getUserInfo();
         return;
       } catch {
         this.clearCachedToken();
-        $.log(`账号[${this.index}] 缓存失效，重新登录`);
+        L.fail("账号[" + this.index + "] 缓存失效，重新登录");
       }
     }
     await this.login();
     await this.getUserInfo();
     this.saveCachedToken();
-    $.log(`账号[${this.index}] 登录成功 memberId=${this.memberId}`);
+    L.ok("账号[" + this.index + "] 登录成功 memberId=" + this.memberId + "");
   }
 
   async checkCalendar() {
@@ -281,9 +282,9 @@ class Task {
         url: `${INTEGRAL_BASE}/user/sign/calendar`,
         params: {},
       });
-      $.log(`账号[${this.index}] 日历查询: code=${ret.code}`);
+      L.info("账号[" + this.index + "] 日历查询: code=" + ret.code + "");
     } catch (e) {
-      $.log(`账号[${this.index}] 日历查询失败: ${e.message || e}`);
+      L.fail("账号[" + this.index + "] 日历查询失败: " + e.message || e + "");
     }
   }
 
@@ -298,19 +299,19 @@ class Task {
         },
       });
       if (ret.code === 0) {
-        $.log(`账号[${this.index}] 签到成功`);
+        L.ok("账号[" + this.index + "] 签到成功");
         return;
       }
       const msg = ret.message || ret.msg || JSON.stringify(ret);
       if (/已签|重复|already|今日/.test(msg)) {
-        $.log(`账号[${this.index}] 今日已签到`);
+        L.info("账号[" + this.index + "] 今日已签到");
         return;
       }
       throw new Error(msg);
     } catch (e) {
       const msg = e.message || String(e);
       if (/已签|重复|already|今日/.test(msg)) {
-        $.log(`账号[${this.index}] 今日已签到`);
+        L.info("账号[" + this.index + "] 今日已签到");
         return;
       }
       throw e;
@@ -325,14 +326,16 @@ class Task {
       this.saveCachedToken();
     } catch (e) {
       const msg = e.message || String(e);
-      $.log(`账号[${this.index}] 执行失败: ${msg}`);
+      L.fail("账号[" + this.index + "] 执行失败: " + msg + "");
       if (/401|token|登录|失效|过期/i.test(msg)) this.clearCachedToken();
     }
   }
 }
 
 !(async () => {
+  sectionLine("顾家家居", "");
   
+$.userIdx = 0;
     $.checkEnv(ckName);
   for (const openid of $.userList) {
     await new Task(openid).run();

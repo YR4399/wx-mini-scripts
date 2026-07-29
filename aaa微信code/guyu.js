@@ -3,6 +3,7 @@
 cron: 36 8 * * *
 */
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const { sendPushNotify } = require("./_push_helper");
 const $ = new Env("谷雨签到");
 const axios = require("axios");
@@ -134,7 +135,7 @@ class Task {
             this.saveCache(this.token);
             return true;
         }
-        $.log(`[${this.idx}] 登录失败: ${result?.message || JSON.stringify(result)}`);
+        L.fail("[" + this.idx + "] 登录失败: " + result?.message || JSON.stringify(result) + "");
         return false;
     }
 
@@ -150,15 +151,23 @@ class Task {
             }
         }
 
-        // 2. 无 token则登录
+        // 2. 无 token则登录（谷雨 996「请刷新重试」偶发，重试登录）
         if (!this.token) {
-            const { data: codeRes } = await wechat.getCode(this.openid);
-            if (!codeRes?.data?.code && !codeRes?.code) {
-                $.log(`[${this.idx}] WCS获取code失败`);
-                return;
+            let ok = false;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const { data: codeRes } = await wechat.getCode(this.openid);
+                if (!codeRes?.data?.code && !codeRes?.code) {
+                    L.fail("[" + this.idx + "] WCS获取code失败");
+                    return;
+                }
+                const code = codeRes.data?.code || codeRes.code;
+                ok = await this.login(code);
+                if (ok) break;
+                if (attempt < 2) {
+                    L.fail("[" + this.idx + "] 登录失败，第" + attempt + 1 + "次重试...");
+                    await $.wait(2000 + attempt * 1500);
+                }
             }
-            const code = codeRes.data?.code || codeRes.code;
-            const ok = await this.login(code);
             if (!ok) return;
             await $.wait(2000);
         }
@@ -174,20 +183,21 @@ class Task {
             if (info?.success) {
                 const points = info.result?.customerIntegral || "0";
                 const signDays = info.result?.signDays ?? 0;
-                $.log(`[${this.idx}] 积分=${points} 连签=${signDays}天`);
+                L.info("[" + this.idx + "] 积分=" + points + " 连签=" + signDays + "天");
 
                 if (!info.result?.canJoin) {
-                    $.log(`[${this.idx}] 今日已签到`);
+                    L.info("[" + this.idx + "] 今日已签到");
                     return;
                 }
             }
         } catch (e) {
-            $.log(`[${this.idx}] 查询签到状态异常: ${e.message}`);
+            L.fail("[" + this.idx + "] 查询签到状态异常: " + e.message + "");
             return;
         }
 
-        // 4. 执行签到（token过期时自动重登）
-        for (let retry = 0; retry < 2; retry++) {
+        // 4. 执行签到（token过期时自动重登，偶发 996/超时 自动重试）
+        const isRetryable = (m) => /用户id|授权失败|996|当前请求异常|超时|timeout|ECONNRESET|socket|网络/.test(m || "");
+        for (let retry = 0; retry < 3; retry++) {
             try {
                 const today = $.time("yyyy-M-dd");
                 const { data: signResult } = await this.request("POST", `${API_BASE}/mobile/activity/sign/sign`, {
@@ -198,13 +208,13 @@ class Task {
 
                 if (signResult?.success) {
                     const reward = signResult.result?.integral || 2;
-                    $.log(`[${this.idx}] 签到成功: +${reward}积分`);
+                    L.ok("[" + this.idx + "] 签到成功: +" + reward + "积分");
                     break;
                 } else {
                     const msg = signResult?.msg || "未知错误";
-                    // token过期：用户id不能为空 或 授权失败
+                    // token过期：用户id不能为空 或 授权失败 → 清缓存重登
                     if (retry === 0 && (msg.includes("用户id") || msg.includes("授权失败"))) {
-                        $.log(`[${this.idx}] token疑似过期(${msg})，清除缓存重新登录...`);
+                        L.info("[" + this.idx + "] token疑似过期(" + msg + ")，清除缓存重新登录...");
                         this.clearCache();
                         this.token = null;
                         const { data: codeRes } = await wechat.getCode(this.openid);
@@ -213,14 +223,25 @@ class Task {
                             const ok = await this.login(code);
                             if (ok) { await $.wait(2000); continue; }
                         }
-                        $.log(`[${this.idx}] 重新登录失败`);
+                        L.fail("[" + this.idx + "] 重新登录失败");
                         break;
                     }
-                    $.log(`[${this.idx}] 签到失败: ${msg}`);
+                    if (isRetryable(msg) && retry < 2) {
+                        L.fail("[" + this.idx + "] 签到失败(" + msg + ")，第" + retry + 1 + "次重试...");
+                        await $.wait(2000 + retry * 1500);
+                        continue;
+                    }
+                    L.fail("[" + this.idx + "] 签到失败: " + msg + "");
                     break;
                 }
             } catch (e) {
-                $.log(`[${this.idx}] 签到异常: ${e.message}`);
+                const m = e.message || String(e);
+                if (isRetryable(m) && retry < 2) {
+                    L.fail("[" + this.idx + "] 签到异常(" + m + ")，第" + retry + 1 + "次重试...");
+                    await $.wait(2000 + retry * 1500);
+                    continue;
+                }
+                L.fail("[" + this.idx + "] 签到异常: " + m + "");
                 break;
             }
         }
@@ -239,14 +260,16 @@ class Task {
 }
 
 !(async () => {
+  sectionLine("谷雨", "");
+$.userIdx = 0;
     $.checkEnv(ckName);
     if (!process.env.wx_server_url || !process.env.wx_auth) {
-        $.log("未配置WCS服务");
+        L.info("未配置WCS服务");
         return;
     }
 
     const openids = $.userList;
-    $.log(`共${openids.length}个账号`);
+    L.info("共" + openids.length + "个账号");
 
     for (let i = 0; i < openids.length; i++) {
         const task = new Task(openids[i], i + 1);

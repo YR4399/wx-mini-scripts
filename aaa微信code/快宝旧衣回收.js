@@ -143,6 +143,7 @@ class KuaiBao {
 
 async function main() {
     $.log("=== 快宝旧衣回收 开始 ===");
+$.userIdx = 0;
     $.checkEnv(ckName);
     const accounts = $.userList || [];
     if (accounts.length === 0) { $.log("未配置 wx_opinion"); return; }

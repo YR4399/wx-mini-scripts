@@ -8,6 +8,7 @@ cron: 35 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("麦富迪会员签到");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -54,7 +55,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        $.log(`写入token缓存失败: ${e.message || e}`);
+        L.fail("写入token缓存失败: " + e.message || e + "");
     }
 }
 
@@ -101,10 +102,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            $.log(`账号[${this.index}] 使用缓存登录态: memberId=${shortValue(this.memberId)}`);
+            L.info("账号[" + this.index + "] 使用缓存登录态: memberId=" + shortValue(this.memberId) + "");
             if (!(await this.checkLogin())) {
                 this.removeCachedToken();
-                $.log(`账号[${this.index}] 缓存登录态失效，重新登录`);
+                L.fail("账号[" + this.index + "] 缓存登录态失效，重新登录");
             }
         }
 
@@ -222,7 +223,7 @@ class Task {
             this.saveCachedToken();
             return data;
         } catch (e) {
-            $.log(`账号[${this.index}] 获取身份配置失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 获取身份配置失败: " + e.message || e + "");
             return {};
         }
     }
@@ -242,9 +243,9 @@ class Task {
             this.phone = data.phone || "";
             if (!this.memberId) throw new Error(`登录响应未返回 memberId: ${JSON.stringify(result)}`);
             this.saveCachedToken();
-            $.log(`账号[${this.index}] 登录成功: memberId=${shortValue(this.memberId)} ${maskPhone(this.phone)}`);
+            L.ok("账号[" + this.index + "] 登录成功: memberId=" + shortValue(this.memberId) + " " + maskPhone(this.phone) + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
         }
     }
 
@@ -274,9 +275,9 @@ class Task {
             const name = data.nickName || data.nickname || data.memberName || data.name || "未知";
             const phone = data.phone || data.mobile || this.phone;
             const point = data.availablePoint ?? data.point ?? data.points ?? data.integral ?? "未知";
-            $.log(`账号[${this.index}] 会员: ${name} ${maskPhone(phone)} 积分=${point}`);
+            L.info("账号[" + this.index + "] 会员: " + name + " " + maskPhone(phone) + " 积分=" + point + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 查询会员信息失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询会员信息失败: " + e.message || e + "");
             if (isTokenError(e)) this.removeCachedToken();
         }
     }
@@ -288,10 +289,10 @@ class Task {
             });
             const data = result.data || {};
             this.signedToday = data.signedToday;
-            $.log(`账号[${this.index}] 签到状态: 连续${data.continuousDays ?? 0}天 今日=${data.signedToday ? "已签" : "未签"}`);
+            L.info("账号[" + this.index + "] 签到状态: 连续" + data.continuousDays ?? 0 + "天 今日=" + data.signedToday ? "已签" : "未签" + "");
             return data;
         } catch (e) {
-            $.log(`账号[${this.index}] 查询签到状态失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 查询签到状态失败: " + e.message || e + "");
             return {};
         }
     }
@@ -299,7 +300,7 @@ class Task {
     async signIn() {
         try {
             if (this.signedToday) {
-                $.log(`账号[${this.index}] 今日已签到`);
+                L.info("账号[" + this.index + "] 今日已签到");
                 return;
             }
             const result = await this.request({
@@ -307,16 +308,18 @@ class Task {
                 apiPath: "/tnew/myfoodiepet-member/v1/member/sign",
                 data: { memberId: this.memberId },
             });
-            $.log(`账号[${this.index}] 签到成功: ${result.msg || result.message || "ok"}`);
+            L.ok("账号[" + this.index + "] 签到成功: " + result.msg || result.message || "ok" + "");
         } catch (e) {
-            $.log(`账号[${this.index}] 签到失败: ${e.message || e}`);
+            L.fail("账号[" + this.index + "] 签到失败: " + e.message || e + "");
             if (isTokenError(e)) this.removeCachedToken();
         }
     }
 }
 
 !(async () => {
+  sectionLine("麦富迪", "");
     
+$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();

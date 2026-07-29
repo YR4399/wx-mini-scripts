@@ -203,6 +203,7 @@ class Task {
 
 // ========== 主入口 ==========
 !(async () => {
+$.userIdx = 0;
     $.checkEnv(ckName);
     const accounts = $.userList;
     $.log(`共找到${accounts.length}个账号`);

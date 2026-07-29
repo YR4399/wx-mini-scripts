@@ -2,6 +2,7 @@
 名创优品积分商城 - 库存更新提醒
 监控兑换实物商品库存，有补货时 PushPlus 推送提醒
 通过 WCS 自动获取登录态，无需手动抓包
+支持 code 缓存，code 失效时自动刷新
 
 环境变量：
   wx_server_url / wx_auth - WCS 服务配置
@@ -30,11 +31,15 @@ MINISO_APPID = "wx2a212470bade49bf"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_FILE = os.path.join(SCRIPT_DIR, "miniso_stock_cache.json")
 USER_CACHE_FILE = os.path.join(SCRIPT_DIR, "miniso_user_cache.json")
+CODE_CACHE_FILE = os.path.join(SCRIPT_DIR, "miniso_code_cache.json")
 INTERVAL = int(os.getenv("MINISO_INTERVAL", "1200"))
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781"
               "(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF "
               "WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254193e) XWEB/19841")
+
+# code 缓存有效期：2 小时（微信小程序 code 有效期通常 5 分钟，但 WCS 生成的 code 可复用更久）
+CODE_CACHE_TTL = int(os.getenv("MINISO_CODE_TTL", "7200"))
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
@@ -77,20 +82,47 @@ def push(title, content):
         log(f"推送异常: {e}")
 
 
-# ========== 用户信息 ==========
-def get_user_info():
-    """通过 WCS 获取 MINISO 用户信息，自动缓存"""
-    # 先检查缓存（1小时内有效）
+# ========== Code 缓存 ==========
+def read_code_cache():
+    """读取 code 缓存"""
     try:
-        if os.path.exists(USER_CACHE_FILE):
-            with open(USER_CACHE_FILE, "r") as f:
-                cached = json.load(f)
-            if cached.get("uid") and cached.get("ts", 0) > time.time() - 3600:
-                return cached
+        if os.path.exists(CODE_CACHE_FILE):
+            with open(CODE_CACHE_FILE, "r") as f:
+                return json.load(f)
     except:
         pass
+    return None
 
-    # 通过 WCS 获取 code
+
+def write_code_cache(code, openid, appid):
+    """写入 code 缓存"""
+    try:
+        cache = {
+            "code": code,
+            "openid": openid,
+            "appid": appid,
+            "ts": time.time(),
+        }
+        with open(CODE_CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        log(f"code 缓存写入失败: {e}")
+
+
+def get_cached_code():
+    """尝试从缓存获取有效 code"""
+    cache = read_code_cache()
+    if not cache or not cache.get("code"):
+        return None
+    if time.time() - cache.get("ts", 0) > CODE_CACHE_TTL:
+        log(f"code 缓存已过期（{CODE_CACHE_TTL}s），将重新获取")
+        return None
+    log(f"使用缓存 code（缓存 {int(time.time() - cache.get('ts', 0))}s 前）")
+    return cache["code"]
+
+
+def fetch_code_from_wcs():
+    """从 WCS 获取新的微信 code"""
     openids_raw = os.getenv("wx_opinion", "")
     if not openids_raw:
         openids_raw = os.getenv("WECHAT_ACCOUNTS", "")
@@ -109,9 +141,29 @@ def get_user_info():
         code = result.get("data", {}).get("code", "")
         if not code:
             raise Exception(f"WCS 返回: {result}")
-        log(f"获取微信 code 成功")
+        # 缓存 code
+        write_code_cache(code, openid, MINISO_APPID)
+        log("获取微信 code 成功并缓存")
+        return code
     except Exception as e:
         raise Exception(f"WCS 请求失败: {e}")
+
+
+# ========== 用户信息 ==========
+def get_user_info():
+    """通过 WCS 获取 MINISO 用户信息，自动缓存"""
+    # 先检查用户信息缓存（1小时内有效）
+    try:
+        if os.path.exists(USER_CACHE_FILE):
+            with open(USER_CACHE_FILE, "r") as f:
+                cached = json.load(f)
+            if cached.get("uid") and cached.get("ts", 0) > time.time() - 3600:
+                return cached
+    except:
+        pass
+
+    # 获取 code：优先用缓存，失效再去 WCS 拉
+    code = get_cached_code() or fetch_code_from_wcs()
 
     # 用 code 换取 MINISO 用户信息
     try:
@@ -143,6 +195,44 @@ def get_user_info():
         log(f"获取用户信息成功: uid={user_info['uid']}")
         return user_info
     except Exception as e:
+        # code 失效（401/403/invalid code），清除缓存后重试一次
+        msg = str(e)
+        if "error" in msg.lower() or "invalid" in msg.lower() or "401" in msg or "403" in msg:
+            log("code 已失效，清除缓存后重新获取...")
+            try:
+                os.remove(CODE_CACHE_FILE)
+            except:
+                pass
+            code = fetch_code_from_wcs()
+            try:
+                nonce = rand_str()
+                ts = str(int(time.time() * 1000))
+                req = urllib.request.Request(f"{REG_URL}?jsCode={code}")
+                req.add_header("X-Mi-Version", "5.1.71")
+                req.add_header("tenant-code", "MINISO")
+                req.add_header("version", "storeexpress1.0")
+                req.add_header("x-client-source", "MINISO_WX_MINI")
+                req.add_header("User-Agent", USER_AGENT)
+                req.add_header("nonce", nonce)
+                req.add_header("signature", md5(nonce + ts))
+                req.add_header("time", ts)
+                resp = urllib.request.urlopen(req, timeout=15, context=CTX)
+                result = json.loads(resp.read())
+                data = result.get("data", {})
+                if not data.get("uid"):
+                    raise Exception(f"MINISO 返回: {result}")
+                user_info = {
+                    "uid": data["uid"],
+                    "openId": data.get("openId", ""),
+                    "unionId": data.get("unionId", ""),
+                    "ts": time.time(),
+                }
+                with open(USER_CACHE_FILE, "w") as f:
+                    json.dump(user_info, f, indent=2)
+                log(f"刷新 code 后获取用户信息成功: uid={user_info['uid']}")
+                return user_info
+            except Exception as e2:
+                raise Exception(f"刷新 code 后 MINISO 登录仍失败: {e2}")
         raise Exception(f"MINISO 登录失败: {e}")
 
 

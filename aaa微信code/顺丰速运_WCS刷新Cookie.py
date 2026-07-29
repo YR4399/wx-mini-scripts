@@ -19,8 +19,8 @@ import urllib.parse
 import subprocess
 from datetime import datetime
 
-WCS_URL = "http://172.17.0.3:8787"
-WCS_AUTH = "976dc5b3977cd2cbb8c61ddd32e9f885"
+WCS_URL = os.getenv("wx_server_url", "http://172.17.0.4:8787")
+WCS_AUTH = os.getenv("wx_auth", "1509ea7aca117dcbb7e635c0c007d528")
 SF_APPID = "wxd4185d00bf7e08ac"
 SF_PUBLIC_ID = "gh_f9d9fca26a50"
 DB_PATH = "/app/Dumb-Panel/daidai.db"

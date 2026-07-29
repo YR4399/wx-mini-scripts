@@ -4,6 +4,7 @@ cron: 15 8 * * *
 */
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 const { Env } = require("../tools/env.js");
+const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("燕印象燕窝签到");
 const axios = require("axios");
 const WeChatServer = require("./wcs.js");
@@ -73,7 +74,7 @@ class YanyinxiangClient {
         const d = resp.data;
         if (d.error !== 0) throw new Error("登录失败: " + (d.message || JSON.stringify(d)));
 
-        $.log(`账号[${this.index}] 登录成功: ${d.nickname || "会员"}, ID:${d.member_id}`);
+        L.ok("账号[" + this.index + "] 登录成功: " + d.nickname || "会员" + ", ID:" + d.member_id );
         return d;
     }
 
@@ -85,7 +86,7 @@ class YanyinxiangClient {
         const idx = resp.data;
         if (idx.today_sign === 1) {
             const reward = (idx.reward && idx.reward.sign_reward) || 0;
-            $.log(`账号[${this.index}] 今日已签到 +${reward}积分`);
+            L.info("账号[" + this.index + "] 今日已签到 +" + reward + "积分");
             return reward;
         }
 
@@ -100,14 +101,14 @@ class YanyinxiangClient {
             const msg = d.message || "";
             const m = msg.match(/\d+/);
             const reward = m ? parseInt(m[0]) : 10;
-            $.log(`账号[${this.index}] 签到成功 +${reward}积分`);
+            L.ok("账号[" + this.index + "] 签到成功 +" + reward + "积分");
             return reward;
         }
         if (d.message && d.message.includes("已签")) {
-            $.log(`账号[${this.index}] 今日已签到`);
+            L.info("账号[" + this.index + "] 今日已签到");
             return 0;
         }
-        $.log(`账号[${this.index}] 签到: ` + (d.message || JSON.stringify(d)));
+        L.info("账号[" + this.index + "] 签到: " + (d.message || JSON.stringify(d)));
         return 0;
     }
 
@@ -122,14 +123,14 @@ async function main() {
     const openids = (process.env.wx_opinion || "").split("&").filter(Boolean);
     if (!openids.length) throw new Error("未配置 wx_opinion");
 
-    $.log(`共找到${openids.length}个账号`);
+    $.log("共找到" + openids.length + "个账号");
 
     for (let i = 0; i < openids.length; i++) {
         const client = new YanyinxiangClient(openids[i], i + 1);
         try {
             await client.run();
         } catch (e) {
-            $.log(`账号[${i + 1}] 异常: ${e.message}`);
+            L.fail("账号[" + i + 1 + "] 异常: " + e.message );
         }
         if (i < openids.length - 1) await sleep(3000);
     }
@@ -147,4 +148,4 @@ main().catch(e => $.log("ERR: " + e.message)).finally(async () => {
       }
     } catch(e) {}
     $.sendMsg = async () => {}; $.done();
-  });;
+  });
