@@ -26,7 +26,7 @@ SF_PUBLIC_ID = "gh_f9d9fca26a50"
 DB_PATH = "/app/Dumb-Panel/daidai.db"
 MAIN_SCRIPT = "/app/Dumb-Panel/scripts/顺丰速运日常任务v1.3.py"
 DRAGONBOAT_SCRIPT = "/app/Dumb-Panel/scripts/顺丰端午节活动增加推.py"
-PYTHON_BIN = "/app/Dumb-Panel/deps/python/3.11/bin/python3"
+PYTHON_BIN = "/app/Dumb-Panel/deps/python/3.12/bin/python3"
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
