@@ -604,11 +604,11 @@ if __name__ == "__main__":
         print(f'脚本异常: {e}')
         result = 1
     finally:
-        sys.stdout = _tee_out.original
+        sys.stdout = _log_capture.original
 
         sys.stderr = _tee_err.original
 
-        _logs = _tee_out.getvalue()
+        _logs = _log_capture.getvalue()
     if _logs.strip():
         print(_logs)
         try:
