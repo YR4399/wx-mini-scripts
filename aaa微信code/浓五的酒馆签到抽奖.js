@@ -45,7 +45,7 @@ let wechatNYG = new WeChatServer({
 
 class Task {
     constructor(env) {
-        this.index = $.userIdx++
+        this.index = ($.userIdx = ($.userIdx | 0) + 1)
         this.user = env.split(strSplitor);
         this.token = null
         this.wcsid = this.user[0]
@@ -68,13 +68,14 @@ class Task {
 
         await this.getUserInfo()
         await this.doSign()
+        await this.doSmashEgg()
 
-        // 积分>=84时跳转浓友购小程序抽奖
-        if (this.points >= 84) {
-            $.log(`🌸账号[${this.index}] 积分[${this.points}]>=84，开始浓友购抽奖任务`)
+        // 积分>=150时跳转浓友购小程序抽奖
+        if (this.points >= 150) {
+            $.log(`🌸账号[${this.index}] 积分[${this.points}]>=150，开始浓友购抽奖任务`)
             await this.doLottery()
         } else {
-            $.log(`🌸账号[${this.index}] 积分[${this.points}]<84，跳过抽奖任务`)
+            $.log(`🌸账号[${this.index}] 积分[${this.points}]<150，跳过浓友购抽奖任务`)
         }
     }
 
@@ -140,10 +141,11 @@ class Task {
         }
     }
 
-    async doSign() {
+    // 动态获取当月签到活动 promotionId（自动刷新，避免活动ID过期导致"活动已结束"）
+    async getSignPromotionId() {
         let options = {
             method: 'GET',
-            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/sign/today?promotionId=PI6a168f58584101000a6b2c7f`,
+            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/mini/index/base/config`,
             headers: {
                 'User-Agent': defaultUserAgent,
                 'Content-Type': 'application/json',
@@ -152,7 +154,37 @@ class Task {
                 'sec-fetch-mode': 'cors',
                 'sec-fetch-dest': 'empty',
                 'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
-                'accept-language': 'zh-CN,zh;q=0.9',
+                'accept-language': 'zh-CN;q=0.9',
+                authorization: this.token
+            }
+        };
+        try {
+            let { data: result } = await axios.request(options);
+            let raw = JSON.stringify(result);
+            let m = raw.match(/signUp\/signUp\?promotionId=([A-Za-z0-9]+)/);
+            if (m) {
+                $.log(`🌸账号[${this.index}] 动态获取签到活动ID[${m[1]}]`);
+                return m[1];
+            }
+        } catch (e) { }
+        $.log(`🌸账号[${this.index}] 获取签到活动ID失败，使用兜底ID`);
+        return 'PI6a41ee59886bd1000a158d9b';
+    }
+
+    async doSign() {
+        let promotionId = await this.getSignPromotionId();
+        let options = {
+            method: 'GET',
+            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/sign/today?promotionId=${promotionId}`,
+            headers: {
+                'User-Agent': defaultUserAgent,
+                'Content-Type': 'application/json',
+                'xweb_xhr': '1',
+                'sec-fetch-site': 'cross-site',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-dest': 'empty',
+                'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
+                'accept-language': 'zh-CN;q=0.9',
                 authorization: this.token
             }
         };
@@ -169,7 +201,120 @@ class Task {
                 $.log(`🌸账号[${this.index}] 签到成功✅ 签到天数[${signDays}]，获得[${prizeName}]`)
             }
         } else {
-            $.log(`🌸账号[${this.index}] 签到-失败:${result.msg}❌`)
+            $.log(`🌸账号[${this.index}] 签到-失败:${result?.msg || '未知'}❌`)
+        }
+    }
+
+    // 动态获取砸蛋/趣味抽奖活动 promotionId（从 base/config 的 miniDraw 页面路径提取）
+    async getLotteryPromotionId() {
+        let options = {
+            method: 'GET',
+            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/mini/index/base/config`,
+            headers: {
+                'User-Agent': defaultUserAgent,
+                'Content-Type': 'application/json',
+                'xweb_xhr': '1',
+                'sec-fetch-site': 'cross-site',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-dest': 'empty',
+                'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
+                'accept-language': 'zh-CN;q=0.9',
+                authorization: this.token
+            }
+        };
+        try {
+            let { data: result } = await axios.request(options);
+            let raw = JSON.stringify(result);
+            let m = raw.match(/miniDraw\/miniDraw\?promotionId=([A-Za-z0-9]+)/);
+            if (m) {
+                $.log(`🌸账号[${this.index}] 动态获取抽奖活动ID[${m[1]}]`);
+                return m[1];
+            }
+        } catch (e) { }
+        $.log(`🌸账号[${this.index}] 获取抽奖活动ID失败，使用兜底ID`);
+        return 'PI6a681a9a4bcd4000aaaabea';
+    }
+
+    // 查询酒馆砸蛋剩余次数
+    async getLuckDrawNum(lotteryPid) {
+        let options = {
+            method: 'GET',
+            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/draw/user/getluckdrawNum?promotionId=${lotteryPid}`,
+            headers: {
+                'User-Agent': defaultUserAgent,
+                'Content-Type': 'application/json',
+                'xweb_xhr': '1',
+                'sec-fetch-site': 'cross-site',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-dest': 'empty',
+                'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
+                'accept-language': 'zh-CN;q=0.9',
+                authorization: this.token
+            }
+        };
+        try {
+            let { data: result } = await axios.request(options);
+            if (result?.code == 0 || result?.code == '0') {
+                return result.data?.freeDrawNum || 0;
+            }
+        } catch (e) { }
+        return 0;
+    }
+
+    // 酒馆砸蛋趣味抽奖（每日一次）
+    async doSmashEgg() {
+        let lotteryPid = await this.getLotteryPromotionId();
+        let drawNum = await this.getLuckDrawNum(lotteryPid);
+        $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)剩余次数[${drawNum}]`);
+        if (drawNum <= 0) {
+            $.log(`🌸账号[${this.index}] 今日无趣味抽奖(砸蛋)次数，跳过`);
+            return;
+        }
+        let totalPoints = 0;
+        // 趣味抽奖：每日仅一次
+        let maxLoop = 1;
+        for (let i = 0; i < maxLoop; i++) {
+            await $.wait(Math.floor(Math.random() * 3 + 1) * 1000);
+            let options = {
+                method: 'GET',
+                url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/draw/lottery?promotionId=${lotteryPid}`,
+                headers: {
+                    'User-Agent': defaultUserAgent,
+                    'Content-Type': 'application/json',
+                    'xweb_xhr': '1',
+                    'sec-fetch-site': 'cross-site',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-dest': 'empty',
+                    'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
+                    'accept-language': 'zh-CN;q=0.9',
+                    authorization: this.token
+                }
+            };
+            try {
+                let { data: result } = await axios.request(options);
+                if (result?.code == 0 || result?.code == '0') {
+                    let prize = result.data?.prize;
+                    if (prize) {
+                        let prizeName = prize.goodsName || prize.prizeName || '未知';
+                        let m = prizeName.match(/(\d+)\s*积分/);
+                        let p = m ? parseInt(m[1], 10) : 0;
+                        totalPoints += p;
+                        $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋): ${prizeName}${p ? (' +' + p + '积分') : ''}✅`);
+                    } else {
+                        $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)未中奖`);
+                        break;
+                    }
+                } else {
+                    $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)失败:${result?.msg || '无次数'}❌`);
+                    break;
+                }
+            } catch (e) {
+                $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)异常:${e.message}❌`);
+                break;
+            }
+        }
+        if (totalPoints > 0) {
+            $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)共获得[${totalPoints}]积分✅`);
         }
     }
 
