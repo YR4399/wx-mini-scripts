@@ -1379,11 +1379,11 @@ if __name__ == "__main__":
     except Exception as e:
         print(f'脚本异常: {e}')
     finally:
-        sys.stdout = _tee_out.original
+        sys.stdout = _old_stdout
 
-        sys.stderr = _tee_err.original
+        sys.stderr = _old_stderr
 
-        _logs = _tee_out.getvalue()
+        _logs = _tee.getvalue()
     if _logs.strip():
         try:
             push_notify('牛牛短剧 签到结果', _logs[-2000:])
