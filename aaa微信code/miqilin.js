@@ -24,7 +24,7 @@ const strSplitor = "#";
 const axios = require("axios");
 const defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001e31) NetType/WIFI Language/zh_CN miniProgram";
 const wechat = new WeChatServer({
-    url: process.env.wx_server_url || 'http://172.17.0.4:8787',
+    url: process.env.wx_server_url || 'http://host.docker.internal:18788',
     appid: 'wx14413dafd16b9540',
     auth: process.env.wx_auth || "your-api-key",
 });

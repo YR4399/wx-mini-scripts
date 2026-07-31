@@ -15,7 +15,7 @@ UA = (
     "MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI "
     "MiniProgramEnv/Windows WindowsWechat/WMPF"
 )
-WX_SERVER_URL = os.getenv("wx_server_url", "http://172.17.0.3:8787")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788")
 WX_AUTH = os.getenv("wx_auth", "")
 WX_OPINION = os.getenv("wx_opinion", "")
 

@@ -219,7 +219,7 @@ git clone https://github.com/YR4399/wx-mini-scripts.git
 cp code/*.py /app/Dumb-Panel/scripts/aaa微信code/
 
 # 配置环境变量
-export wx_server_url='http://172.17.0.3:8787'
+export wx_server_url='http://host.docker.internal:18788'
 export wx_auth='your_api_key'
 export wx_opinion='openid1&openid2'
 ```

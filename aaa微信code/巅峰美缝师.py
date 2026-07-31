@@ -15,7 +15,7 @@ API_BASE = "https://api.dfmeifeng.com/wechat/miniapp"
 ACTIVITY_ID = "1914607689511862273"
 CACHE_FILE = "巅峰美缝师_token.json"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://172.17.0.3:8787")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788")
 WX_AUTH = os.getenv("wx_auth", "")
 WX_OPINION = os.getenv("wx_opinion", "")
 

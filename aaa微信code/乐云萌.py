@@ -35,7 +35,7 @@ WX_SERVER_URL = (
     os.environ.get("BRIDGE_BASE_URL") or
     os.environ.get("wx_server_url") or
     os.environ.get("wxcodeurl") or
-    "http://172.17.0.3:8787"
+    "http://host.docker.internal:18788"
 )
 
 WX_API_KEY = (

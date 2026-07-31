@@ -27,7 +27,7 @@ APPID = 'wx8d41cdc44c8aeaab'
 BASE = 'https://fm.exijiu.com'
 AUTH_BASIC = 'Basic d2VjaGF0OndlY2hhdF9zZWNyZXQ='
 WCS_LOCAL = 'http://host.docker.internal:18788'
-WCS_INTERNAL = 'http://172.17.0.3:8787'
+WCS_INTERNAL = 'http://host.docker.internal:18788'
 WCS_AUTH = '1509ea7aca117dcbb7e635c0c007d528'
 TWOCAPTCHA_KEY = '56c8245006ed3a5bbd407639dbc7cf8c'
 # AES 加密密钥

@@ -184,7 +184,7 @@ def update_readme(synced, status, desc):
           '', '</div>', '', '---', '', '## 🛠️ 快速开始', '', '```bash',
           '# 克隆仓库', 'git clone https://github.com/YR4399/wx-mini-scripts.git', '',
           '# 将脚本放入呆呆面板', 'cp code/*.py /app/Dumb-Panel/scripts/code/', '',
-          '# 配置环境变量', "export wx_server_url='http://172.17.0.3:8787'",
+          '# 配置环境变量', "export wx_server_url='http://host.docker.internal:18788'",
           "export wx_auth='your_api_key'", "export wx_opinion='openid1&openid2'", '```',
           '', '---', '', '<div align="center">', '',
           '**「 今天的签到，就交给小助手吧～ 」**', '',

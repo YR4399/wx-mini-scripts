@@ -260,7 +260,7 @@ class WCSClient:
         self.base = WCS_BASE.rstrip('/')
         self.auth = WCS_AUTH
         # WCS 容器内部 IP (Docker bridge network)
-        self.wcs_internal = 'http://172.17.0.3:8787'
+        self.wcs_internal = 'http://host.docker.internal:18788'
 
     def _get(self, path, timeout=30):
         r = requests.get(f'{self.base}{path}',

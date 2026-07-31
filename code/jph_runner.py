@@ -30,7 +30,7 @@ APPID = 'wx8d41cdc44c8aeaab'
 BASE = 'https://fm.exijiu.com'
 AUTH_BASIC = 'Basic d2VjaGF0OndlY2hhdF9zZWNyZXQ='
 WCS_AUTH = '976dc5b3977cd2cbb8c61ddd32e9f885'
-WCS_INTERNAL = 'http://172.17.0.3:8787'
+WCS_INTERNAL = 'http://host.docker.internal:18788'
 
 ACCOUNTS = [
     ('owNAX6j83m4TzrbIA5R3iNXM1iY0', '陌白'),

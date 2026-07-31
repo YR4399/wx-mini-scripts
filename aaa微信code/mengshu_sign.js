@@ -17,7 +17,7 @@ const BASE = "https://smp-api.iyouke.com";
 const VERSION = "2.30.6";
 
 const wcs = new WeChatServer({
-    url: process.env.wx_server_url || "http://172.17.0.3:8787",
+    url: process.env.wx_server_url || "http://host.docker.internal:18788",
     appid: APPID,
     auth: process.env.wx_auth || "your-api-key",
 });

@@ -25,7 +25,7 @@ from datetime import datetime
 # ========== 配置 ==========
 API_URL = "https://api-saas.miniso.com/task-manage-platform/api/virtualCoin/exchangeConfig/pageV2"
 REG_URL = "https://cdn-storeexpress.miniso.com/wechat/miniapp/registrationStatus"
-WCS_URL = os.getenv("wx_server_url", "http://172.17.0.3:8787")
+WCS_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788")
 WCS_AUTH = os.getenv("wx_auth", "976dc5b3977cd2cbb8c61ddd32e9f885")
 MINISO_APPID = "wx2a212470bade49bf"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

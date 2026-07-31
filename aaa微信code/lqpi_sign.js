@@ -42,7 +42,7 @@ const $ = new Env();
 
 // ==================== 配置 ====================
 const CFG = {
-  WX_SERVER: (process.env.wx_server_url || process.env.wxcodeurl || 'http://172.17.0.3:8787').replace(/\/$/, ''),
+  WX_SERVER: (process.env.wx_server_url || process.env.wxcodeurl || 'http://host.docker.internal:18788').replace(/\/$/, ''),
   WX_AUTH: process.env.wx_auth || process.env.WXAPIKEY || process.env.WX_SERVER_APIKEY || '',
   OPENIDS: parseOpenids(),
   APPID: 'wx08dabaec2783f4e9',

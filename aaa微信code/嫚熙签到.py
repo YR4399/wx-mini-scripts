@@ -16,7 +16,7 @@ APPID = "wx1386ec22011eac38"
 KDT_ID = "90834483"
 CHECKIN_ID = "21989"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://172.17.0.3:8787")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788")
 WX_AUTH = os.getenv("wx_auth", "")
 WX_OPINION = os.getenv("wx_opinion", "")
 
