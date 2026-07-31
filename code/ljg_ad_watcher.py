@@ -94,15 +94,29 @@ class WCSClient:
         self.auth = WCS_AUTH
 
     def _get(self, path, timeout=30):
-        r = requests.get(f'{self.base}{path}',
-                         headers={'AUTH': self.auth}, timeout=timeout)
-        return r.json()
+        for attempt in range(3):
+            try:
+                r = requests.get(f'{self.base}{path}',
+                                 headers={'AUTH': self.auth}, timeout=timeout)
+                return r.json()
+            except requests.exceptions.RequestException as e:
+                log.error(f'[WCS] GET {path} 网络错误 (attempt {attempt+1}/3): {e}')
+                if attempt < 2:
+                    time.sleep(3)
+        return None
 
     def _post(self, path, data, timeout=60):
-        r = requests.post(f'{self.base}{path}', json=data,
-                          headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
-                          timeout=timeout)
-        return r.json()
+        for attempt in range(3):
+            try:
+                r = requests.post(f'{self.base}{path}', json=data,
+                                  headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
+                                  timeout=timeout)
+                return r.json()
+            except requests.exceptions.RequestException as e:
+                log.error(f'[WCS] POST {path} 网络错误 (attempt {attempt+1}/3): {e}')
+                if attempt < 2:
+                    time.sleep(3)
+        return None
 
     def get_accounts(self):
         result = self._get('/api/accounts')
@@ -148,16 +162,29 @@ def login_wcs_get_token(openid, user_key=None):
     device_id = _gen_device_id()
     time.sleep(random.uniform(0.5, 1.5))
 
-    resp = requests.get(
-        f'{BASE_URL}/api.php/Login/loginWxXcx',
-        params={'code': login_code, 'deviceId': device_id},
-        headers={
-            'User-Agent': random_ua(),
-            'Referer': f'https://servicewechat.com/{WX_APPID}/2/page-frame.html',
-        },
-        timeout=15
-    )
-    data = resp.json()
+    # 登录接口对服务端响应耗时敏感: 加长超时 + 重试, 避免偶发 ReadTimeout 直接崩脚本
+    data = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(
+                f'{BASE_URL}/api.php/Login/loginWxXcx',
+                params={'code': login_code, 'deviceId': device_id},
+                headers={
+                    'User-Agent': random_ua(),
+                    'Referer': f'https://servicewechat.com/{WX_APPID}/2/page-frame.html',
+                },
+                timeout=30
+            )
+            data = resp.json()
+            break
+        except requests.exceptions.RequestException as e:
+            log.error(f'[Login] 网络错误 (attempt {attempt+1}/3): {e}')
+            if attempt < 2:
+                time.sleep(3)
+
+    if data is None:
+        log.error('[Login] 登录接口连续请求失败（含超时），放弃')
+        return None
 
     status = data.get('status')
     info = data.get('info', '')
