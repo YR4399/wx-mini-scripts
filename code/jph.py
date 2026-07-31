@@ -70,7 +70,7 @@ _CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            '.jph_config.json')
 
 _DEFAULT_CONFIG = {
-    'wx_server_url': 'http://127.0.0.1:8787',
+    'wx_server_url': 'http://host.docker.internal:18788',
     'wx_auth':       '',
     'jph':           '',  # 手动 token 降级 (备注#openid#商城token#花园token)
 }
@@ -1136,7 +1136,7 @@ def main():
         log.info('=' * 50)
         log.info('')
         log.info('方式1 (推荐): WCS 自动 code 登录')
-        log.info('   set wx_server_url=http://127.0.0.1:8787')
+        log.info('   set wx_server_url=http://host.docker.internal:18788')
         log.info('   set wx_auth=你的AUTH_KEY')
         log.info('   python jph.py')
         log.info('   -> 自动获取 code, 调 wxMiniLogin 登录, token 自动缓存')

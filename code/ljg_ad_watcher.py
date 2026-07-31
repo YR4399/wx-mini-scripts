@@ -45,7 +45,7 @@ BASE_URL = 'https://www.ljgglp.com'
 WX_APPID = 'wxd53de10d996cabff'   # 乐购小程序 AppID (从 HAR referer 提取)
 
 # WCS 控制台配置
-WCS_BASE = os.environ.get('wx_server_url', 'http://127.0.0.1:8787')
+WCS_BASE = os.environ.get('wx_server_url', 'http://host.docker.internal:18788')
 WCS_AUTH = os.environ.get('wx_auth', '')
 
 

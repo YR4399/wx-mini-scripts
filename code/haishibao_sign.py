@@ -15,7 +15,7 @@
 
 环境变量:
   hsb             - 手动 token (格式: "备注#access_token")
-  wx_server_url   - WCS 控制台地址 (默认 http://127.0.0.1:8787)
+  wx_server_url   - WCS 控制台地址 (默认 http://host.docker.internal:18788)
   wx_auth         - WCS API Key
 """
 
@@ -58,7 +58,7 @@ REFERRER_PAGE = '199'  # Referer 中的页面编号
 _CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.haishibao_config.json')
 
 _DEFAULT_CONFIG = {
-    'wx_server_url': 'http://127.0.0.1:8787',
+    'wx_server_url': 'http://host.docker.internal:18788',
     'wx_auth': '',
     'hsb': '',  # 手动 token 降级
 }
@@ -528,7 +528,7 @@ def main():
 
 方式2: WCS 自动登录模式
   设置环境变量:
-    set wx_server_url=http://127.0.0.1:8787
+    set wx_server_url=http://host.docker.internal:18788
     set wx_auth=你的AUTH_KEY
 
 access_token 从抓包数据中获取:

@@ -4,7 +4,7 @@
 环境变量：
     ZQSM_P_TOKENS  - P-Token (JWT)，多个账号用&分隔（fallback模式）
     ZQSM_WCSIDS    - 兼容模式，格式: wcsid@encrypted_openid，多个账号用&分隔
-    wx_server_url   - WCS控制台地址（默认 http://127.0.0.1:8787）
+    wx_server_url   - WCS控制台地址（默认 http://host.docker.internal:18788）
     wx_auth         - WCS控制台 APIKEY
     ZQSM_PROXIES   - 代理池 (可选)，格式 http://ip:port 或 socks5://ip:port
     ZQSM_WCS_LOCAL - 强制使用控制台自动发现模式 (true/false)
@@ -805,7 +805,7 @@ class Session:
 def main():
     wcs_ids = os.environ.get('ZQSM_WCSIDS', '')
     p_tokens_env = os.environ.get('ZQSM_P_TOKENS', '')
-    wcs_url = os.environ.get('wx_server_url', 'http://127.0.0.1:8787')
+    wcs_url = os.environ.get('wx_server_url', 'http://host.docker.internal:18788')
     wcs_auth = os.environ.get('wx_auth', '')
     proxy_env = os.environ.get('ZQSM_PROXIES', '')
     force_local = os.environ.get('ZQSM_WCS_LOCAL', '').lower() == 'true'
@@ -991,7 +991,7 @@ def main():
         log.error('未设置环境变量')
         log.info('=== 控制台模式 (推荐) ===')
         log.info('export wx_auth="your-api-key"')
-        log.info('export wx_server_url="http://127.0.0.1:8787"')
+        log.info('export wx_server_url="http://host.docker.internal:18788"')
         log.info('')
         log.info('=== WCS 兼容模式 ===')
         log.info('export ZQSM_WCSIDS="wcsid@encrypted_openid&..."')

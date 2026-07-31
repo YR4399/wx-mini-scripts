@@ -17,7 +17,7 @@ const USER_AGENT =
 let ckName = "wx_opinion";
 
 const wechat = new WeChatServer({
-    url: process.env.wx_server_url || process.env.wxcodeurl || "http://127.0.0.1:8787",
+    url: process.env.wx_server_url || process.env.wxcodeurl || "http://host.docker.internal:18788",
     appid: MINI_APP_ID,
     auth: process.env.wx_auth || process.env.WXAPIKEY || "",
 });

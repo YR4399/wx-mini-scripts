@@ -72,7 +72,7 @@ MERCHANT_ID = '10000'
 # ==== 配置缓存 (.angel_config.json) ====
 _CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.angel_config.json')
 _DEFAULT_CONFIG = {
-    'wx_server_url': 'http://127.0.0.1:8787',
+    'wx_server_url': 'http://host.docker.internal:18788',
     'wx_auth':       '',
     'angel':         '',  # 手动 token 降级: "备注#openid#token#userId"
 }
@@ -499,7 +499,7 @@ def main():
         print('\n❌ 未配置 WCS 连接信息')
         print('  请设置环境变量:')
         print('    set wx_auth=YOUR_API_KEY')
-        print('    set wx_server_url=http://127.0.0.1:8787  (可选)')
+        print('    set wx_server_url=http://host.docker.internal:18788  (可选)')
         print('')
         print('  或者使用手动 token 降级:')
         print('    set angel=备注#openid#token#userId')

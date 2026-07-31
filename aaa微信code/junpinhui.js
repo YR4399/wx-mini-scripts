@@ -54,7 +54,7 @@ const FORCE_SLIDE = process.env.FORCE_SLIDE_VERIFY === "true";
 const PUSH_PLUS_TOKEN = process.env.PUSH_PLUS_TOKEN || "";
 
 // === [本地账号服务配置] 根据抓包数据更新 ===
-const WX_SERVER_URL = process.env.wx_server_url || "http://100.122.1.00:18788";
+const WX_SERVER_URL = process.env.wx_server_url || "http://host.docker.internal:18788";
 const WX_AUTH = process.env.wx_auth || "b47ad1";
 
 // ================= 新增滑块验证依赖全局配置 =================

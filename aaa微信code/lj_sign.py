@@ -84,7 +84,7 @@ def _save_json(path, data):
 
 # ===== 配置三级加载 =====
 _DEFAULT_CONFIG = {
-    'wx_server_url': 'http://127.0.0.1:8787',
+    'wx_server_url': 'http://host.docker.internal:18788',
     'wx_auth': '',
     'lj': '',
 }
@@ -584,7 +584,7 @@ def main():
         print('使用方式:')
         print()
         print('  方式一: WCS 自动登录（推荐）')
-        print('    set wx_server_url=http://127.0.0.1:8787')
+        print('    set wx_server_url=http://host.docker.internal:18788')
         print('    set wx_auth=你的AUTH_KEY')
         print('    python lj_sign.py')
         print()

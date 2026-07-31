@@ -21,7 +21,7 @@ const ACTIVITY_ID = "cdd30467-abb8-4944-8941-2879aa950a86";
 let ckName = "wx_opinion";
 
 const wechat = new WeChatServer({
-    url: process.env.wx_server_url || "http://127.0.0.1:8787",
+    url: process.env.wx_server_url || "http://host.docker.internal:18788",
     appid: MINI_APP_ID,
     auth: process.env.wx_auth || "",
 });

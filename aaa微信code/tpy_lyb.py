@@ -23,7 +23,7 @@ API 流程:
   5. getScore-V1        -> 查询健康分
 
 环境变量:
-    wx_server_url  - WCS 控制台地址，默认 http://127.0.0.1:8787
+    wx_server_url  - WCS 控制台地址，默认 http://host.docker.internal:18788
     wx_auth        - WCS 控制台 AUTH key
     tpylyb         - 降级模式的手动 token（格式: 备注#openid#token#unionid）
 
@@ -84,7 +84,7 @@ _CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 # 硬编码默认值
 _DEFAULT_CONFIG = {
-    'wx_server_url':     'http://127.0.0.1:8787',
+    'wx_server_url':     'http://host.docker.internal:18788',
     'wx_auth':           '',
     'ai_api_key':        'sk-033fb36a9a304b8e9f40e141439d55de',
     'ai_api_url':        'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
@@ -829,7 +829,7 @@ def main():
 ║    set tpylyb=备注#openid#token#unionid   ║
 ║                                          ║
 ║  方式二: WCS 控制台自动登录 (推荐)        ║
-║    set wx_server_url=http://127.0.0.1:8787║
+║    set wx_server_url=http://host.docker.internal:18788║
 ║    set wx_auth=你的AUTH_KEY               ║
 ║    (首次设置后自动缓存，后续无需重复)      ║
 ║                                          ║

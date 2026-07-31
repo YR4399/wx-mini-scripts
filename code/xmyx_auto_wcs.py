@@ -64,7 +64,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _CONFIG_FILE = os.path.join(_SCRIPT_DIR, ".xmyx_config.json")
 _TOKEN_CACHE_FILE = os.path.join(_SCRIPT_DIR, ".xmyx_token_cache.json")
 _DEFAULT_CONFIG = {
-    "wx_server_url": "http://127.0.0.1:8787",
+    "wx_server_url": "http://host.docker.internal:18788",
     "wx_auth": "",
 }
 # token 有效期 (秒), 超过则重新登录

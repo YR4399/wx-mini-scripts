@@ -29,7 +29,7 @@ let ckName = "wx_opinion";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF";
 
 const wechat = new WeChatServer({
-    url: process.env.wx_server_url || "http://127.0.0.1:8787",
+    url: process.env.wx_server_url || "http://host.docker.internal:18788",
     appid: APPID,
     auth: process.env.wx_auth || "",
 });

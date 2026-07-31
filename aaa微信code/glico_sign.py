@@ -83,7 +83,7 @@ WX_APPID = 'wx0245348276df851b'
 LOTTERY_ID = 98038385          # 签到抽奖ID
 STICK_ID = '2052269816767766530'  # 520约会灵感签活动ID
 
-WCS_BASE = os.environ.get('wx_server_url', 'http://127.0.0.1:8787')
+WCS_BASE = os.environ.get('wx_server_url', 'http://host.docker.internal:18788')
 WCS_AUTH = os.environ.get('wx_auth', '')
 
 # ====== 配置缓存 ======
@@ -91,7 +91,7 @@ _CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            '.glico_config.json')
 
 _DEFAULT_CONFIG = {
-    'wx_server_url': 'http://127.0.0.1:8787',
+    'wx_server_url': 'http://host.docker.internal:18788',
     'wx_auth': '',
     'glico': '',
 }
@@ -606,7 +606,7 @@ def main():
         print()
         print('请设置以下环境变量之一:')
         print('  1. WCS 自动模式:')
-        print('     set wx_server_url=http://127.0.0.1:8787')
+        print('     set wx_server_url=http://host.docker.internal:18788')
         print('     set wx_auth=你的AUTH_KEY')
         print()
         print('  2. 手动 token 模式:')

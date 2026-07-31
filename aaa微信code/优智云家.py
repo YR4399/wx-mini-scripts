@@ -50,7 +50,7 @@ import requests
 APP_NAME = "优智云家品牌商城小程序"
 APPID = "wxa61f98248d20178b"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
 WX_AUTH = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 

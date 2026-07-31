@@ -19,7 +19,7 @@ const TOKEN_CACHE_FILE = path.join(__dirname, "fdh_token_cache.json");
 let ckName = "wx_opinion";
 
 const wechat = new WeChatServer({
-    url: process.env.wx_server_url || "http://127.0.0.1:8787",
+    url: process.env.wx_server_url || "http://host.docker.internal:18788",
     appid: MINI_APP_ID,
     auth: process.env.wx_auth || "",
 });

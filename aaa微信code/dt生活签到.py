@@ -17,7 +17,7 @@ APP_ID = "wx51a2021dd921f747"
 PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 
 # WCS 配置（从环境变量读取）
-WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
 WX_AUTH = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 

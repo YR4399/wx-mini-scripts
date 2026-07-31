@@ -17,7 +17,7 @@ delete process.env.https_proxy;
 // PushPlus 通知Token（青龙环境变量）
 const PLUSPLUS_TOKEN = process.env.PLUSPLUS_TOKEN || "";
 // 多端口服务器列表
-const WX_SERVER_URL = (process.env.wx_server_url || "http://127.0.0.1:8787").replace(/\/+$/, "");
+const WX_SERVER_URL = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/+$/, "");
 const WX_AUTH = process.env.wx_auth || "";
 const CK_NAME = "wx_opinion";
 // 品赞代理配置（青龙环境变量）

@@ -3,7 +3,7 @@
 
 """
 雀巢会员自动签到 + 任务 + 抽奖 脚本 V2.0
-对接本地 wechatserver (127.0.0.1:8787)
+对接本地 wechatserver (host.docker.internal:18788)
 合并自：雀巢多任务.js（大大鸣版）
 """
 
@@ -16,7 +16,7 @@ import time
 import os
 
 # ==================== 配置区域（从环境变量读取） ====================
-_ws_url = os.environ.get('wx_server_url', 'http://127.0.0.1:8787')
+_ws_url = os.environ.get('wx_server_url', 'http://host.docker.internal:18788')
 WS_AUTH = os.environ.get('wx_auth', '')
 
 # 解析地址

@@ -13,7 +13,7 @@ for env_key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
 # ===================== 配置项 =====================
 PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 # WCS 配置
-WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
 WX_AUTH = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 PROXY_API = os.getenv("PROXY_API", "")

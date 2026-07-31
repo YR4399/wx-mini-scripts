@@ -54,7 +54,7 @@ import requests
 APP_NAME = "铛铛一下旧衣服回收小程序"
 APPID = "wxe378d2d7636c180e"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
 WX_AUTH = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 

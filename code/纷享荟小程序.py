@@ -3,7 +3,7 @@
 纷享会积分任务自动化 - WCS 全自动版
 ====================================
 环境变量:
-  wx_server_url = http://127.0.0.1:8787
+  wx_server_url = http://host.docker.internal:18788
   wx_auth = 认证令牌
 
 自动从 WCS /api/accounts 发现活跃账号, 无需额外设 foglamb_fxh
@@ -57,7 +57,7 @@ STATUS_MAP = {0:"已达上限",1:"成功",2:"已到账",3:"已达上限",4:"已�
 
 class WCS:
     def __init__(self):
-        self.url = os.environ.get('wx_server_url', 'http://127.0.0.1:8787')
+        self.url = os.environ.get('wx_server_url', 'http://host.docker.internal:18788')
         self.auth = os.environ.get('wx_auth', '')
 
     def get_code(self, appid, openid):
@@ -335,7 +335,7 @@ class Account:
 def main():
     # 自动从 WCS 发现活跃账号
     try:
-        wcs_url = os.environ.get('wx_server_url','http://127.0.0.1:8787')
+        wcs_url = os.environ.get('wx_server_url','http://host.docker.internal:18788')
         wcs_auth = os.environ.get('wx_auth','')
         # 优先从 wx_opinion 环境变量读取账号
         _wx_op = os.environ.get("wx_opinion", "")

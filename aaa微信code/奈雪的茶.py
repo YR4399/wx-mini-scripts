@@ -46,7 +46,7 @@ import requests
 APPID = "wxab7430e6e8b9a4ab"
 
 # WCS 配置
-WX_SERVER_URL = os.getenv("wx_server_url", "http://127.0.0.1:8787").rstrip("/")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
 WX_AUTH = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 

@@ -45,7 +45,7 @@ const UA = "Mozilla/5.0 (Linux; Android 16; 25113PN0EC Build/BP2A.250605.031.A3;
 
 class WeChatServer {
     constructor(options) {
-        this.serverUrl = (options.url || "http://127.0.0.1:8787").replace(/\/$/, "");
+        this.serverUrl = (options.url || "http://host.docker.internal:18788").replace(/\/$/, "");
         this.appid = options.appid;
         this.auth = options.auth || "";
     }
@@ -235,7 +235,7 @@ class Task {
 
     async run() {
         const wechat = new WeChatServer({
-            url: process.env.wx_server_url || "http://127.0.0.1:8787",
+            url: process.env.wx_server_url || "http://host.docker.internal:18788",
             appid: MINI_APP_ID,
             auth: process.env.wx_auth || ""
         });
