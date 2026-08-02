@@ -76,13 +76,41 @@ async function getWxCode(openid) {
   throw new Error('WCS code 失败: ' + (res.raw || '').slice(0, 120));
 }
 
+// WCS 获取手机号授权数据 (encryptedData/iv)
+async function getPhoneNumber(openid) {
+  const res = await rawRequest(`${WX_SERVER_URL}/wx/getphonenumber`, 'POST',
+    { 'auth': WX_AUTH, 'Content-Type': 'application/json' },
+    JSON.stringify({ openid, appid: APPID }));
+  if (res.json && res.json.status && res.json.data && res.json.data.raw) {
+    return res.json.data.raw; // {encryptedData, iv, data:{mobile}}
+  }
+  throw new Error('WCS 手机号获取失败: ' + (res.raw || '').slice(0, 120));
+}
+
 async function login(openid) {
-  const code = await getWxCode(openid);
+  // 1. 首次登录
+  let code = await getWxCode(openid);
   const res = await request('POST', `/wechat/authorize/program/login?code=${encodeURIComponent(code)}`, '', {
     code, spread_spid: 0, avatar: '', nickName: '微信用户', type: 'routine',
   });
   if (res.json && res.json.code === 200 && res.json.data && res.json.data.token) {
     return { token: res.json.data.token, uid: res.json.data.uid, nick: res.json.data.nikeName || '' };
+  }
+  // 2. register → 手机号绑定 (WCS getphonenumber + 新登录 code)
+  if (res.json && res.json.code === 200 && res.json.data && res.json.data.type === 'register' && res.json.data.key) {
+    const key = res.json.data.key;
+    log(`📱 检测到新账号，自动绑定手机号注册...`, 'YELLOW');
+    const pn = await getPhoneNumber(openid);
+    if (!pn || !pn.encryptedData) throw new Error('无法获取手机号授权数据');
+    code = await getWxCode(openid); // 新登录 code (binding/phone 需要)
+    const bind = await request('POST', `/wechat/register/binding/phone`, '', {
+      encryptedData: pn.encryptedData, iv: pn.iv, code, key, type: 'routine',
+    });
+    if (bind.json && bind.json.code === 200 && bind.json.data && bind.json.data.token) {
+      log(`✅ 注册绑定成功 (手机 ${bind.json.data.phone || ''})`, 'GREEN');
+      return { token: bind.json.data.token, uid: bind.json.data.uid, nick: bind.json.data.nikeName || '' };
+    }
+    throw new Error('绑定手机号失败: ' + ((bind.json && bind.json.message) || (bind.raw || '').slice(0, 120)));
   }
   throw new Error('登录失败: ' + (res.raw || '').slice(0, 150));
 }
@@ -139,7 +167,7 @@ async function runAccount(openid, idx) {
   await delay(1000);
 
   // 4. 浏览/分享刷分 (READ_ARTICLE ×7, 每次 +1, 到上限返回空 data)
-  for (let i = 1; i <= 7; i++) {
+  for (let i = 1; i <= 5; i++) {
     try {
       const r = await request('GET', '/lxx/usercenter/share/READ_ARTICLE?noAuth=true', token);
       const d = (r.json && r.json.data) || {};
@@ -147,13 +175,13 @@ async function runAccount(openid, idx) {
         const got = d.integral !== undefined ? d.integral : 1;
         res.readCount++;
         res.readGain += got;
-        log(`📖 浏览/分享 ${i}/7 次 -> +${got}分`, 'GREEN');
+        log(`📖 浏览/分享 ${i}/5 次 -> +${got}分`, 'GREEN');
       } else {
-        log(`📖 浏览/分享 ${i}/7 次 -> 已达上限(空响应)，停止`, 'YELLOW');
+        log(`📖 浏览/分享 ${i}/5 次 -> 已达上限(空响应)，停止`, 'YELLOW');
         break;
       }
     } catch (e) {
-      log(`📖 浏览/分享 ${i}/7 次 -> ${e.message}`, 'YELLOW');
+      log(`📖 浏览/分享 ${i}/5 次 -> ${e.message}`, 'YELLOW');
     }
     await delay(1200);
   }
