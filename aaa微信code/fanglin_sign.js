@@ -136,6 +136,13 @@ async function doSign(token) {
   }
 }
 
+// 判定本次签到是否真实生效：接口明确返回 isDaySign=true，或服务端明确提示已签
+function isSigned(r) {
+  if (r?.code === 200 && r.data && r.data.isDaySign === true) return true;
+  if (r && /已签|重复|today|已经签到/i.test(r.message || "")) return true;
+  return false;
+}
+
 // ==================== 单账号流程 ====================
 async function processAccount(openid, idx) {
   console.log(`\n========== 账号[${idx}] ${openid.slice(0, 10)}... ==========`);
@@ -167,20 +174,118 @@ async function processAccount(openid, idx) {
 
   // 3) 签到
   L.act("执行签到...");
-  const r = await doSign(token);
-  if (r?.code === 200 && r.data) {
-    const d = r.data;
-    if (d.isDaySign) {
-      L.ok(`签到成功 | 连签 ${d.signNum} 天 | 累计 ${d.sumSignDay} 天 | 当前积分 ${d.integral}`);
-    } else {
-      L.info(`已签到 | 连签 ${d.signNum} 天 | 积分 ${d.integral}`);
+  const integralBefore = user?.integral ?? null;
+  let r = await doSign(token);
+  let signed = isSigned(r);
+
+  // 未生效（多为 token 半失效导致 sign 未登记）→ 强制刷新登录态重试一次
+  if (!signed) {
+    L.warn(`首次签到未生效 (${r?.message || "isDaySign=false"})，刷新登录态重试...`);
+    const code = await getWxCode(openid);
+    if (code) {
+      const lo = await login(code);
+      if (lo) {
+        token = lo.token;
+        cache[openid] = { token, uid: lo.uid, ts: Date.now() };
+        saveJSON(CACHE_FILE, cache);
+        L.ok("重新登录成功，重试签到");
+        r = await doSign(token);
+        signed = isSigned(r);
+      }
     }
-    return { status: "ok", integral: d.integral, signNum: d.signNum };
+  }
+
+  if (signed) {
+    const d = r.data || {};
+    const u2 = await getUser(token);
+    const integralAfter = u2?.integral ?? integralBefore;
+    if (integralBefore != null && integralAfter > integralBefore) {
+      L.ok(`签到成功 | 连签 ${d.signNum} 天 | 累计 ${d.sumSignDay} 天 | +${integralAfter - integralBefore}分 (当前 ${integralAfter})`);
+    } else {
+      L.info(`今日已签到 | 连签 ${d.signNum} 天 | 当前积分 ${integralAfter ?? d.integral}`);
+    }
+
+    // ========== 分享奖励领取 (HAR 2026-08-01 抓包: sharePoster → getRemindListUser → remindRead 领积分) ==========
+    try {
+      L.act("执行分享 + 领取奖励...");
+      // 1) 分享海报（触发奖励登记，每天一次）
+      try {
+        await axios.post(`${API_BASE}/remind/sharePoster`, {}, { headers: hdrs(token), timeout: 15000, proxy: false });
+      } catch (e) {}
+      await new Promise(r => setTimeout(r, 800));
+      // 2) 查待领提醒列表
+      const rl = await axios.get(`${API_BASE}/remind/getRemindListUser`, { headers: hdrs(token), timeout: 15000, proxy: false });
+      const remindList = (rl.data?.code === 200 && Array.isArray(rl.data.data)) ? rl.data.data : [];
+      const pending = remindList.filter(x => x.status == 0 || x.status === "0");
+      if (pending.length === 0) {
+        L.info("无待领提醒");
+      } else {
+        let totalGot = 0;
+        for (const item of pending) {
+          if (!item.id) continue;
+          try {
+            const rr = await axios.post(`${API_BASE}/remind/remindRead/${item.id}`, {}, { headers: hdrs(token), timeout: 15000, proxy: false });
+            if (rr.data?.code === 200) {
+              const pts = item.points || 0;
+              totalGot += pts;
+              L.ok(`领取提醒[${item.id}] ${item.remark || ""} +${pts}分`);
+            } else {
+              L.warn(`领取提醒[${item.id}] 失败: ${rr.data?.message || "?"}`);
+            }
+          } catch (e) {}
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (totalGot > 0) {
+          const u3 = await getUser(token);
+          L.ok(`分享奖励共 +${totalGot}分 | 当前积分 ${u3?.integral ?? "?"}`);
+        }
+      }
+    } catch (e) {
+      L.warn(`分享奖励流程异常: ${e.message}`);
+    }
+
+    const uFinal = await getUser(token);
+    return { status: "ok", integral: uFinal?.integral ?? integralAfter ?? d.integral, signNum: d.signNum };
   } else {
-    const msg = r?.message || "未知";
-    if (/已签|重复|today/i.test(msg)) { L.info(`今日已签到`); return { status: "ok", msg: "已签到" }; }
-    L.fail(`签到失败: ${msg}`);
-    return { status: "error", msg };
+    const msg = r?.message || "签到未生效";
+    L.fail(`签到失败: ${msg}（可能已签/时区未跨天，继续分享奖励）`);
+    // 签到失败也继续分享奖励（分享每天独立可做）
+    try {
+      L.act("执行分享 + 领取奖励...");
+      try {
+        await axios.post(`${API_BASE}/remind/sharePoster`, {}, { headers: hdrs(token), timeout: 15000, proxy: false });
+      } catch (e) {}
+      await new Promise(r => setTimeout(r, 800));
+      const rl = await axios.get(`${API_BASE}/remind/getRemindListUser`, { headers: hdrs(token), timeout: 15000, proxy: false });
+      const remindList = (rl.data?.code === 200 && Array.isArray(rl.data.data)) ? rl.data.data : [];
+      const pending = remindList.filter(x => x.status == 0 || x.status === "0");
+      if (pending.length === 0) {
+        L.info("无待领提醒");
+      } else {
+        let totalGot = 0;
+        for (const item of pending) {
+          if (!item.id) continue;
+          try {
+            const rr = await axios.post(`${API_BASE}/remind/remindRead/${item.id}`, {}, { headers: hdrs(token), timeout: 15000, proxy: false });
+            if (rr.data?.code === 200) {
+              const pts = item.points || 0;
+              totalGot += pts;
+              L.ok(`领取提醒[${item.id}] ${item.remark || ""} +${pts}分`);
+            } else {
+              L.warn(`领取提醒[${item.id}] 失败: ${rr.data?.message || "?"}`);
+            }
+          } catch (e) {}
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (totalGot > 0) {
+          const u3 = await getUser(token);
+          L.ok(`分享奖励共 +${totalGot}分 | 当前积分 ${u3?.integral ?? "?"}`);
+        }
+      }
+    } catch (e) {
+      L.warn(`分享奖励流程异常: ${e.message}`);
+    }
+    return { status: "ok", integral: null, signNum: null, msg: "签到未生效(可能已签)但分享已处理" };
   }
 }
 
