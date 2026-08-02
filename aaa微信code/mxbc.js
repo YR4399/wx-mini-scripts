@@ -26,6 +26,16 @@ cron: 30 8 * * *
 
 const { Env } = require("../tools/env.js")
 const $ = new Env("蜜雪冰城");
+// L 日志别名 (脚本原作者用 L 但未定义, 这里映射到 $ 的日志方法)
+const L = {
+  log: (...a) => $.log(...a),
+  info: (...a) => $.info(...a),
+  warn: (...a) => $.warn(...a),
+  err: (...a) => $.err(...a),
+  ok: (...a) => $.ok(...a),
+  done: (...a) => $.done(...a),
+  fail: (...a) => $.err(...a),
+};
 let ckName = `wx_opinion`;
 const strSplitor = "#";
 const axios = require("axios");
