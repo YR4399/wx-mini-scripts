@@ -23,7 +23,12 @@ os.environ['NO_PROXY'] = '*'
 import requests
 requests.packages.urllib3.disable_warnings()
 
+# 全局 socket 超时兜底: requests timeout 不覆盖 SSL 握手, apimallwm.exijiu.com TLS 间歇卡死
+import socket
+socket.setdefaulttimeout(20)
+
 APPID = 'wx8d41cdc44c8aeaab'
+# 登录/签到/滑块接口在 fm.exijiu.com; apimallwm.exijiu.com 是农场(GARDEN)域名 (2026-08-03 修正)
 BASE = 'https://fm.exijiu.com'
 AUTH_BASIC = 'Basic d2VjaGF0OndlY2hhdF9zZWNyZXQ='
 WCS_LOCAL = 'http://host.docker.internal:18788'
@@ -57,6 +62,26 @@ def _headers(token=None):
         h['X-Access-Token'] = token
     return h
 
+def _safe_json(r):
+    """JSON 解析容错: 空响应/非 JSON 时返回 {} 并打印提示"""
+    try:
+        if r is None:
+            return {}
+        return r.json()
+    except Exception:
+        body = getattr(r, 'text', '') or ''
+        print(f'  ⚠️ 响应解析失败: HTTP={getattr(r, "status_code", "?")} body={body[:120]}')
+        return {}
+
+# ddddocr 全局单例 (滑块缺口识别, 优先方案)
+_OCR_INSTANCE = None
+def _get_ocr():
+    global _OCR_INSTANCE
+    if _OCR_INSTANCE is None:
+        import ddddocr
+        _OCR_INSTANCE = ddddocr.DdddOcr(show_ad=False)
+    return _OCR_INSTANCE
+
 # ============================================================
 # WCS 登录
 # ============================================================
@@ -79,7 +104,7 @@ def get_wx_code(openid):
         r = requests.post(f'{wcs_url}/wx/code', json=body,
                           headers={'auth': WCS_AUTH, 'Content-Type': 'application/json'},
                           timeout=15, proxies={'http': None, 'https': None})
-        data = r.json()
+        data = _safe_json(r)
         if data.get('status') and isinstance(data.get('data'), dict) and data['data'].get('code'):
             return data['data']['code']
         if data.get('success') and isinstance(data.get('data'), dict) and data['data'].get('code'):
@@ -93,11 +118,14 @@ def login(code):
     try:
         r = requests.post(f'{BASE}/api/v2/login/wxMiniSilentLogin', json={'code': code},
                           headers=_headers(), timeout=30, verify=False)
-        d = r.json()
+        d = _safe_json(r)
         if d.get('success'):
             return d['data']['token'], d['data'].get('phone', '')
         msg = d.get('message', '未知')
         print(f'  ⚠️ 登录失败: {msg}')
+        if '频繁' in msg or '10分钟' in msg:
+            print('  ⏳ 触发登录限流，等待 90 秒后重试...')
+            time.sleep(90)
     except Exception as e:
         print(f'  ❌ 登录异常: {e}')
     return None, None
@@ -110,7 +138,7 @@ def check_sign(token):
     try:
         r = requests.post(f'{BASE}/api/customer/daily/checkTodaySignIn', json={},
                           headers=_headers(token), timeout=10, verify=False)
-        d = r.json()
+        d = _safe_json(r)
         if d.get('success'):
             # data 是布尔值: True=已签到, False=未签到
             return bool(d.get('data', False))
@@ -123,9 +151,13 @@ def aes_encrypt_ecb(data_dict, secret_key):
     try:
         from Crypto.Cipher import AES
         from Crypto.Util.Padding import pad
-        key = (secret_key or AES_KEY)[:16]
+        sk = secret_key or AES_KEY
+        if isinstance(sk, str):
+            key = sk[:16].encode('utf-8')
+        else:
+            key = sk[:16]
         if len(key) != 16:
-            key = key[:16].ljust(16, b'\0')
+            key = key[:16] + b'\0' * (16 - len(key))
         data_str = json.dumps(data_dict, separators=(',', ':'), ensure_ascii=False)
         data_bytes = data_str.encode('utf-8')
         cipher = AES.new(key, AES.MODE_ECB)
@@ -174,7 +206,7 @@ def _poll_2captcha(captcha_id, timeout=120):
                     return int(result.strip()), None
                 except ValueError:
                     return None, f'无法解析结果: {result}'
-            elif txt == 'CAPTCHA_NOT_READY':
+            elif 'NOT_READY' in txt:  # 注意: 2captcha 拼写是 CAPCHA_NOT_READY(少T), 用包含匹配
                 time.sleep(5)
                 continue
             else:
@@ -185,12 +217,12 @@ def _poll_2captcha(captcha_id, timeout=120):
 
 
 def solve_captcha(token):
-    """滑块验证码完整流程: get → 2captcha识别 → check"""
+    """滑块验证码完整流程: get → ddddocr识别(优先)/2captcha(fallback) → check"""
     try:
         # Step 1: 获取滑块图片
         r = requests.post(f'{BASE}/api/captcha/get', json={'captchaType': 'blockPuzzle'},
                           headers=_headers(token), timeout=20, verify=False)
-        d = r.json()
+        d = _safe_json(r)
         if not d.get('success'):
             msg = d.get('message', '')
             if '频繁' in msg or '10分钟' in msg:
@@ -210,38 +242,50 @@ def solve_captcha(token):
             print('  ⚠️ 滑块数据不完整')
             return False
 
-        # Step 2: 拼接图片提交 2captcha
+        # Step 2: 本地 ddddocr 识别缺口坐标 (优先, 无外部依赖)
+        x = None
         try:
-            from PIL import Image
-            back_data = base64.b64decode(back_img_b64)
-            slide_data = base64.b64decode(slide_img_b64)
-            back_img = Image.open(io.BytesIO(back_data)).convert('RGB')
-            slide_img = Image.open(io.BytesIO(slide_data)).convert('RGB')
-
-            # 缩小滑块图放在背景图下方，方便工人识别
-            slide_small = slide_img.resize((back_img.width // 3, slide_img.height // 3))
-            combined = Image.new('RGB', (back_img.width, back_img.height + slide_small.height), (255, 255, 255))
-            combined.paste(back_img, (0, 0))
-            combined.paste(slide_small, (0, back_img.height))
-
-            img_path = '/tmp/captcha_combined.png'
-            combined.save(img_path)
+            ocr = _get_ocr()
+            res = ocr.slide_match(slide_img_b64, back_img_b64)
+            x = res.get('target_x') if isinstance(res, dict) else None
+            if x:
+                print(f'  🧩 ddddocr 识别缺口 x={x}')
         except Exception as e:
-            print(f'  ❌ 图片处理失败: {e}')
-            return False
+            print(f'  ⚠️ ddddocr 识别失败: {e}，尝试 2captcha...')
 
-        print('  🧩 提交 2captcha 识别...')
-        captcha_id, err = _submit_2captcha(img_path)
-        if not captcha_id:
-            print(f'  ❌ 2captcha 提交失败: {err}')
-            return False
-        print(f'  📋 任务ID: {captcha_id}')
-
-        x, err = _poll_2captcha(captcha_id)
+        # Step 2b: 2captcha fallback (原方案)
         if x is None:
-            print(f'  ❌ 2captcha 识别失败: {err}')
-            return False
-        print(f'  🔍 2captcha 识别 x={x}')
+            try:
+                from PIL import Image
+                back_data = base64.b64decode(back_img_b64)
+                slide_data = base64.b64decode(slide_img_b64)
+                back_img = Image.open(io.BytesIO(back_data)).convert('RGB')
+                slide_img = Image.open(io.BytesIO(slide_data)).convert('RGB')
+
+                # 缩小滑块图放在背景图下方，方便工人识别
+                slide_small = slide_img.resize((back_img.width // 3, slide_img.height // 3))
+                combined = Image.new('RGB', (back_img.width, back_img.height + slide_small.height), (255, 255, 255))
+                combined.paste(back_img, (0, 0))
+                combined.paste(slide_small, (0, back_img.height))
+
+                img_path = '/tmp/captcha_combined.png'
+                combined.save(img_path)
+            except Exception as e:
+                print(f'  ❌ 图片处理失败: {e}')
+                return False
+
+            print('  🧩 提交 2captcha 识别...')
+            captcha_id, err = _submit_2captcha(img_path)
+            if not captcha_id:
+                print(f'  ❌ 2captcha 提交失败: {err}')
+                return False
+            print(f'  📋 任务ID: {captcha_id}')
+
+            x, err = _poll_2captcha(captcha_id)
+            if x is None:
+                print(f'  ❌ 2captcha 识别失败: {err}')
+                return False
+            print(f'  🔍 2captcha 识别 x={x}')
 
         # Step 3: 加密坐标
         point_json = aes_encrypt_ecb({'x': x, 'y': 5}, secret_key)
@@ -252,7 +296,7 @@ def solve_captcha(token):
         r = requests.post(f'{BASE}/api/captcha/check',
                           json={'captchaType': 'blockPuzzle', 'pointJson': point_json, 'token': captcha_token},
                           headers=_headers(token), timeout=30, verify=False)
-        d = r.json()
+        d = _safe_json(r)
         if d.get('success'):
             print('  ✅ 滑块验证通过')
             return True
@@ -270,20 +314,24 @@ def solve_captcha(token):
         print(f'  ❌ 滑块异常: {e}')
         return False
 
-def do_sign(token, code):
-    """执行商城签到（需先过滑块）"""
+def do_sign(token, code, openid):
+    """执行商城签到（需先过滑块 + 全新 wx code）"""
     # 先过滑块
     print('  🧩 执行滑块验证...')
     if not solve_captcha(token):
         print('  ❌ 滑块验证失败，跳过签到')
         return False
 
-    # 提交签到
+    # 提交签到: 必须用全新 code (登录 code 一次性已失效)
     try:
+        new_code = get_wx_code(openid)
+        if not new_code or len(new_code) < 10:
+            print('  ❌ 获取全新签到 code 失败')
+            return False
         r = requests.post(f'{BASE}/api/customer/daily/fillSignIn',
-                          json={'code': code, 'channelCode': 'xj_mall_wx_applet'},
+                          json={'code': new_code, 'channelCode': 'xj_mall_wx_applet'},
                           headers=_headers(token), timeout=30, verify=False)
-        d = r.json()
+        d = _safe_json(r)
         if d.get('success'):
             print('  ✅ 签到成功!')
             return True
@@ -322,12 +370,18 @@ def process(openid, name):
 
     # 商城签到
     print('\n  [商城签到]')
+    sign_ok = False
     is_signed = check_sign(token)
     if is_signed:
         print('  ✅ 今日已签到')
+        sign_ok = True
     else:
         print('  ⏳ 尚未签到，执行签到...')
-        do_sign(token, code)
+        sign_ok = do_sign(token, code, openid)
+
+    if not sign_ok:
+        print(f'\n  ⚠️ {name} 签到未完成（滑块失败或接口异常），不记为成功')
+        return False
 
     print(f'\n  ✅ {name} 处理完成')
     return True
