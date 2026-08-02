@@ -59,6 +59,7 @@ const WX_AUTH = process.env.wx_auth || "b47ad1";
 
 // ================= 新增滑块验证依赖全局配置 =================
 const OCR_SERVER = process.env.OCR_SERVER || 'https://ddddocr.xzxxn7.live';
+const TWOCAPTCHA_KEY = process.env.TWOCAPTCHA_APIKEY || process.env.TWOCAPTCHA_KEY || '56c8245006ed3a5bbd407639dbc7cf8c';
 
 // 随机生成虚拟IP
 const generateRandomIP = () => {
@@ -81,7 +82,77 @@ function aesEncrypt(e, n) {
     return cryptoJS.enc.Base64.stringify(r.ciphertext);
 }
 
-// 滑块OCR请求封装
+// 滑块OCR请求封装 (ddddocr 失败时 fallback 2captcha)
+const { execSync } = require('child_process');
+function solveSlide2Captcha(slidingImageB64, backImageB64) {
+  // 调用容器 python3.12(PIL) 拼接图片 + 2captcha 识别缺口 x 坐标
+  const py = String.raw`
+import base64, io, sys, time
+try:
+    import requests
+    from PIL import Image
+except Exception as e:
+    print('DEP_ERR:' + str(e), file=sys.stderr); sys.exit(2)
+KEY = '${TWOCAPTCHA_KEY}'
+def submit(img_path):
+    for i in range(3):
+        try:
+            with open(img_path, 'rb') as f:
+                r = requests.post('https://2captcha.com/in.php',
+                                  data={'key': KEY, 'method': 'normal', 'softid': '234'},
+                                  files={'file': f}, timeout=30)
+            txt = r.text.strip()
+            if txt.startswith('OK|'):
+                return txt.split('|')[1]
+            if 'ERROR' in txt:
+                time.sleep(3); continue
+        except Exception as e:
+            time.sleep(3)
+    return None
+def poll(cid, timeout=120):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            r = requests.get('https://2captcha.com/res.php',
+                             params={'key': KEY, 'action': 'get', 'id': cid}, timeout=20)
+            txt = r.text.strip()
+            if txt.startswith('OK|'):
+                return txt.split('|')[1].strip()
+            if 'CAPCHA_NOT_READY' not in txt:
+                time.sleep(2)
+        except Exception:
+            pass
+        time.sleep(3)
+    return None
+try:
+    back = Image.open(io.BytesIO(base64.b64decode('${backImageB64}'))).convert('RGB')
+    slide = Image.open(io.BytesIO(base64.b64decode('${slidingImageB64}'))).convert('RGB')
+    sm = slide.resize((max(1, back.width // 3), max(1, slide.height // 3)))
+    combined = Image.new('RGB', (back.width, back.height + sm.height), (255, 255, 255))
+    combined.paste(back, (0, 0))
+    combined.paste(sm, (0, back.height))
+    p = '/tmp/captcha_combined.png'
+    combined.save(p)
+    cid = submit(p)
+    if not cid:
+        print('NO_ID'); sys.exit(3)
+    x = poll(cid)
+    if x is None:
+        print('NO_ANS'); sys.exit(4)
+    print(x)
+except Exception as e:
+    print('ERR:' + str(e), file=sys.stderr); sys.exit(5)
+`;
+  try {
+    const out = execSync('/app/Dumb-Panel/deps/python/3.12/bin/python3.12 -c ' + JSON.stringify(py), { timeout: 150000, encoding: 'utf-8' });
+    const x = parseInt(out.trim().split('\n').pop(), 10);
+    if (isNaN(x)) throw new Error('2captcha 返回异常: ' + out.slice(0, 80));
+    $.log(`🧩 2captcha 识别缺口 x=${x}`);
+    return x;
+  } catch (e) {
+    throw new Error(`2captcha 滑块识别失败: ${e.message}`);
+  }
+}
 const slidePost = async (body, randomIP) => {
     try {
         const response = await axios.post(`${OCR_SERVER}/capcode`, body, {
@@ -92,10 +163,14 @@ const slidePost = async (body, randomIP) => {
             },
             timeout: 15000
         });
+        if (!response.data || response.data.result === undefined || response.data.result === null) {
+            throw new Error('OCR 未返回 result: ' + JSON.stringify(response.data).slice(0, 100));
+        }
         return response.data;
     } catch (error) {
-        $.log(`滑块OCR识别请求失败: ${error.message}`);
-        throw error;
+        $.log(`⚠️ 滑块OCR识别失败(${error.message})，切换 2captcha 识别缺口...`);
+        const x = solveSlide2Captcha(body.slidingImage, body.backImage);
+        return { result: x };
     }
 };
 // =========================================================
@@ -410,26 +485,36 @@ class Task {
 
   async getWxCode() {
     if (!this.openid) throw new Error("缺少 openid，无法自动登录");
-    
-    try {
-      const codeRes = await axios.post(`${WX_SERVER_URL}/wx/code`, {
-        openid: this.openid,
-        appid: MINI_APP_ID 
-      }, {
-        headers: { 
-          'auth': WX_AUTH, 
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0'
-        }
-      });
+    // WCS 上游(47.94.122.154:18789)间歇 EOF → 重试 3 次
+    const MAX_RETRY = 3;
+    for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+      try {
+        const codeRes = await axios.post(`${WX_SERVER_URL}/wx/code`, {
+          openid: this.openid,
+          appid: MINI_APP_ID 
+        }, {
+          headers: { 
+            'auth': WX_AUTH, 
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0'
+          },
+          timeout: 30000,
+        });
 
-      if (codeRes.data && codeRes.data.status === true && codeRes.data.data && codeRes.data.data.code) {
-        return codeRes.data.data.code;
-      } else {
-        throw new Error(`wx_server 未返回 code: ${JSON.stringify(codeRes.data)}`);
+        if (codeRes.data && codeRes.data.status === true && codeRes.data.data && codeRes.data.data.code) {
+          return codeRes.data.data.code;
+        } else {
+          throw new Error(`wx_server 未返回 code: ${JSON.stringify(codeRes.data)}`);
+        }
+      } catch (error) {
+        const msg = `${error.message}`;
+        if (attempt < MAX_RETRY && /EOF|socket hang up|ECONNRESET|timeout|ETIMEDOUT/i.test(msg)) {
+          $.log(`⚠️ 账号[${this.index}] 获取 code 失败(${msg})，第 ${attempt}/${MAX_RETRY} 次重试...`);
+          await $.wait(2000, 4000);
+          continue;
+        }
+        throw new Error(`wx_server 获取 code 失败: ${msg}`);
       }
-    } catch (error) {
-      throw new Error(`wx_server 获取 code 失败: ${error.message}`);
     }
   }
 
