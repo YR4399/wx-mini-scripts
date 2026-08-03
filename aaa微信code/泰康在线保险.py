@@ -57,8 +57,8 @@ APPID = 'wx9e3e7020c4a10356'
 FROMID = '67527'
 DEFAULT_TIMEOUT = 20
 
-WX_SERVER_URL = os.environ.get('wx_server_url', '')
-WX_AUTH = os.environ.get('wx_auth', '')
+wx_server_url = os.environ.get('wx_server_url', '')
+wx_auth = os.environ.get('wx_auth', '')
 WX_OPINION = os.environ.get('wx_opinion', '')
 
 
@@ -66,14 +66,29 @@ def mask_str(s):
     return s[:3] + '****' + s[-3:] if len(s) > 6 else s
 
 
+def _req_retry(fn, *args, _retries=3, **kw):
+    """网络请求退避重试：超时/连接/SSL 错误重试 3 次"""
+    last = None
+    for i in range(_retries):
+        try:
+            return fn(*args, **kw)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                requests.exceptions.SSLError) as e:
+            last = e
+            if i < _retries - 1:
+                print(f"  [retry] {fn.__name__} 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/{_retries}", flush=True)
+                time.sleep(i + 1)
+    raise last
+
+
 def get_code_from_wcs(openid):
-    if not WX_SERVER_URL or not WX_AUTH:
+    if not wx_server_url or not wx_auth:
         return None
     try:
-        resp = requests.post(
-            f'{WX_SERVER_URL}/wx/code',
+        resp = _req_retry(requests.post,
+            f'{wx_server_url}/wx/code',
             json={'appid': APPID, 'openid': openid},
-            headers={'auth': WX_AUTH},
+            headers={'auth': wx_auth},
             timeout=60,
             proxies={'http': None, 'https': None},
             verify=False
@@ -95,7 +110,7 @@ def get_code_from_wcs(openid):
 def get_unionid_from_code(code):
     """通过code获取unionid"""
     try:
-        resp = requests.post(
+        resp = _req_retry(requests.post,
             'https://m.tk.cn/wechat_item/rest/xcx/login',
             json={'appId': APPID, 'code': code},
             timeout=DEFAULT_TIMEOUT,
@@ -145,9 +160,21 @@ class TkzxClient:
         return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
 
     def post_json(self, url, **kw):
-        r = self.session.post(url, timeout=DEFAULT_TIMEOUT, **kw)
-        r.raise_for_status()
-        return r.json()
+        # 网络退避重试：超时/连接/SSL 错误重试 3 次
+        import requests as _req_mod
+        last = None
+        for i in range(3):
+            try:
+                r = self.session.post(url, timeout=DEFAULT_TIMEOUT, **kw)
+                r.raise_for_status()
+                return r.json()
+            except (_req_mod.exceptions.Timeout, _req_mod.exceptions.ConnectionError,
+                    _req_mod.exceptions.SSLError) as e:
+                last = e
+                if i < 2:
+                    print(f"  [retry] post_json 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/3", flush=True)
+                    time.sleep(i + 1)
+        raise last
 
     def enc_post(self, url, body):
         return self.post_json(url, headers=self.headers, json={'enc': True, 'encData': self.encrypt_body(body)})
@@ -193,7 +220,7 @@ class TkzxClient:
             return False
 
     def login(self):
-        if self.openid and WX_SERVER_URL:
+        if self.openid and wx_server_url:
             self.log('[登录] WCS模式...')
             if self.login_wcs():
                 return True
@@ -427,7 +454,7 @@ def main():
     all_logs = []
     
     # WCS模式
-    if WX_SERVER_URL and WX_AUTH and WX_OPINION:
+    if wx_server_url and wx_auth and WX_OPINION:
         for idx, openid in enumerate([x.strip() for x in WX_OPINION.split('&') if x.strip()], 1):
             print(f'\n>>>>>>>>WCS账号【{idx}】<<<<<<<<')
             logs = TkzxClient(remark=f'WCS{idx}', openid=openid).run()
