@@ -10,13 +10,28 @@ import requests
 from _push_helper import send_push_notify  # 自动采集日志并推送
 
 
+def _req_retry(fn, *args, _retries=3, **kw):
+    """网络请求退避重试：超时/连接/SSL 错误重试 3 次"""
+    last = None
+    for i in range(_retries):
+        try:
+            return fn(*args, **kw)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                requests.exceptions.SSLError) as e:
+            last = e
+            if i < _retries - 1:
+                print(f"  [retry] {fn.__name__} 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/{_retries}", flush=True)
+                time.sleep(i + 1)
+    raise last
+
+
 APPID = "wx444ddc3d46767f9d"
 API_BASE = "https://api.dfmeifeng.com/wechat/miniapp"
 ACTIVITY_ID = "1914607689511862273"
 CACHE_FILE = "巅峰美缝师_token.json"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788")
+wx_auth = os.getenv("wx_auth", "")
 WX_OPINION = os.getenv("wx_opinion", "")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,10 +72,10 @@ UA = (
 def get_code(openid):
     """从 WCS 获取 wx.login code"""
     try:
-        resp = requests.post(
-            f"{WX_SERVER_URL}/wx/code",
+        resp = _req_retry(requests.post,
+            f"{wx_server_url}/wx/code",
             json={"appid": APPID, "openid": openid},
-            headers={"auth": WX_AUTH},
+            headers={"auth": wx_auth},
             timeout=60,
             proxies={"http": None, "https": None},
             verify=False,
@@ -81,7 +96,7 @@ def login(code):
             "xweb_xhr": "1",
             "Referer": f"https://servicewechat.com/{APPID}/71/page-frame.html",
         }
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             f"{API_BASE}/wechat/login",
             params={"code": code, "memberId": ""},
             headers=headers,
@@ -104,7 +119,7 @@ def member_info(token):
     """获取会员信息（验证 token 有效性）"""
     try:
         headers = _make_headers(token)
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             f"{API_BASE}/member/getInfo",
             headers=headers,
             timeout=15,
@@ -131,7 +146,7 @@ def sign_info(token):
     """获取签到状态"""
     try:
         headers = _make_headers(token)
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             f"{API_BASE}/signin/getSignInfo",
             headers=headers,
             timeout=15,
@@ -156,7 +171,7 @@ def sign_in(token):
     """执行签到"""
     try:
         headers = _make_headers(token)
-        resp = requests.post(
+        resp = _req_retry(requests.post,
             f"{API_BASE}/signin/signIn",
             json={},
             headers=headers,
@@ -179,7 +194,7 @@ def lottery_info(token):
     """获取抽奖活动信息"""
     try:
         headers = _make_headers(token)
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             f"{API_BASE}/dayActivity/getInfo",
             headers=headers,
             timeout=15,
@@ -212,7 +227,7 @@ def lottery_draw(token, city="", province="", area=""):
             params["province"] = province
         if area:
             params["area"] = area
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             f"{API_BASE}/dayActivity/doAwards/{ACTIVITY_ID}",
             params=params,
             headers=headers,
