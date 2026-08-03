@@ -3,7 +3,7 @@
 """
 玩星矿 (wlxq.kangbaide.com) 签到脚本
 - 环境变量: WLXQ_TOKEN (JWT token, 多账号用 & 分隔)
-- 流程: details(查收益) -> signIninfo(签到信息) -> signIn(看广告, 0点结算) -> machaoprice(查价) -> 收益自动到账(无需领取)
+- 流程: details(查收益) -> signIninfo(签到信息) -> signIn(看广告, 0点结算) -> machaoprice(查价) -> lingqu(手动领取)
 - JWT 有效期约 1 年, 无需短信登录; token 失效才需重新抓包
 - cron: 30 9 * * *
 new Env('玩星矿签到')
@@ -124,8 +124,12 @@ def run_account(token, idx, total):
         log(f"[查价] {mp.get('msg')}")
     time.sleep(1)
 
-    # 5. 领取(不需要) - 收益每晚0点后自动结算到账
-    log("💤 收益每晚 0 点自动结算到账，无需手动领取")
+    # 5. 领取 (手动领取星矿收益)
+    lq = api_call("POST", "/user/lingqu", token)
+    if lq.get("code") == 200:
+        log(f"🎁 领取成功")
+    else:
+        log(f"[领取] {lq.get('msg')}")
 
     return True
 
