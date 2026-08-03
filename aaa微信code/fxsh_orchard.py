@@ -98,8 +98,12 @@ def run(acc):
     if not h5:
         out["errors"].append("h5token 获取失败(可能风控)")
 
-    # 0.5 大象游戏 (放最前, 避免被后续请求限流)
+    # 0.5 大象游戏 (放最前, 先 GET info 预热再 POST)
     out["elephant"] = []
+    r0 = o.api("GET", "/njia/elephant/info")
+    if r0.get("code") == 200 and r0.get("data"):
+        d0 = r0["data"]
+        out["elephant"].append(f"🐘金币: {d0.get('coinCurrent')} 待收:{d0.get('coinUnCollect')}")
     for name, path, body in [
         ("🐘签到", "/njia/elephant/sign", {}),
         ("🪙收金币", "/njia/elephant/coin/receive", {}),
