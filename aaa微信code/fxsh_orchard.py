@@ -91,12 +91,31 @@ class Orchard:
 
 def run(acc):
     o = Orchard(acc)
-    out = {"did": acc["did"][:10], "water": "?", "tasks": [], "rewards": [], "watered": False, "errors": []}
+    out = {"did": acc["did"][:10], "water": "?", "tasks": [], "rewards": [], "watered": False, "elephant": [], "games": [], "takeaway": "-", "errors": []}
 
     # 0. 建立 H5 会话
     h5 = o.build_session()
     if not h5:
         out["errors"].append("h5token 获取失败(可能风控)")
+
+    # 0.5 大象游戏 (放最前, 避免被后续请求限流)
+    out["elephant"] = []
+    for name, path, body in [
+        ("🐘签到", "/njia/elephant/sign", {}),
+        ("🪙收金币", "/njia/elephant/coin/receive", {}),
+        ("💰财神助力", "/njia/elephant/mammon/help", {"initiatorId": "515233097"}),
+        ("🎁开宝箱", "/njia/elephant/activity/limitedTime/complete", {"doublingKey": "doubling"}),
+    ]:
+        r = o.api("POST", path, body)
+        if r.get("success") or r.get("code") == 200:
+            d = r.get("data") or {}
+            if isinstance(d, dict) and d.get("reward") is not None:
+                out["elephant"].append(f"{name}✅ +{d['reward']}金币")
+            else:
+                out["elephant"].append(f"{name}✅")
+        elif r.get("code") != -1:
+            out["elephant"].append(f"{name}:{r.get('message')}")
+        time.sleep(2)
 
     # 1. 查水量
     r = o.api("GET", "/njia/orchard/user/water/totalNew")
@@ -175,6 +194,49 @@ def run(acc):
                 out["rewards"].append(f"💧偷水: {st['data']}")
             time.sleep(0.8)
 
+    # ============ 游戏任务 (领现金兑商品) ============
+    out["games"] = []
+    r = o.api("POST", "/njia/game/task/list", {"gameType": 2, "platform": "android", "version": "6.7.1"})
+    tasks = r.get("data") if r.get("success") or r.get("code") == 200 else None
+    if isinstance(tasks, list):
+        for t in tasks:
+            item = t.get("item") or {}
+            tid = item.get("id")
+            if not tid:
+                continue
+            for attempt in range(2):
+                fr = o.api("POST", "/njia/game/task/finish", {"taskId": tid, "gameType": t.get("activityType")})
+                if fr.get("code") == 200 and fr.get("data"):
+                    d = fr["data"]
+                    award = d.get("awardCount")
+                    out["games"].append(f"✅{t.get('name','')}: {d.get('toastText') or ('+' + str(award) + '金币' if award else '')}")
+                    dur = item.get("taskDuration") or 0
+                    if d.get("awardCount") and attempt == 0:
+                        time.sleep(int(dur) + 2)
+                        continue
+                    break
+                else:
+                    out["games"].append(f"⚠️{t.get('name','')}: {fr.get('message') or fr.get('errmsg','')}")
+                    break
+            time.sleep(3)
+    # 11. 特殊任务
+    r = o.api("POST", "/njia/game/task/special/finish", {})
+    if r.get("errcode") == 0:
+        out["games"].append("⭐特殊任务✅")
+
+    # ============ 外卖打卡签到 (活动id从 env FXSH_SIGN_DATE, 临时活动) ============
+    sign_date = os.getenv("FXSH_SIGN_DATE", "")
+    if sign_date:
+        r = o.api("POST", "/njia/takeaway/clock/in/sign", {"activityId": sign_date})
+        if r.get("code") == 200 and r.get("data"):
+            d = r["data"]
+            money = d.get("rewardAmount", 0) / 100
+            out["takeaway"] = f"🍔外卖签到✅ +{money}元"
+        else:
+            out["takeaway"] = f"🍔外卖签到:{r.get('message') or '活动已结束'}"
+    else:
+        out["takeaway"] = "未配置外卖活动id"
+
     return out
 
 
@@ -199,6 +261,9 @@ def main():
         for t in r["tasks"]: lines.append(t)
         for rw in r["rewards"]: lines.append(rw)
         if r["watered"]: lines.append("浇水: ✅")
+        for e in r["elephant"]: lines.append(e)
+        for g in r["games"]: lines.append(g)
+        if r.get("takeaway"): lines.append(r["takeaway"])
         for e in r["errors"]: lines.append(f"⚠️{e}")
         print("\n".join(lines) + "\n")
         time.sleep(2)
