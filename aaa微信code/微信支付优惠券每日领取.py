@@ -46,8 +46,8 @@ WXPAY_APPID = "wxdb3c0e388702f785"
 # 谷雨 APPID（用于获取 code）
 GUYU_APPID = "wxda948f3be0afc375"
 
-WX_SERVER_URL = os.environ.get('wx_server_url', 'https://xxx')
-WX_AUTH = os.environ.get('wx_auth', '')
+wx_server_url = os.environ.get('wx_server_url', 'https://xxx')
+wx_auth = os.environ.get('wx_auth', '')
 GUYU_USERS = os.environ.get('wx_opinion', '') or os.environ.get('guyu', '')
 
 CODE_COUNT = 1
@@ -83,13 +83,13 @@ def get_wx_code(openid: str) -> str | None:
         print(f'  使用 APPID: {WXPAY_APPID}')
         
         response = requests.post(
-            f"{WX_SERVER_URL}/wx/code",
+            f"{wx_server_url}/wx/code",
             json={
                 "appid": WXPAY_APPID,  # 使用微信支付的 APPID
                 "openid": openid
             },
             headers={
-                "auth": WX_AUTH,
+                "auth": wx_auth,
                 "Content-Type": "application/json"
             },
             timeout=CODE_TIMEOUT,
@@ -125,11 +125,11 @@ def main() -> int:
     print("微信支付优惠券领取脚本")
     print("=" * 60)
 
-    if not WX_SERVER_URL or WX_SERVER_URL == 'https://xxx':
+    if not wx_server_url or wx_server_url == 'https://xxx':
         print("❌ 未配置 wx_server_url")
         return 1
     
-    if not WX_AUTH:
+    if not wx_auth:
         print("❌ 未配置 wx_auth")
         return 1
     
@@ -143,7 +143,7 @@ def main() -> int:
         return 1
 
     print(f"✅ 配置检查通过")
-    print(f"   服务器: {WX_SERVER_URL}")
+    print(f"   服务器: {wx_server_url}")
     print(f"   账号数: {len(openids)}")
     print()
 
@@ -308,8 +308,26 @@ def print_success(prefix: str, openid: str, result: dict[str, Any]) -> None:
         print(f"{prefix} 未查询到每日额度")
 
 
+def _req_with_retry(fn, action: str, retries: int = 3) -> requests.Response:
+    """带退避重试的请求执行，缓解微信支付域偶发读超时"""
+    import time as _t
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except (requests.Timeout, requests.ConnectionError) as err:
+            last_err = err
+            if attempt < retries:
+                print(f"  ⏳ {action} 第{attempt}次超时/连接失败，{attempt * 2}s 后重试...")
+                _t.sleep(attempt * 2)
+    raise last_err
+
+
 def api_get(session: requests.Session, path: str, *, headers: dict[str, str]) -> dict[str, Any]:
-    response = session.get(f"{DOMAIN}{path}", headers=headers, timeout=API_TIMEOUT)
+    response = _req_with_retry(
+        lambda: session.get(f"{DOMAIN}{path}", headers=headers, timeout=API_TIMEOUT),
+        path,
+    )
     return unwrap_response(response, path)
 
 
@@ -320,7 +338,10 @@ def api_post(
     headers: dict[str, str],
     json: dict[str, Any],
 ) -> dict[str, Any]:
-    response = session.post(f"{DOMAIN}{path}", headers=headers, json=json, timeout=API_TIMEOUT)
+    response = _req_with_retry(
+        lambda: session.post(f"{DOMAIN}{path}", headers=headers, json=json, timeout=API_TIMEOUT),
+        path,
+    )
     return unwrap_response(response, path)
 
 
