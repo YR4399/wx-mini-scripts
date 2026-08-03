@@ -76,21 +76,37 @@ def run_account(token, idx, total):
     log(f"👤 {mask_phone(phone)} | {u.get('dengji','')} | 总收益: {u.get('shouyizong','0')} | 余额: {u.get('shouyi2','0')}")
     time.sleep(1)
 
-    # 2. 签到信息
+    # 2. 签到/看广告信息
     si = api_call("POST", "/user/signIninfo", token)
+    jindu = "0/5"
     if si.get("code") == 200 and si.get("data"):
         data = si["data"]
-        log(f"📊 签到进度: {data.get('jindu','?')} | {data.get('mark','')} | 幸运星: {data.get('xingkuang')}")
+        jindu = str(data.get("jindu", "0/5"))
+        log(f"📊 看广告进度: {jindu} | {data.get('mark','')} | 幸运星: {data.get('xingkuang')}")
     else:
         log(f"[签到信息] {si.get('msg')}")
     time.sleep(1)
 
-    # 3. 签到
-    s = api_call("POST", "/user/signIn", token)
-    if s.get("code") == 200:
-        log(f"✅ 签到成功")
+    # 3. 看广告(签到): signIn 每次成功 = 广告+1, 间隔约20s(服务端"请先看完广告"限制)
+    #    满 5/5 后 mark 变"每晚12点后结算收益"
+    total = int(jindu.split("/")[-1]) if "/" in jindu else 5
+    watched = int(jindu.split("/")[0]) if "/" in jindu else 0
+    if watched >= total:
+        log("✅ 今日看广告已满 5/5")
     else:
-        log(f"[签到] {s.get('msg')}")
+        log(f"▶️ 开始看广告 ({watched}/{total} -> {total}/{total})...")
+        ok = 0
+        for i in range(total * 2):
+            s = api_call("POST", "/user/signIn", token)
+            if s.get("code") == 200:
+                ok += 1
+                log(f"  [广告 {watched + ok}/{total}] ✅ 观看成功")
+                if watched + ok >= total:
+                    break
+            else:
+                log(f"  [广告] ⏳ {s.get('msg')}")
+            time.sleep(20)  # 服务端广告时长窗口
+        log(f"📊 看广告完成: {ok} 次")
     time.sleep(1)
 
     # 4. 查价格
