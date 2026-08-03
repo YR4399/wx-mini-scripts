@@ -38,6 +38,21 @@ except ImportError:
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'requests', '-q'])
     import requests
 
+
+def _req_retry(fn, *args, _retries=3, **kw):
+    """网络请求退避重试：超时/连接/SSL 错误重试 3 次"""
+    last = None
+    for i in range(_retries):
+        try:
+            return fn(*args, **kw)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                requests.exceptions.SSLError) as e:
+            last = e
+            if i < _retries - 1:
+                print(f"  [retry] {fn.__name__} 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/{_retries}", flush=True)
+                time.sleep(i + 1)
+    raise last
+
 # ===== 日志 =====
 logging.basicConfig(
     level=logging.INFO,
@@ -205,7 +220,7 @@ class WCSClient:
 
     def get_accounts(self):
         try:
-            resp = requests.get(
+            resp = _req_retry(requests.get,
                 f'{self.base}/api/accounts',
                 headers={'AUTH': self.auth},
                 timeout=30,
@@ -230,7 +245,7 @@ class WCSClient:
             log.info('  [cache] 命中 code 缓存')
             return cached
         try:
-            resp = requests.post(
+            resp = _req_retry(requests.post,
                 f'{self.base}/wx/code',
                 json=body,
                 headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
@@ -293,7 +308,7 @@ def login_via_wcs(openid, user_key=None):
         'Referer': f'https://servicewechat.com/{APPID}/35/page-frame.html',
         'Cookie': f'_platform_num={PLATFORM_NUM};s_source=3;version=4.0.3;appcode={APPID};mp_scene=1007;bsharekey={BSHAREKEY};',
     }
-    resp = requests.get(login_url, headers=headers, timeout=15, verify=False)
+    resp = _req_retry(requests.get,login_url, headers=headers, timeout=15, verify=False)
     data = resp.json()
 
     errno = data.get('errno', -1)
@@ -327,7 +342,7 @@ def login_via_wcs(openid, user_key=None):
             f'&entityid={STORE_ID}&storeid={STORE_ID}'
             f'&appid={APPID}&component_appid={COMPONENT_APPID}&Version=1'
         )
-        reg_resp = requests.get(reg_url, headers=headers, timeout=15, verify=False)
+        reg_resp = _req_retry(requests.get,reg_url, headers=headers, timeout=15, verify=False)
         reg_data = reg_resp.json()
 
         if reg_data.get('errno') == 0:
@@ -372,22 +387,27 @@ class LianjiaClient:
         })
 
     def _h5_get(self, path, params=None):
-        """H5 域名 GET 请求"""
+        """H5 域名 GET 请求（带网络重试）"""
         if params is None:
             params = {}
         params.setdefault('_platform_num', PLATFORM_NUM)
         params.setdefault('uid', self.uid)
         params.setdefault('skey', self.skey)
         url = f'{H5_BASE}{path}'
-        try:
-            resp = self.session.get(url, params=params, timeout=15)
-            return resp.json()
-        except Exception as e:
-            log.error(f'请求失败 {url}: {e}')
-            return None
+        for attempt in range(3):
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                return resp.json()
+            except Exception as e:
+                if attempt < 2 and isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.SSLError)):
+                    log.info(f'  [retry] _h5_get 网络异常({e.__class__.__name__}), {attempt+1}s 后重试 {attempt+1}/3')
+                    time.sleep(attempt + 1)
+                    continue
+                log.error(f'请求失败 {url}: {e}')
+                return None
 
     def _api_get(self, path, params=None):
-        """API 域名 GET 请求"""
+        """API 域名 GET 请求（带网络重试）"""
         if params is None:
             params = {}
         params.setdefault('_platform_num', PLATFORM_NUM)
@@ -396,12 +416,17 @@ class LianjiaClient:
         params.setdefault('uid', self.uid)
         params.setdefault('skey', self.skey)
         url = f'{API_BASE}{path}'
-        try:
-            resp = self.session.get(url, params=params, timeout=15)
-            return resp.json()
-        except Exception as e:
-            log.error(f'请求失败 {url}: {e}')
-            return None
+        for attempt in range(3):
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                return resp.json()
+            except Exception as e:
+                if attempt < 2 and isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.SSLError)):
+                    log.info(f'  [retry] _api_get 网络异常({e.__class__.__name__}), {attempt+1}s 后重试 {attempt+1}/3')
+                    time.sleep(attempt + 1)
+                    continue
+                log.error(f'请求失败 {url}: {e}')
+                return None
 
     def get_sign_info(self):
         """查询签到状态"""
