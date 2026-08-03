@@ -162,12 +162,28 @@ class Task {
         if (upperMethod === "GET") options.params = params;
         else options.data = data;
 
-        const { data: result, status } = await axios.request(options);
-        if (status !== 200) throw new Error("HTTP " + status + ": " + JSON.stringify(result));
-        if (!result || (Number(result.code) !== 200 && String(result.code) !== 200)) {
-            throw new Error(result?.msg || result?.message || JSON.stringify(result));
+        // 网络退避重试：超时/连接/ECONNRESET 错误重试 3 次
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const { data: result, status } = await axios.request(options);
+                if (status !== 200) throw new Error("HTTP " + status + ": " + JSON.stringify(result));
+                if (!result || (Number(result.code) !== 200 && String(result.code) !== 200)) {
+                    throw new Error(result?.msg || result?.message || JSON.stringify(result));
+                }
+                return result.data;
+            } catch (e) {
+                const emsg = String(e?.message || e);
+                const isNet = /timeout|ECONN|ETIMEDOUT|ENETUNREACH|socket|network/i.test(emsg);
+                if (!isNet || attempt >= 3) {
+                    lastErr = e;
+                    break;
+                }
+                console.log(`  [retry] request 网络异常(${emsg.slice(0, 60)}), ${attempt}s 后重试 ${attempt}/3`);
+                await new Promise((r) => setTimeout(r, attempt * 1000));
+            }
         }
-        return result.data;
+        throw lastErr;
     }
 
     async getLoginCode() {
