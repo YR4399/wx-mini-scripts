@@ -96,6 +96,7 @@ def run_account(token, idx, total):
     else:
         log(f"▶️ 开始看广告 ({watched}/{total} -> {total}/{total})...")
         ok = 0
+        time_locked = False  # 00:30 前不可看广告
         for i in range(total * 2):
             s = api_call("POST", "/user/signIn", token)
             if s.get("code") == 200:
@@ -104,9 +105,14 @@ def run_account(token, idx, total):
                 if watched + ok >= total:
                     break
             else:
-                log(f"  [广告] ⏳ {s.get('msg')}")
+                msg = str(s.get("msg", ""))
+                log(f"  [广告] ⏳ {msg}")
+                if "00:30" in msg or "00:30" in msg or "才可以看广告" in msg:
+                    time_locked = True
+                    log("⚠️ 今日看广告时间未到（00:30 后开放），跳过剩余")
+                    break
             time.sleep(20)  # 服务端广告时长窗口
-        log(f"📊 看广告完成: {ok} 次")
+        log(f"📊 看广告完成: {ok} 次" + ("（时间未到跳过）" if time_locked else ""))
     time.sleep(1)
 
     # 4. 查价格
