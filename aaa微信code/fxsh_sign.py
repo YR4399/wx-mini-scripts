@@ -155,7 +155,7 @@ def send_post_request(path, body_data, account_params):
 def process_account(account_params, account_index):
     """处理单个账号的所有请求"""
     print(f"\n========== 处理第 {account_index + 1} 个账号 (did: {account_params['did']}) ==========")
-    result = {"did": account_params['did'], "sign": "?", "tasks": [], "errors": []}
+    result = {"did": account_params["did"], "sign": "?", "receive": "-", "tasks": [], "errors": []}
 
     # 1. 签到奖励
     print("\n=== 执行第一个请求：签到奖励 ===")
@@ -174,6 +174,28 @@ def process_account(account_params, account_index):
     else:
         result["errors"].append("sign: 请求失败")
         print("❌ 签到奖励请求失败")
+    print("-" * 50)
+
+    # 1.5 领取开奖结果中奖码 (receiveAll, 提取自 sky2022 插件)
+    print("\n=== 领取开奖中奖码 ===")
+    receive_response = send_post_request("/fenxiang-lottery/periodical/open/result/receiveAll", {}, account_params)
+    if receive_response:
+        rcode = receive_response.get("code")
+        rmsg = receive_response.get("message") or ""
+        rdata = receive_response.get("data") or {}
+        if rcode == 200 or rcode == 0 or receive_response.get("success"):
+            if rdata:
+                result["receive"] = f"领取成功 {json.dumps(rdata, ensure_ascii=False)[:80]}"
+                print(f"🎁 开奖码领取: {result['receive']}")
+            else:
+                result["receive"] = "无待领奖码"
+                print(f"🎁 开奖码领取: 无待领奖码")
+        else:
+            result["receive"] = rmsg or "领取失败"
+            print(f"🎁 开奖码领取: {result['receive']}")
+    else:
+        result["receive"] = "请求失败"
+        print("❌ 开奖码领取请求失败")
     print("-" * 50)
 
     # 2. 获取首页数据
@@ -280,6 +302,7 @@ def main():
         lines.append(
             f"【did:{r['did'][:8]}...】\n"
             f"签到: {r['sign']}\n"
+            f"领奖: {r['receive']}\n"
             f"任务: {task_ok}/{len(r['tasks'])} 完成"
             + (f"\n失败: {task_fail}" if task_fail else "")
             + (f"\n异常: {'; '.join(r['errors'])}" if r["errors"] else "")
