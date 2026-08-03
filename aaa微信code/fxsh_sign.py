@@ -179,7 +179,7 @@ def process_account(account_params, account_index):
     # 2. 获取首页数据
     print("\n=== 执行第二个请求：获取首页数据 ===")
     home_data_response = send_post_request("/fenxiang-lottery/home/data/V2",
-                                           {"plateform": "android", "version": "6.7.1"}, account_params)
+                                           {"plateform": "android", "version": "7.0.1"}, account_params)
 
     if not home_data_response:
         print("❌ 获取首页数据失败，跳过该账号后续操作")
