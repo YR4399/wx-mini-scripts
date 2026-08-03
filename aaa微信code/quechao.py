@@ -100,22 +100,42 @@ def get_ssl_ctx():
     return ctx
 
 
+def _http_retry(fn, _retries=3, **kw):
+    """http.client 网络退避重试：RemoteDisconnected/超时/连接重置重试 3 次"""
+    import socket as _sock
+    last = None
+    for i in range(_retries):
+        try:
+            return fn(**kw)
+        except (http.client.RemoteDisconnected, http.client.HTTPException,
+                _sock.timeout, ConnectionResetError, BrokenPipeError, OSError) as e:
+            last = e
+            if i < _retries - 1:
+                log(f'[retry] {fn.__name__} 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/{_retries}')
+                time.sleep(i + 1)
+    raise last
+
+
 def nestle_request(method, path, access_token, payload=None):
-    """调用雀巢 API"""
-    conn = http.client.HTTPSConnection(BASE_URL, timeout=15, context=get_ssl_ctx())
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-        'Content-Type': 'application/json',
-        'displayversion': '0',
-        'authorization': f'Bearer {access_token}',
-        'referer': 'https://servicewechat.com/wxc5db704249c9bb31/489/page-frame.html'
-    }
-    body = json.dumps(payload) if payload else ('' if method == 'get' else '{}')
-    conn.request(method.upper(), path, body=body, headers=headers)
-    resp = conn.getresponse()
-    result = json.loads(resp.read().decode())
-    conn.close()
-    return result
+    """调用雀巢 API（带网络重试）"""
+    def _do():
+        conn = http.client.HTTPSConnection(BASE_URL, timeout=15, context=get_ssl_ctx())
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+                'Content-Type': 'application/json',
+                'displayversion': '0',
+                'authorization': f'Bearer {access_token}',
+                'referer': 'https://servicewechat.com/wxc5db704249c9bb31/489/page-frame.html'
+            }
+            body = json.dumps(payload) if payload else ('' if method == 'get' else '{}')
+            conn.request(method.upper(), path, body=body, headers=headers)
+            resp = conn.getresponse()
+            result = json.loads(resp.read().decode())
+            return result
+        finally:
+            conn.close()
+    return _http_retry(_do)
 
 
 def random_wait(min_ms, max_ms):
@@ -141,16 +161,21 @@ def get_auth_code(openid):
 
 
 def get_nestle_token(auth_code):
-    """使用授权码向雀巢身份服务换取 access_token"""
-    conn = http.client.HTTPSConnection('crm.nestlechinese.com', timeout=15, context=get_ssl_ctx())
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    data = f'client_id=wechatMini&client_secret=secret&grant_type=wechat_auth_code&auth_code={auth_code}'
-    conn.request('POST', '/openapi/identityservice/connect/token', body=data, headers=headers)
-    token_data = json.loads(conn.getresponse().read().decode())
-    conn.close()
+    """使用授权码向雀巢身份服务换取 access_token（带网络重试）"""
+    def _do():
+        conn = http.client.HTTPSConnection('crm.nestlechinese.com', timeout=15, context=get_ssl_ctx())
+        try:
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            data = f'client_id=wechatMini&client_secret=secret&grant_type=wechat_auth_code&auth_code={auth_code}'
+            conn.request('POST', '/openapi/identityservice/connect/token', body=data, headers=headers)
+            token_data = json.loads(conn.getresponse().read().decode())
+            return token_data
+        finally:
+            conn.close()
+    token_data = _http_retry(_do)
     access_token = token_data.get('access_token')
     if access_token:
         log('[信息] 获取雀巢访问令牌成功')
