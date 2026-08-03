@@ -143,6 +143,19 @@ function isSigned(r) {
   return false;
 }
 
+// 节日奖励发放检查 (HAR 2026-08-03: GET /festival/checkAndGrant 无参数, data 非 null 表示有节日奖励发放)
+async function checkFestival(token) {
+  try {
+    const res = await axios.get(`${API_BASE}/festival/checkAndGrant`, { headers: hdrs(token), timeout: 15000, proxy: false });
+    if (res.data?.code === 200 && res.data.data) {
+      L.ok(`🎉 节日奖励发放: ${JSON.stringify(res.data.data).slice(0, 80)}`);
+      return true;
+    }
+    L.info("节日奖励: 今日无发放");
+  } catch (e) {}
+  return false;
+}
+
 // ==================== 单账号流程 ====================
 async function processAccount(openid, idx) {
   console.log(`\n========== 账号[${idx}] ${openid.slice(0, 10)}... ==========`);
@@ -205,6 +218,10 @@ async function processAccount(openid, idx) {
       L.info(`今日已签到 | 连签 ${d.signNum} 天 | 当前积分 ${integralAfter ?? d.integral}`);
     }
 
+    // ========== 节日奖励发放检查 (HAR 2026-08-03) ==========
+    await checkFestival(token);
+    await new Promise(r => setTimeout(r, 500));
+
     // ========== 分享奖励领取 (HAR 2026-08-01 抓包: sharePoster → getRemindListUser → remindRead 领积分) ==========
     try {
       L.act("执行分享 + 领取奖励...");
@@ -251,7 +268,9 @@ async function processAccount(openid, idx) {
     L.fail(`签到失败: ${msg}（可能已签/时区未跨天，继续分享奖励）`);
     // 签到失败也继续分享奖励（分享每天独立可做）
     try {
-      L.act("执行分享 + 领取奖励...");
+      L.act("执行节日 + 分享 + 领取奖励...");
+      await checkFestival(token);
+      await new Promise(r => setTimeout(r, 500));
       try {
         await axios.post(`${API_BASE}/remind/sharePoster`, {}, { headers: hdrs(token), timeout: 15000, proxy: false });
       } catch (e) {}
