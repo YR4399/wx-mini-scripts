@@ -61,6 +61,21 @@ except ImportError:
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'requests', '-q'])
     import requests
 
+
+def _req_retry(fn, *args, _retries=3, **kw):
+    """网络请求退避重试：超时/连接/SSL 错误重试 3 次"""
+    last = None
+    for i in range(_retries):
+        try:
+            return fn(*args, **kw)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                requests.exceptions.SSLError) as e:
+            last = e
+            if i < _retries - 1:
+                print(f"  [retry] {fn.__name__} 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/{_retries}", flush=True)
+                time.sleep(i + 1)
+    raise last
+
 # ====== 日志配置 ======
 logging.basicConfig(
     level=logging.INFO,
@@ -191,13 +206,13 @@ class WCSClient:
         self.auth = WCS_AUTH
 
     def _post(self, path, data, timeout=60):
-        r = requests.post(f'{self.base}{path}', json=data,
+        r = _req_retry(requests.post,f'{self.base}{path}', json=data,
                           headers={'AUTH': self.auth, 'Content-Type': 'application/json'},
                           timeout=timeout, verify=False)
         return r.json()
 
     def _get(self, path, timeout=30):
-        r = requests.get(f'{self.base}{path}',
+        r = _req_retry(requests.get,f'{self.base}{path}',
                          headers={'AUTH': self.auth}, timeout=timeout, verify=False)
         return r.json()
 
@@ -285,7 +300,7 @@ class YouzanClient:
         params.setdefault('access_token', self.access_token)
 
         url = f'{API_BASE}{path}'
-        resp = requests.get(url, params=params, headers=self._make_headers(), timeout=15)
+        resp = _req_retry(requests.get,url, params=params, headers=self._make_headers(), timeout=15)
         return resp.json()
 
     def get_checkin_info(self):
@@ -335,7 +350,7 @@ def login_via_wcs(openid, user_key=None):
     # 有赞零售登录域名: retail-uic.youzan.com
     try:
         import uuid as _uuid
-        resp = requests.post(
+        resp = _req_retry(requests.post,
             f'{UIC_BASE}/passport/general/auth.json?kdt_id={KDT_ID}&app_id={APPID}',
             json={
                 'appId': APPID,
