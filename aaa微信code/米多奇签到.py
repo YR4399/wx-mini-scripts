@@ -23,6 +23,21 @@ import json
 import time
 import requests
 
+
+def _req_retry(fn, *args, _retries=3, **kw):
+    """网络请求退避重试：超时/连接/SSL 错误重试 3 次"""
+    last = None
+    for i in range(_retries):
+        try:
+            return fn(*args, **kw)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                requests.exceptions.SSLError) as e:
+            last = e
+            if i < _retries - 1:
+                print(f"  [retry] {fn.__name__} 网络异常({e.__class__.__name__}), {i+1}s 后重试 {i+1}/{_retries}", flush=True)
+                time.sleep(i + 1)
+    raise last
+
 # ========== 推送通知 ==========
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'aaa微信code'))
 try:
@@ -38,8 +53,8 @@ KDT_ID = '184183627'
 CHECKIN_ID = '6878521'
 API_BASE = 'https://mxa.miduoqi.com/api'  # 米多奇API域名
 
-WX_SERVER_URL = os.environ.get('wx_server_url', '')
-WX_AUTH = os.environ.get('wx_auth', '')
+wx_server_url = os.environ.get('wx_server_url', '')
+wx_auth = os.environ.get('wx_auth', '')
 WX_OPINION = os.environ.get('wx_opinion', '')
 
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254193e) XWEB/19841'
@@ -52,10 +67,10 @@ def mask_str(s):
 def get_code(openid):
     """从WCS获取code"""
     try:
-        resp = requests.post(
-            f'{WX_SERVER_URL}/wx/code',
+        resp = _req_retry(requests.post,
+            f'{wx_server_url}/wx/code',
             json={'appid': APPID, 'openid': openid},
-            headers={'auth': WX_AUTH},
+            headers={'auth': wx_auth},
             timeout=60,
             proxies={'http': None, 'https': None},
             verify=False
@@ -116,7 +131,7 @@ def login(code):
                 'sceneData': {},
             },
         }
-        resp = requests.post(
+        resp = _req_retry(requests.post,
             f'https://uic.youzan.com/passport/general/auth.json?kdt_id={KDT_ID}&app_id={APPID}',
             json=payload,
             headers=headers,
@@ -155,7 +170,7 @@ def checkin(access_token, session_id=''):
                 'uuid': str(_uuid.uuid4()).replace('-', '')[:24],
                 'ftime': int(time.time() * 1000),
             })
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             f'https://h5.youzan.com/wscump/checkin/checkinV2.json',
             params={
                 'checkinId': CHECKIN_ID,
@@ -193,7 +208,7 @@ def checkin(access_token, session_id=''):
 def get_checkin_info(access_token):
     """获取签到信息"""
     try:
-        resp = requests.get(
+        resp = _req_retry(requests.get,
             'https://h5.youzan.com/wscump/checkin/check-in-info.json',
             params={
                 'app_id': APPID,
@@ -242,7 +257,7 @@ def run_account(openid):
 def main():
     all_logs = []
     
-    if not WX_SERVER_URL or not WX_AUTH:
+    if not wx_server_url or not wx_auth:
         print('❌ 未配置WCS (wx_server_url/wx_auth)')
         return 1
     
