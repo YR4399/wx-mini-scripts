@@ -6,7 +6,7 @@
 
 环境变量：
   wx_server_url / wx_auth - WCS 服务配置
-  wx_opinion / WECHAT_ACCOUNTS - WCS openid
+  wx_opinion / wx_opinion - WCS openid
   PLUSPLUS_TOKEN - PushPlus 推送 token
   MINISO_INTERVAL - 检查间隔秒数（默认 1200，即 20 分钟）
 """
@@ -125,10 +125,10 @@ def fetch_code_from_wcs():
     """从 WCS 获取新的微信 code"""
     openids_raw = os.getenv("wx_opinion", "")
     if not openids_raw:
-        openids_raw = os.getenv("WECHAT_ACCOUNTS", "")
+        openids_raw = os.getenv("wx_opinion", "")
     openids = [x.strip() for x in openids_raw.replace("\n", "&").replace("&", "\n").split("\n") if x.strip()]
     if not openids:
-        raise Exception("未配置 wx_opinion 或 WECHAT_ACCOUNTS")
+        raise Exception("未配置 wx_opinion 或 wx_opinion")
 
     openid = openids[0]
     try:
@@ -195,10 +195,14 @@ def get_user_info():
         log(f"获取用户信息成功: uid={user_info['uid']}")
         return user_info
     except Exception as e:
-        # code 失效（401/403/invalid code），清除缓存后重试一次
+        # code 失效/超时（401/403/invalid/1001 获取用户异常/timed out 等），清除缓存后重试一次
         msg = str(e)
-        if "error" in msg.lower() or "invalid" in msg.lower() or "401" in msg or "403" in msg:
-            log("code 已失效，清除缓存后重新获取...")
+        msg_lower = msg.lower()
+        if ("error" in msg_lower or "invalid" in msg_lower or "401" in msg
+                or "403" in msg or "1001" in msg or "获取用户" in msg
+                or "timed out" in msg_lower or "timeout" in msg_lower
+                or "handshake" in msg_lower or "ssl" in msg_lower):
+            log("code 失效或超时（" + str(e)[:80] + "），清除缓存后重新获取...")
             try:
                 os.remove(CODE_CACHE_FILE)
             except:
