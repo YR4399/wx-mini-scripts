@@ -37,8 +37,8 @@ const $ = {
 ["HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all_proxy"].forEach(k => process.env[k] = "");
 
 const CK_NAME = "qqpcmgr";
-const WX_SERVER_URL = (process.env.wx_server_url || "").replace(/\/$/, "");
-const WX_AUTH = process.env.wx_auth || "";
+const wx_server_url = (process.env.wx_server_url || "").replace(/\/$/, "");
+const wx_auth = process.env.wx_auth || "";
 const QRCONNECT_URL =
     process.env.qqpcmgr_qrconnect_url ||
     "https://open.weixin.qq.com/connect/qrconnect?appid=wx5cd60c5d4817a188&scope=snsapi_login&redirect_uri=https%3A%2F%2Fsecurity.guanjia.qq.com%2Flogin&state=233&login_type=jssdk&self_redirect=true";
@@ -187,7 +187,7 @@ function buildCookie(profile) {
 
 async function getAuthCode(account) {
     if (process.env.qqpcmgr_authCode) return process.env.qqpcmgr_authCode;
-    if (!WX_AUTH) throw new Error("未配置 wx_auth，无法通过 wx_server 授权二维码");
+    if (!wx_auth) throw new Error("未配置 wx_auth，无法通过 wx_server 授权二维码");
     if (!account) throw new Error("未配置 qqpcmgr openid，无法调用 /wx/qrcodeauth");
     const uuid = await getQrUuid();
     $.log(`获取 QRConnect UUID 成功: ${uuid}`);
@@ -217,9 +217,9 @@ async function getQrUuid() {
 async function qrcodeAuth(openid, uuid) {
     const { data, status } = await axios.request({
         method: "POST",
-        url: `${WX_SERVER_URL}/wx/qrcodeauth`,
+        url: `${wx_server_url}/wx/qrcodeauth`,
         headers: {
-            auth: WX_AUTH,
+            auth: wx_auth,
             "Content-Type": "application/json",
         },
         data: { openid, uuid },
@@ -919,8 +919,15 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
             return { name: lotteryName, type: lotteryType, status: st.status, data: st.data };
         }
         const sd = st.data.data || {};
-        if (sd.drawLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 已达抽奖上限`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达抽奖上限", data: {} } }; }
-        if (sd.winLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 已达中奖上限`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达中奖上限", data: {} } }; }
+        if (process.env.qqpcmgr_debug_lottery === "true") {
+            $.log(`   [debug] lotteryStatus 原始响应: ${JSON.stringify(st.data)}`);
+        }
+        // 输出奖池奖品列表，让日志可读
+        if (Array.isArray(sd.bonus) && sd.bonus.length) {
+            $.log(`[账号${index}] [${displayName}]   🎁 本池奖品: ${sd.bonus.map(b => b.comment || b.bonusId).join(" / ")}`);
+        }
+        if (sd.drawLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日抽奖次数已用完，明天再抽`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达抽奖上限", data: {} } }; }
+        if (sd.winLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日已中过奖（每天限中1次，明天再抽）`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达中奖上限", data: {} } }; }
         if (!sd.canReceive && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 当前不可抽奖`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "当前不可抽奖", data: {} } }; }
         const lottery2 = await doLottery(lk, cookie, "Lottery2", sdiAid || SDIAID);
         const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
@@ -945,12 +952,19 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     }
     
     const statusData = status.data.data || {};
+    if (process.env.qqpcmgr_debug_lottery === "true") {
+        $.log(`   [debug] lotteryStatus 原始响应: ${JSON.stringify(status.data)}`);
+    }
+    // 输出奖池奖品列表，让日志可读
+    if (Array.isArray(statusData.bonus) && statusData.bonus.length) {
+        $.log(`[账号${index}] [${displayName}]   🎁 本池奖品: ${statusData.bonus.map(b => b.comment || b.bonusId).join(" / ")}`);
+    }
     const drawLimited = statusData.drawLimited === true;
     const winLimited = statusData.winLimited === true;
     const canReceive = statusData.canReceive === true;
     
     if (drawLimited && !FORCE_LOTTERY) {
-        $.log(`[账号${index}] [${displayName}]   ⏭️ 已达每日抽奖上限`);
+        $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日次数已用完，明天再抽`);
         return { 
             name: lotteryName, 
             type: lotteryType, 
@@ -960,7 +974,7 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     }
     
     if (winLimited && !FORCE_LOTTERY) {
-        $.log(`[账号${index}] [${displayName}]   ⏭️ 已达每日中奖上限`);
+        $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日已中过奖（每天限中1次，明天再抽）`);
         return { 
             name: lotteryName, 
             type: lotteryType, 
@@ -1061,12 +1075,31 @@ async function sendNotify(title, content) {
 
 function formatLotteryResult(result) {
     const data = result.data;
+    if (process.env.qqpcmgr_debug_lottery === "true") {
+        $.log(`   [debug] doLottery 原始响应: ${JSON.stringify(data)}`);
+    }
     if (result.status === 200 && data) {
         const d = data.data || {};
-        const prize = d.prize || d.giftName || d.name || "";
-        if (prize) { return "🎉 " + prize; }
+        // 奖品字段全量兜底: 字符串字段 / 对象取 name/comment / 数组取首项
+        const grab = (v) => {
+            if (!v) return "";
+            if (typeof v === "string") return v;
+            if (typeof v === "object") {
+                return v.comment || v.name || v.title || v.prizeName || v.desc || JSON.stringify(v);
+            }
+            return String(v);
+        };
+        const prize =
+            grab(d.prize) || grab(d.giftName) || grab(d.name) || grab(d.awardName) ||
+            grab(d.prizeName) || grab(d.itemName) || grab(d.gift) || grab(d.award) ||
+            grab(d.reward) || grab(d.winBonus) || grab(d.bonus) ||
+            grab(Array.isArray(d.awardList) && d.awardList[0]) ||
+            grab(Array.isArray(d.gifts) && d.gifts[0]) ||
+            grab(Array.isArray(d.items) && d.items[0]) ||
+            grab(Array.isArray(d.bonusList) && d.bonusList[0]) || "";
+        if (prize) { return "🎉 恭喜获得: " + prize; }
         if (d.leftChance && Object.keys(d.leftChance).length === 0 && data.code === 0) {
-            return "✅ 已抽奖";
+            return "✅ 今日已抽奖";
         }
         if (data.message && data.message.includes("已达") && data.message.includes("上限")) { return "⏭️ " + data.message; }
         if (data.message && data.message.includes("当前不可")) { return "⏭️ " + data.message; }
