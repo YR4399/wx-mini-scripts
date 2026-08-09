@@ -79,20 +79,34 @@ let CACHE = loadCache();
 
 // ---------- 通用请求 ----------
 // mallcoo 全部走 POST + JSON，业务字段与 Header 平铺同级
-async function invoke(urlPath, data = {}, token = "") {
+// m.mallcoo.cn 偶发连接超时/RST(限流)，网络层错误退避重试；业务错误码不重试
+// 登录必须传 retry=0：code 一次性，重发会 40163
+async function invoke(urlPath, data = {}, token = "", retry = 2) {
     const body = { ...data, Header: { Token: token || "", systemInfo: SYSTEM_INFO } };
-    const r = await axios.request({
-        method: "POST",
-        url: DOMAIN + urlPath,
-        headers: { "Content-Type": "application/json", "User-Agent": UA },
-        data: body,
-        timeout: 30000,
-        validateStatus: () => true,
-    });
-    if (typeof r.data !== "object" || r.data === null) {
-        throw new Error(`HTTP ${r.status} 非JSON响应`);
+    let lastErr;
+    for (let i = 0; i <= retry; i++) {
+        try {
+            const r = await axios.request({
+                method: "POST",
+                url: DOMAIN + urlPath,
+                headers: { "Content-Type": "application/json", "User-Agent": UA },
+                data: body,
+                timeout: 25000,
+                validateStatus: () => true,
+            });
+            if (typeof r.data !== "object" || r.data === null) {
+                throw new Error(`HTTP ${r.status} 非JSON响应`);
+            }
+            return r.data;
+        } catch (e) {
+            lastErr = e;
+            if (i < retry) {
+                L.info(`  ↻ ${urlPath} 网络异常(${e.message})，${3 * (i + 1)}s后重试`);
+                await $.wait(3000 * (i + 1));
+            }
+        }
     }
-    return r.data;
+    throw lastErr;
 }
 
 const isTokenInvalid = (res) => res && (res.m === 320 || res.m === 311);
@@ -142,40 +156,49 @@ class Account {
         return res;
     }
 
+    // 登录整体重试：code 一次性，网络失败必须重新取 code，不能复用旧 code
     async login() {
-        const code = await getCode(this.openid);
-        if (!code) return false;
-        try {
-            const res = await invoke("api/passport/wx/mp/login", {
-                mallId: MALL_ID,
-                mpAppId: MINI_APP_ID,
-                mpAuthCode: String(code),
-            });
-            // m=328 该微信号未在本商场注册会员（没绑手机号），非脚本错误
-            if (res.m === 328) {
-                L.warn(this.tag("该账号未注册本商场会员，请先在小程序内绑定手机号"));
-                return false;
+        const MAX = 3;
+        for (let i = 1; i <= MAX; i++) {
+            const code = await getCode(this.openid);
+            if (!code) return false;
+            try {
+                const res = await invoke("api/passport/wx/mp/login", {
+                    mallId: MALL_ID,
+                    mpAppId: MINI_APP_ID,
+                    mpAuthCode: String(code),
+                }, "", 0);
+                // m=328 该微信号未在本商场注册会员（没绑手机号），非脚本错误
+                if (res.m === 328) {
+                    L.warn(this.tag("该账号未注册本商场会员，请先在小程序内绑定手机号"));
+                    return false;
+                }
+                if (res.m !== 1 || !res.d || !res.d.token) {
+                    L.fail(this.tag(`登录失败: ${JSON.stringify(res).slice(0, 200)}`));
+                    return false;
+                }
+                const d = res.d;
+                // netUtil 存的就是 "token,projectType" 这种拼接形式，服务端按此解析
+                this.token = `${d.token},${d.projectType}`;
+                this.userId = d.userId;
+                this.mobile = d.mobile;
+                CACHE[this.openid] = {
+                    token: this.token, userId: d.userId, mobile: d.mobile, ts: Date.now(),
+                };
+                saveCache(CACHE);
+                const mask = d.mobile ? String(d.mobile).replace(/(\d{3})\d{4}(\d{4})/, "$1****$2") : "?";
+                L.ok(this.tag(`登录成功 uid=${d.userId} 手机=${mask}`));
+                return true;
+            } catch (e) {
+                if (i < MAX) {
+                    L.info(this.tag(`登录网络异常(${e.message})，第${i}次重试...`));
+                    await $.wait(5000 * i);
+                } else {
+                    L.fail(this.tag(`登录异常(已重试${MAX}次): ${e.message}`));
+                }
             }
-            if (res.m !== 1 || !res.d || !res.d.token) {
-                L.fail(this.tag(`登录失败: ${JSON.stringify(res).slice(0, 200)}`));
-                return false;
-            }
-            const d = res.d;
-            // netUtil 存的就是 "token,projectType" 这种拼接形式，服务端按此解析
-            this.token = `${d.token},${d.projectType}`;
-            this.userId = d.userId;
-            this.mobile = d.mobile;
-            CACHE[this.openid] = {
-                token: this.token, userId: d.userId, mobile: d.mobile, ts: Date.now(),
-            };
-            saveCache(CACHE);
-            const mask = d.mobile ? String(d.mobile).replace(/(\d{3})\d{4}(\d{4})/, "$1****$2") : "?";
-            L.ok(this.tag(`登录成功 uid=${d.userId} 手机=${mask}`));
-            return true;
-        } catch (e) {
-            L.fail(this.tag(`登录异常: ${e.message}`));
-            return false;
         }
+        return false;
     }
 
     // 缓存 token 复用：拿一个便宜的接口探活，失效则重登
