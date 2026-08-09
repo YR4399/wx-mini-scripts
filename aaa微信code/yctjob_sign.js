@@ -264,12 +264,12 @@ async function doTasks(token) {
   const today = d.todayTask || [];
   const exp = d.experienceTask || [];
   const all = [...today, ...exp];
-  let done = 0, skip = 0, fail = 0;
+  let newly = 0, preDone = 0, skipInvite = 0, fail = 0;
   for (const t of all) {
-    if (t.functionType === 8) { console.log(`  ⏭️ 跳过[${t.name}] (邀请工友, 需真实邀请)`); skip++; continue; }
+    if (t.functionType === 8) { console.log(`  ⏭️ 跳过[${t.name}] (邀请工友, 需真实邀请)`); skipInvite++; continue; }
     // 部分任务需浏览N秒(second字段); 纯 API 提交即可计入, 这里加短延时拟人
     const left = (t.num || 1) - (t.completeCount || 0);
-    if (left <= 0) { console.log(`  ✔️ [${t.name}] 已完成`); skip++; continue; }
+    if (left <= 0) { console.log(`  ✔️ [${t.name}] 已完成`); preDone++; continue; }
     const times = Math.min(left, 10);
     console.log(`  🎯 [${t.name}] 提交 ${times}/${left} 次 (+${t.integral}积/次, 需浏览${t.second || 0}s)`);
     let okN = 0;
@@ -280,10 +280,12 @@ async function doTasks(token) {
       else { console.log(`    ❌ ${r.data?.msg}`); break; }
       await sleep(800);
     }
-    if (okN > 0) { console.log(`    ✅ 成功 ${okN} 次`); done += okN; }
+    if (okN >= left) { console.log(`    ✅ 完成 (提交${okN}次)`); newly += okN; preDone++; }
+    else if (okN > 0) { console.log(`    ⚠️ 部分完成 (提交${okN}/${left}次)`); newly += okN; fail++; }
     else fail++;
   }
-  return { done, skip, fail, total: all.length, integral: d.integral, amount: d.amount };
+  const complete = preDone; // 本账号任务完成数(含之前已完成)
+  return { newly, preDone, complete, skipInvite, fail, total: all.length, integral: d.integral, amount: d.amount };
 }
 
 // ============ 单账号主流程 ============
@@ -340,7 +342,7 @@ async function main() {
       const signStr = r.sign
         ? (s.signed ? `成功(${s.verified ? "已确认" : "未确认"})` : (s.reason === "already" ? "已签" : (s.reason === "no-config" ? "无档" : (String(s.reason).startsWith("fail") ? "失败" : "?"))))
         : "仅任务";
-      const taskStr = t.total ? `任务完成${t.done || 0}/${t.total}` : "无任务";
+      const taskStr = t.total ? `任务${t.complete || 0}/${t.total}已完成(本次新做${t.newly || 0}, 邀请类跳过${t.skipInvite || 0})` : "无任务";
       lines.push(`✅ ${a.slice(0, 12)}: 签到${signStr} 积分${s.integral ?? t.integral ?? "-"}/¥${s.amount ?? t.amount ?? "-"} | ${taskStr}`);
     } else {
       failN++;
