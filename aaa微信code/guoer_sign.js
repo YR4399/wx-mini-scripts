@@ -8,7 +8,9 @@
  * cron: 30 20 * * *
  *
  * 任务范围（选项 C = 全部）:
- *   1) 每日签到 GET /sign/1778 (+2 积分，先查 activity/info/1778 的 typeInfo.signed 防重复)
+ *   1) 每日签到 GET /sign/1778 (+2 积分，先查 activity/info/1778 的 typeInfo.signFlag 防重复)
+ *      ⚠️ typeInfo.signed 是「连续签到天数计数」(1,2,3...)，NOT「今日是否已签」；
+ *         真正的今日标记是 typeInfo.signFlag(1=今日已签,0=未签)。误用 signed===1 会导致跳过签到。
  *   2) 会员权益领取 GET /memberBenefit/getMemberBenefit → 对 INTEGRATE_BENEFIT_COUPON 调 receiveAward
  *      （入会奖励 id=415 +10 积分，一次性；其余为 LINK 页面类权益，非 API 领取，跳过）
  *
@@ -142,7 +144,8 @@ async function getMemberInfo(sess){
 async function getSignStatus(sess){
   try {
     const res = await req(`${BASE}/activity/info/${ACTIVITY_ID}`, { method: "GET", headers: authHeaders(sess) });
-    if (res.data?.success) return res.data.data?.typeInfo?.signed;
+    // 注意: typeInfo.signFlag 才是「今日是否已签」(1=已签,0=未签); typeInfo.signed 是连续天数计数, 不可用
+    if (res.data?.success) return res.data.data?.typeInfo?.signFlag ?? null;
   } catch(e){}
   return null;
 }
@@ -154,7 +157,11 @@ async function doSign(sess){
     if (res.data?.success && d.errorCode === "20001"){
       let qty = 0;
       for (const a of (d.receiveList||[])) qty += (a.quantity||0);
-      return { ok: true, qty };
+      return { ok: true, qty, already: false };
+    }
+    // 幂等: 已经签过 (code=-1 / msg 含"今日已签到") —— 视为成功, 不再报错
+    if (res.data?.code === "-1" || (res.data?.msg||"").includes("今日已签到")){
+      return { ok: true, qty: 0, already: true };
     }
     L.fail(`签到返回异常: ${JSON.stringify(res.data).slice(0,160)}`);
     return { ok: false };
@@ -220,17 +227,26 @@ async function runAccount(openid){
   const info = await getMemberInfo(sess);
   if (info) L.info(`会员: ${info.gradeCaption||'?'}(V${info.grade}) 积分=${info.point}`);
 
-  // 1) 每日签到
-  const signed = await getSignStatus(sess);
-  if (signed === 1){ L.info("今日已签到"); }
+  // 1) 每日签到  (signFlag: 1=今日已签, 0=未签; 切勿用 signed 连续天数计数)
+  let signDone = false;
+  const signFlag = await getSignStatus(sess);
+  if (signFlag === 1){ L.info("今日已签到"); signDone = true; }
   else {
     const r = await doSign(sess);
-    if (r.ok) L.ok(`签到成功 +${r.qty}积分`);
+    if (r.ok){
+      L.ok(r.already ? "今日已签到(幂等确认)" : `签到成功 +${r.qty}积分`);
+      signDone = true;
+      // 防假阳性: 复查确认服务端 signFlag==1
+      const re = await getSignStatus(sess);
+      if (re !== 1) L.warn("复查: 服务端 signFlag 仍非1, 签到记录可能未落库(积分奖励 SEND_FAIL 不影响签到日期)");
+    } else {
+      L.fail("签到未成功");
+    }
   }
 
   // 2) 会员权益领取
   const benefits = await claimBenefits(sess);
-  return { ok:true, benefits };
+  return { ok:true, benefits, signDone };
 }
 
 (async () => {
@@ -241,7 +257,7 @@ async function runAccount(openid){
   for (const openid of accounts){
     try {
       const r = await runAccount(openid);
-      if (r.ok) summary.push(`✅ ${nick(openid)}: 签到+权益完成`);
+      if (r.ok) summary.push(`✅ ${nick(openid)}: 签到${r.signDone?"成功":"未完成"}/权益${r.benefits?.length?"已领"+r.benefits.length:"无"}`);
     } catch(e){ L.fail(`账号异常: ${e.message}`); }
   }
   console.log("\n🔔 果而惊喜会员社,结束");
