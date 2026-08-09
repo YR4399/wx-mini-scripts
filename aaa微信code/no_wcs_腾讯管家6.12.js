@@ -28,8 +28,15 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
+// 全量日志收集，供推送兜底使用（原脚本引用了不存在的 $.notifyStr，导致推送内容恒为空）
+const NOTIFY_LOG = [];
 const $ = {
-    log: (...args) => console.log(...args),
+    notifyStr: NOTIFY_LOG,
+    log: (...args) => {
+        const line = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
+        console.log(line);
+        NOTIFY_LOG.push(line);
+    },
     done: () => process.exit(0)
 };
 
@@ -204,7 +211,7 @@ async function getQrUuid() {
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9",
         },
-        timeout: 20000,
+        timeout: 30000,
         validateStatus: () => true,
     });
     if (status !== 200) throw new Error(`获取 QRConnect 页面失败 HTTP ${status}`);
@@ -264,7 +271,7 @@ async function loginByCode(authCode, guid) {
                 clientGuid: guid,
             },
         },
-        timeout: 20000,
+        timeout: 30000,
         validateStatus: () => true,
     });
     const payload = findLoginPayload(data);
@@ -763,15 +770,31 @@ async function runAccount(account, index, remark = "") {
 
     if (needRelogin) {
         $.log(`  🔐 登录中...`);
-        const authCode = await getAuthCode(account);
-        const payload = await loginByCode(authCode, guid);
-        profile = normalizeProfile(payload, guid);
-        if (!profile.loginKey || !profile.openid) throw new Error("登录资料缺少 loginKey/openid");
-        cookie = buildCookie(profile);
+        // jprx/open.weixin 偶发超时，无缓存的账号会因此整天跑不起来，这里做退避重试
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const authCode = await getAuthCode(account);
+                const payload = await loginByCode(authCode, guid);
+                profile = normalizeProfile(payload, guid);
+                if (!profile.loginKey || !profile.openid) throw new Error("登录资料缺少 loginKey/openid");
+                cookie = buildCookie(profile);
 
-        const auth = await createAuth(profile, cookie);
-        sessionKey = auth.data?.data?.userInfo?.sessionKey || auth.data?.data?.sessionKey || auth.data?.sessionKey;
-        if (!sessionKey) throw new Error(`auth/create 未返回 sessionKey`);
+                const auth = await createAuth(profile, cookie);
+                sessionKey = auth.data?.data?.userInfo?.sessionKey || auth.data?.data?.sessionKey || auth.data?.sessionKey;
+                if (!sessionKey) throw new Error(`auth/create 未返回 sessionKey`);
+
+                lastErr = null;
+                break;
+            } catch (e) {
+                lastErr = e;
+                if (attempt < 3) {
+                    $.log(`  ⚠️ 登录失败(${(e && e.message) || e})，${attempt * 5}s 后重试 (${attempt}/2)`);
+                    await sleep(attempt * 5000);
+                }
+            }
+        }
+        if (lastErr) throw lastErr;
 
         writeCache(account, { profile, cookie, sessionKey });
         $.log(`  ✅ 登录成功`);
@@ -915,8 +938,9 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
         if (st.status !== 200 || st.data?.code !== 0) {
             const code = st.data?.code;
             if (code === -10) throw new Error(`LOGIN_EXPIRED:${st.data?.message || "登录态过期"}`);
-            $.log(`[账号${index}] [${displayName}]   ❌ 获取状态失败: ${st.data?.message || "未知错误"}`);
-            return { name: lotteryName, type: lotteryType, status: st.status, data: st.data };
+            const emsg = cleanMessage(st.data?.message) || "未知错误";
+            $.log(`[账号${index}] [${displayName}]   ❌ 获取状态失败: ${emsg}`);
+            return { name: lotteryName, type: lotteryType, status: st.status, data: st.data, resultText: `❌ 获取状态失败: ${emsg}`, prize: "" };
         }
         const sd = st.data.data || {};
         if (process.env.qqpcmgr_debug_lottery === "true") {
@@ -926,13 +950,21 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
         if (Array.isArray(sd.bonus) && sd.bonus.length) {
             $.log(`[账号${index}] [${displayName}]   🎁 本池奖品: ${sd.bonus.map(b => b.comment || b.bonusId).join(" / ")}`);
         }
-        if (sd.drawLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日抽奖次数已用完，明天再抽`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达抽奖上限", data: {} } }; }
-        if (sd.winLimited && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日已中过奖（每天限中1次，明天再抽）`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "已达中奖上限", data: {} } }; }
-        if (!sd.canReceive && !FORCE_LOTTERY) { $.log(`[账号${index}] [${displayName}]   ⏭️ 当前不可抽奖`); return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, message: "当前不可抽奖", data: {} } }; }
+        const skip2 = (text) => {
+            $.log(`[账号${index}] [${displayName}]   ${text}`);
+            return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, data: {} }, resultText: text, prize: "" };
+        };
+        // winLimitDays=400 的等级池属于"长周期限中1次"，中过就再也不会中，这里如实区分提示
+        if (sd.drawLimited && !FORCE_LOTTERY) return skip2(`⏭️ 今日抽奖次数已用完，明天再抽`);
+        if (sd.winLimited && !FORCE_LOTTERY) {
+            const days = Number(sd.winLimitDays) || 1;
+            return skip2(days > 1 ? `⏭️ 已中过奖（${days}天内限中${sd.winLimitTimes || 1}次）` : `⏭️ 今日已中过奖，明天再抽`);
+        }
+        if (!sd.canReceive && !FORCE_LOTTERY) return skip2(`⏭️ 暂不可抽奖${cleanMessage(sd.message) ? `（${cleanMessage(sd.message)}）` : ""}`);
         const lottery2 = await doLottery(lk, cookie, "Lottery2", sdiAid || SDIAID);
-        const result2 = formatLotteryResult({ status: lottery2.status, data: lottery2.data });
-        $.log("   " + result2);
-        return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data };
+        const parsed2 = parseLotteryOutcome({ status: lottery2.status, data: lottery2.data }, sd.bonus);
+        $.log(`[账号${index}] [${displayName}]   ${parsed2.text}`);
+        return { name: lotteryName, type: lotteryType, status: lottery2.status, data: lottery2.data, resultText: parsed2.text, prize: parsed2.prize };
     }
 
     // 所有抽奖 lid 均为 Lottery2，靠 sdiaid 表头区分奖池（含天天惊喜）。
@@ -947,8 +979,9 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
         if (code === -10) {
             throw new Error(`LOGIN_EXPIRED:${status.data?.message || "登录态过期"}`);
         }
-        $.log(`[账号${index}] [${displayName}]   ❌ 获取状态失败: ${status.data?.message || "未知错误"}`);
-        return { name: lotteryName, type: lotteryType, status: status.status, data: status.data };
+        const emsg = cleanMessage(status.data?.message) || "未知错误";
+        $.log(`[账号${index}] [${displayName}]   ❌ 获取状态失败: ${emsg}`);
+        return { name: lotteryName, type: lotteryType, status: status.status, data: status.data, resultText: `❌ 获取状态失败: ${emsg}`, prize: "" };
     }
     
     const statusData = status.data.data || {};
@@ -962,42 +995,26 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
     const drawLimited = statusData.drawLimited === true;
     const winLimited = statusData.winLimited === true;
     const canReceive = statusData.canReceive === true;
-    
-    if (drawLimited && !FORCE_LOTTERY) {
-        $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日次数已用完，明天再抽`);
-        return { 
-            name: lotteryName, 
-            type: lotteryType, 
-            status: 200, 
-            data: { code: 0, message: "已达到每日抽奖次数上限", data: {} } 
-        };
-    }
-    
+
+    const skip = (text) => {
+        $.log(`[账号${index}] [${displayName}]   ${text}`);
+        return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, data: {} }, resultText: text, prize: "" };
+    };
+
+    if (drawLimited && !FORCE_LOTTERY) return skip(`⏭️ 今日次数已用完，明天再抽`);
     if (winLimited && !FORCE_LOTTERY) {
-        $.log(`[账号${index}] [${displayName}]   ⏭️ ${lotteryName} 今日已中过奖（每天限中1次，明天再抽）`);
-        return { 
-            name: lotteryName, 
-            type: lotteryType, 
-            status: 200, 
-            data: { code: 0, message: "已达到每日中奖上限", data: {} } 
-        };
+        const days = Number(statusData.winLimitDays) || 1;
+        return skip(days > 1 ? `⏭️ 已中过奖（${days}天内限中${statusData.winLimitTimes || 1}次）` : `⏭️ 今日已中过奖，明天再抽`);
     }
-    
     if (!canReceive && !FORCE_LOTTERY) {
-        $.log(`[账号${index}] [${displayName}]   ⏭️ 当前不可抽奖`);
-        return { 
-            name: lotteryName, 
-            type: lotteryType, 
-            status: 200, 
-            data: { code: 0, message: "当前不可抽奖", data: {} } 
-        };
+        return skip(`⏭️ 暂不可抽奖${cleanMessage(statusData.message) ? `（${cleanMessage(statusData.message)}）` : ""}`);
     }
-    
+
     const lottery = await doLottery(lk, cookie, LOTTERY_ID, sdiAid || SDIAID);
-    const result = formatLotteryResult({ status: lottery.status, data: lottery.data });
-    $.log(`[账号${index}] [${displayName}]   ${result}`);
-    
-    return { name: lotteryName, type: lotteryType, ...lottery };
+    const parsed = parseLotteryOutcome({ status: lottery.status, data: lottery.data }, statusData.bonus);
+    $.log(`[账号${index}] [${displayName}]   ${parsed.text}`);
+
+    return { name: lotteryName, type: lotteryType, ...lottery, resultText: parsed.text, prize: parsed.prize };
 }
 
 async function runLotteries(sessionKey, cookie, index, displayName = "", profile) {
@@ -1010,7 +1027,7 @@ async function runLotteries(sessionKey, cookie, index, displayName = "", profile
 
     if (configuredLotteries.length > 0) {
         for (const lotteryId of configuredLotteries) {
-            const result = await runSingleLottery(sessionKey, cookie, lotteryId, lotteryId, "配置抽奖", index, displayName);
+            const result = await runSingleLottery(sessionKey, cookie, lotteryId, lotteryId, "配置抽奖", index, displayName, profile);
             results.push(result);
             await sleep(1000);
         }
@@ -1057,59 +1074,134 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function sendNotify(title, content) {
+let PUSHED = false;
+
+async function pushPlus(title, content) {
+    const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
+    if (!token) {
+        $.log(`[推送] 未配置 PLUSPLUS_TOKEN，跳过 PushPlus`);
+        return false;
+    }
     try {
-        const notify = require(path.join(__dirname, "../sendNotify"));
-        await notify.sendNotify(title, content);
-        $.log(`[推送] 通知已发送`);
-    } catch (e) {
-        try {
-            const notify = require("/ql/scripts/sendNotify");
-            await notify.sendNotify(title, content);
-            $.log(`[推送] 通知已发送`);
-        } catch (e) {
-            $.log(`[推送] 未找到 sendNotify 模块，跳过推送`);
+        const { data } = await axios.post(
+            "http://www.pushplus.plus/send",
+            { token, title, content, template: "txt" },
+            { timeout: 15000 }
+        );
+        if (data && String(data.code) === "200") {
+            $.log(`[推送] PushPlus 已发送: ${title}`);
+            PUSHED = true;
+            return true;
         }
+        $.log(`[推送] PushPlus 返回异常: ${JSON.stringify(data).slice(0, 160)}`);
+        return false;
+    } catch (e) {
+        $.log(`[推送] PushPlus 发送失败: ${e.message}`);
+        return false;
     }
 }
 
-function formatLotteryResult(result) {
+// 面板托管的 sendNotify 需要 DAIDAI_NOTIFY_URL/TOKEN + 面板已配置通知渠道，
+// 缺任一项都会抛错。原实现把这类错误统一显示成"未找到模块"，极具误导性，这里如实输出原因并自动降级。
+async function sendNotify(title, content) {
+    for (const modPath of [path.join(__dirname, "../sendNotify"), "/ql/scripts/sendNotify"]) {
+        let notify;
+        try {
+            notify = require(modPath);
+        } catch (e) {
+            continue; // 模块不存在，静默跳到下一个
+        }
+        try {
+            await notify.sendNotify(title, content);
+            $.log(`[推送] 面板通知已发送`);
+            PUSHED = true;
+            return true;
+        } catch (e) {
+            $.log(`[推送] 面板通道不可用(${(e && e.message) || e})，降级 PushPlus`);
+            break;
+        }
+    }
+    return await pushPlus(title, content);
+}
+
+// 服务端 message 常带 "日志id=>uuid" 尾巴，推送里没有意义，清掉
+function cleanMessage(msg) {
+    return String(msg || "").replace(/\s*日志id=>[\w-]+/g, "").trim();
+}
+
+// 从 doLottery 响应里提取奖品名。
+// 关键增强: 中奖响应有时只回 bonusId，用 lotteryStatus 拿到的奖池 bonus 列表反查真实奖品名。
+function extractPrize(data, bonusList) {
+    const d = (data && data.data) || {};
+    const pool = Array.isArray(bonusList) ? bonusList : [];
+
+    const nameOf = (v) => {
+        if (v === null || v === undefined || v === "") return "";
+        if (typeof v === "string" || typeof v === "number") {
+            // 纯 bonusId(如 "2636") 先尝试反查奖池
+            const hit = pool.find((b) => String(b.bonusId) === String(v));
+            if (hit) return hit.comment || hit.name || String(v);
+            // 反查不到的纯数字 ID 标注为"奖品#ID"而非裸推，避免误导成真实奖品名
+            if (/^\d+$/.test(String(v))) return `奖品#${v}`;
+            return String(v);
+        }
+        if (typeof v === "object") {
+            if (v.comment || v.name || v.title || v.prizeName || v.bonusName || v.desc) {
+                return v.comment || v.name || v.title || v.prizeName || v.bonusName || v.desc;
+            }
+            if (v.bonusId) {
+                const hit = pool.find((b) => String(b.bonusId) === String(v.bonusId));
+                if (hit) return hit.comment || hit.name || String(v.bonusId);
+            }
+            return "";
+        }
+        return "";
+    };
+
+    const first = (v) => (Array.isArray(v) ? v[0] : v);
+
+    const candidates = [
+        d.prize, d.giftName, d.name, d.awardName, d.prizeName, d.itemName,
+        d.gift, d.award, d.reward, d.winBonus, d.bonus, d.bonusInfo, d.bonusId,
+        first(d.awardList), first(d.gifts), first(d.items), first(d.bonusList), first(d.bonuses),
+    ];
+    for (const c of candidates) {
+        const n = nameOf(c);
+        if (n) return n;
+    }
+    return "";
+}
+
+// 统一解析抽奖结果 -> { text, prize }
+// prize 非空即代表本次真实中奖，用于推送汇总
+function parseLotteryOutcome(result, bonusList) {
     const data = result.data;
     if (process.env.qqpcmgr_debug_lottery === "true") {
         $.log(`   [debug] doLottery 原始响应: ${JSON.stringify(data)}`);
     }
     if (result.status === 200 && data) {
         const d = data.data || {};
-        // 奖品字段全量兜底: 字符串字段 / 对象取 name/comment / 数组取首项
-        const grab = (v) => {
-            if (!v) return "";
-            if (typeof v === "string") return v;
-            if (typeof v === "object") {
-                return v.comment || v.name || v.title || v.prizeName || v.desc || JSON.stringify(v);
-            }
-            return String(v);
-        };
-        const prize =
-            grab(d.prize) || grab(d.giftName) || grab(d.name) || grab(d.awardName) ||
-            grab(d.prizeName) || grab(d.itemName) || grab(d.gift) || grab(d.award) ||
-            grab(d.reward) || grab(d.winBonus) || grab(d.bonus) ||
-            grab(Array.isArray(d.awardList) && d.awardList[0]) ||
-            grab(Array.isArray(d.gifts) && d.gifts[0]) ||
-            grab(Array.isArray(d.items) && d.items[0]) ||
-            grab(Array.isArray(d.bonusList) && d.bonusList[0]) || "";
-        if (prize) { return "🎉 恭喜获得: " + prize; }
+        const prize = extractPrize(data, bonusList);
+        if (prize) return { text: `🎉 恭喜获得: ${prize}`, prize };
+
         if (d.leftChance && Object.keys(d.leftChance).length === 0 && data.code === 0) {
-            return "✅ 今日已抽奖";
+            return { text: "✅ 今日已抽奖", prize: "" };
         }
-        if (data.message && data.message.includes("已达") && data.message.includes("上限")) { return "⏭️ " + data.message; }
-        if (data.message && data.message.includes("当前不可")) { return "⏭️ " + data.message; }
-        if (data.code !== 0 && data.message) {
-            return "💫 " + data.message;
-        }
-        return "✅ 完成";
-    } else if (data && data.message) { return "💫 " + data.message; }
-    else { return "❌ 失败";
+        const msg = cleanMessage(data.message);
+        if (msg && msg.includes("已达") && msg.includes("上限")) return { text: `⏭️ ${msg}`, prize: "" };
+        if (msg && msg.includes("当前不可")) return { text: `⏭️ ${msg}`, prize: "" };
+        if (data.code !== 0 && msg) return { text: `💫 ${msg}`, prize: "" };
+        return { text: "✅ 完成", prize: "" };
     }
+    const msg = cleanMessage(data && data.message);
+    if (msg) return { text: `💫 ${msg}`, prize: "" };
+    return { text: "❌ 失败", prize: "" };
+}
+
+// 兼容旧调用；推送阶段改用已缓存的 resultText，避免二次解析重复打 debug 日志
+function formatLotteryResult(result, bonusList) {
+    if (result && typeof result.resultText === "string") return result.resultText;
+    return parseLotteryOutcome(result, bonusList).text;
 }
 
 function randomDelay(minSeconds = 10, maxSeconds = 20) {
@@ -1178,50 +1270,65 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
     const failCount = results.filter(r => !r.success).length;
     
     if (results.length > 0) {
-        let content = `📱 腾讯管家任务执行结果\n\n`;
+        // 中奖信息必须一眼可见：汇总到正文最顶部，并写进推送标题
+        const wins = [];
+        for (const r of results) {
+            for (const lo of r.lotteries || []) {
+                if (lo && lo.prize) {
+                    wins.push({ who: r.remark || r.nickname || "账号", pool: lo.name, prize: lo.prize });
+                }
+            }
+        }
+
+        let content = "";
+        if (wins.length > 0) {
+            content += `🏆 中奖 ${wins.length} 项\n`;
+            for (const w of wins) {
+                const poolNote = w.pool && w.pool !== w.prize ? `（${w.pool}）` : "";
+                content += `🎉 ${w.who}：${w.prize}${poolNote}\n`;
+            }
+            content += `\n`;
+        }
+
+        content += `📱 腾讯管家任务执行结果\n`;
         content += `📊 统计: ${results.length} 个账号 | 成功 ${successCount} | 失败 ${failCount}\n\n`;
-        
+
         for (const r of results) {
             content += `───\n`;
             content += `${r.success ? "✅" : "❌"} ${r.remark}\n`;
-            
+
             if (!r.success) {
                 content += `   ❌ 错误: ${r.error}\n`;
             } else {
                 content += `   👤 用户名: ${r.nickname || "未知"}\n`;
                 content += `   📈 等级: Lv.${r.level || 0}\n`;
                 content += `   ⭐ 成长值: ${r.growthValue || 0}\n`;
-                
+
                 if (r.lotteries && r.lotteries.length > 0) {
                     content += `   🎲 抽奖结果:\n`;
                     for (const lottery of r.lotteries) {
-                        if (lottery.type === "等级抽奖") {
-                            content += `      🏅 ${lottery.name}: ${formatLotteryResult(lottery)}
-`;
-                        } else {
-                            content += `      ${lottery.name}: ${formatLotteryResult(lottery)}\n`;
-                        }
+                        const badge = lottery.type === "等级抽奖" ? "🏅 " : "";
+                        content += `      ${badge}${lottery.name}: ${formatLotteryResult(lottery)}\n`;
                     }
                 }
             }
         }
-        
+
         content += `\n───\n⏰ ${new Date().toLocaleString()}`;
-        
-        await sendNotify("腾讯管家抽奖", content);
+
+        const title = wins.length > 0
+            ? `腾讯管家 🎉 中奖：${[...new Set(wins.map((w) => w.prize))].join("、").slice(0, 40)}`
+            : `腾讯管家 (成功 ${successCount}/${results.length})`;
+
+        await sendNotify(title, content);
     }
 })()
     .catch((e) => $.log(`执行失败: ${e.message || e}`))
     .finally(async () => {
-    try {
-      const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
-      if (token) {
-        const axios = require("axios");
-        const log = ($.notifyStr || []).slice(-10).join(String.fromCharCode(10));
-        await axios.post("http://www.pushplus.plus/send", {
-          token, title: "腾讯管家", content: log || "腾讯管家执行完成", template: "txt"
-        }, { timeout: 10000 });
-      }
-    } catch(e) {}
-    $.sendMsg = async () => {}; $.done();
-  });;
+        // 主流程已推送则不重复；只有整体异常导致没推成时才发一份末尾日志兜底
+        if (!PUSHED) {
+            const tail = NOTIFY_LOG.slice(-30).join("\n");
+            await pushPlus("腾讯管家 ⚠️ 执行异常", `脚本未正常产出结果，末尾日志：\n\n${tail || "无日志"}`);
+        }
+        $.done();
+    });
