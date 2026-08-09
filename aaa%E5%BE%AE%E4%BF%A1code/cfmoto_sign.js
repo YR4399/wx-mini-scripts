@@ -394,15 +394,21 @@ async function processAccount(ac, index, stats) {
   const prefix = `${ICON.acc} 账号${index}｜${ac.phone}`;
   console.log(`\n${prefix}`);
 
+  // 每账号独立结果容器（多账号时不会互相覆盖）
+  const acct = { nickname: null, integral: null, sign: null, tasks: {}, lottery: null, failed: false, msg: "" };
+
   // 1. 登录
   L.act(`登录 ${ac.phone}...`);
   const lr = await login(ac);
   if (!lr) {
     L.fail(`登录失败，跳过`);
     stats.fail++;
-    return;
+    acct.failed = true;
+    acct.msg = "登录失败";
+    return acct;
   }
   L.ok(`登录成功：${lr.nickname} (userId=${lr.user_id})`);
+  acct.nickname = lr.nickname;
 
   const web    = makeWebClient(lr.ticket, lr.user_id);
   const native = makeNativeClient(lr.ticket, lr.user_id);
@@ -413,10 +419,10 @@ async function processAccount(ac, index, stats) {
   const sign = await signIn(web);
   if (sign?.code === 0) {
     L.ok(`打卡成功 (连续${sign.data ?? "?"}天)`);
-    stats.sign = { ok: true, days: sign.data };
+    acct.sign = { ok: true, days: sign.data };
   } else {
     L.warn(`打卡: ${sign?.msg || "已签到或失败"}`);
-    stats.sign = { ok: false, msg: sign?.msg || "已签到或失败" };
+    acct.sign = { ok: false, msg: sign?.msg || "已签到或失败" };
   }
   await humanDelay("think");
 
@@ -427,13 +433,13 @@ async function processAccount(ac, index, stats) {
   const signMark = await completeTask(web, 8);
   if (signMark?.code === 0) {
     L.ok(`签到积分已到账 (+2积分)`);
-    stats.sign = { ...(stats.sign || {}), ok: true, award: "+2积分" };
+    acct.sign = { ...(acct.sign || {}), ok: true, award: "+2积分" };
   } else if (/已完成/.test(signMark?.msg || "")) {
     L.info(`今日签到积分已领取过`);
-    stats.sign = { ...(stats.sign || {}), ok: true, award: "今日已领" };
+    acct.sign = { ...(acct.sign || {}), ok: true, award: "今日已领" };
   } else {
     L.warn(`签到积分领取失败: ${signMark?.msg || "未知"}`);
-    stats.sign = { ...(stats.sign || {}), ok: false, msg: signMark?.msg || "领取失败" };
+    acct.sign = { ...(acct.sign || {}), ok: false, msg: signMark?.msg || "领取失败" };
   }
   await humanDelay("think");
 
@@ -443,17 +449,23 @@ async function processAccount(ac, index, stats) {
     const intgOnly = await integralInfo(web);
     if (intgOnly) {
       L.info(`当前积分: ${intgOnly.integralTotal} (可用: ${intgOnly.integralDisposable})`);
-      stats.integral = intgOnly.integralTotal;
+      acct.integral = intgOnly.integralTotal;
     }
     L.ok(`${ICON.done} 账号${index} 处理完成`);
     stats.ok++;
-    return null;
+    return acct;
   }
 
   // 3. 任务列表
   L.act(`${ICON.task} 获取任务列表...`);
   const tasks = await taskList(web);
-  if (!tasks) { L.warn(`任务列表获取失败，跳过`); return; }
+  if (!tasks) {
+    L.warn(`任务列表获取失败，跳过后续任务`);
+    const intgT = await integralInfo(web);
+    if (intgT) acct.integral = intgT.integralTotal;
+    stats.ok++;
+    return acct;
+  }
 
   const taskMap = {};
   for (const group of tasks) {
@@ -488,6 +500,7 @@ async function processAccount(ac, index, stats) {
     const alreadyDone = task.state === 1;
     if (alreadyDone) {
       L.info(`${taskMeta.name} 已完成，跳过`);
+      acct.tasks[detail] = { name: taskMeta.name, success: 3, total: 3, skipped: true };
       continue;
     }
 
@@ -556,7 +569,7 @@ async function processAccount(ac, index, stats) {
       L.ok(`${taskMeta.name} 实际行为完成 ${successCount}/3 次（服务端自动推进）`);
     }
 
-    stats.tasks[detail] = { name: taskMeta.name, success: successCount, total: 3 };
+    acct.tasks[detail] = { name: taskMeta.name, success: successCount, total: 3 };
     await humanDelay("think");
   }
 
@@ -575,15 +588,17 @@ async function processAccount(ac, index, stats) {
         const tickets = detail.data.lottery_user_ticket_list || [];
         const ticketStr = tickets.map(t => t.ticket_code).join(", ");
         L.info(`${ICON.skip} 已参与，当前抽奖码：${ticketStr || "无"}`);
-        stats.lottery = { lotteryId: active.id, num: active.lottery_num, applied: true, tickets: ticketStr, alreadyApplied: true };
+        acct.lottery = { lotteryId: active.id, num: active.lottery_num, applied: true, tickets: ticketStr, alreadyApplied: true };
       } else {
         L.act(`${ICON.lottery} 参与抽奖 ${active.id}...`);
         const apply = await lotteryApply(native, active.id);
         if (apply?.code === 0 && apply?.data?.ticket_code) {
-          L.ok(`${ICON.prize} 参与成功！抽奖码：${apply.data.ticket_code} (开奖时间：${active.open_time})`);
-          stats.lottery = { lotteryId: active.id, num: active.lottery_num, ticket: apply.data.ticket_code, prize: detail?.data?.lottery_prize_list?.[0]?.prize_name || "?" };
+          const openAt = active.open_time || active.lottery_open_time || active.open_prize_time || active.apply_time_end || "未知";
+          L.ok(`${ICON.prize} 参与成功！抽奖码：${apply.data.ticket_code} (开奖/截止：${openAt})`);
+          acct.lottery = { lotteryId: active.id, num: active.lottery_num, ticket: apply.data.ticket_code, prize: detail?.data?.lottery_prize_list?.[0]?.prize_name || "?" };
         } else {
           L.warn(`${ICON.warn} 参与失败：${apply?.msg || "未知"}`);
+          acct.lottery = { lotteryId: active.id, num: active.lottery_num, failed: true, msg: apply?.msg || "未知" };
         }
       }
     } else {
@@ -599,12 +614,12 @@ async function processAccount(ac, index, stats) {
   const intg = await integralInfo(web);
   if (intg) {
     L.info(`当前积分: ${intg.integralTotal} (可用: ${intg.integralDisposable})`);
-    stats.integral = intg.integralTotal;
+    acct.integral = intg.integralTotal;
   }
 
   L.ok(`${ICON.done} 账号${index} 处理完成`);
   stats.ok++;
-  return stats.lottery || null;
+  return acct;
 }
 
 // ============= 推送 =============
@@ -613,13 +628,21 @@ function buildReport(results, stats) {
   report += `${ICON.line}\n`;
   report += `${ICON.acc} 账号 ${results.length} 个｜成功 ${stats.ok}｜失败 ${stats.fail}\n`;
 
-  if (stats.sign) {
-    const s = stats.sign;
-    const daysTxt = s.days ? ` 连续${s.days}天` : "";
-    report += `\n${ICON.sign} 签到: ${s.ok ? `${ICON.ok} 成功${daysTxt} ${s.award || ""}` : `${ICON.warn} ${s.msg}`}\n`;
+  const multi = results.length > 1;
+
+  // 签到（按账号，多账号时不再互相覆盖）
+  const signItems = results.filter(r => r.sign);
+  if (signItems.length) {
+    report += `\n${ICON.sign} 签到:\n`;
+    for (const r of signItems) {
+      const s = r.sign;
+      const daysTxt = s.days ? ` 连续${s.days}天` : "";
+      const txt = s.ok ? `${ICON.ok} 成功${daysTxt}${s.award ? ` ${s.award}` : ""}` : `${ICON.warn} ${s.msg}`;
+      report += `  账号${r.i}: ${txt}\n`;
+    }
   }
 
-  const intgItems = results.filter(r => r.integral !== undefined);
+  const intgItems = results.filter(r => r.integral !== undefined && r.integral !== null);
   if (intgItems.length) {
     report += `\n${ICON.coin} 积分统计:\n`;
     for (const r of intgItems) {
@@ -627,12 +650,16 @@ function buildReport(results, stats) {
     }
   }
 
-  const taskKeys = Object.keys(stats.tasks || {});
-  if (taskKeys.length) {
+  // 任务（按账号）
+  const taskItems = results.filter(r => r.tasks && Object.keys(r.tasks).length);
+  if (taskItems.length) {
     report += `\n${ICON.task} 任务完成情况:\n`;
-    for (const tk of taskKeys) {
-      const t = stats.tasks[tk];
-      report += `  ${t.name}: ${t.success}/${t.total}次\n`;
+    for (const r of taskItems) {
+      if (multi) report += `  账号${r.i}:\n`;
+      for (const tk of Object.keys(r.tasks)) {
+        const t = r.tasks[tk];
+        report += `${multi ? "    " : "  "}${t.name}: ${t.skipped ? "已完成" : `${t.success}/${t.total}次`}\n`;
+      }
     }
   }
 
@@ -646,7 +673,7 @@ function buildReport(results, stats) {
       } else if (lt.ticket) {
         report += `  账号${r.i}: ✅ 参与成功 第${lt.num}期 抽奖码:${lt.ticket} 奖品:${lt.prize || "?"}\n`;
       } else if (lt.lotteryId) {
-        report += `  账号${r.i}: ⚠️ 参与失败 第${lt.num}期\n`;
+        report += `  账号${r.i}: ${ICON.warn} 参与失败 第${lt.num}期${lt.msg ? ` (${lt.msg})` : ""}\n`;
       }
     }
   }
@@ -682,8 +709,18 @@ async function main() {
   for (let i = 0; i < accounts.length; i++) {
     const ac = accounts[i];
     try {
-      const lotInfo = await processAccount(ac, i + 1, stats);
-      results.push({ i: i + 1, phone: ac.phone, status: "ok", lottery: lotInfo });
+      const acct = (await processAccount(ac, i + 1, stats)) || {};
+      results.push({
+        i: i + 1,
+        phone: ac.phone,
+        status: acct.failed ? "error" : "ok",
+        msg: acct.msg || "",
+        nickname: acct.nickname || "",
+        integral: acct.integral,
+        sign: acct.sign,
+        tasks: acct.tasks || {},
+        lottery: acct.lottery || null,
+      });
     } catch (e) {
       L.fail(`${ICON.acc} 账号${i + 1}(${ac.phone})异常: ${e.message}`);
       results.push({ i: i + 1, phone: ac.phone, status: "error", msg: e.message });
