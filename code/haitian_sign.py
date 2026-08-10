@@ -4,12 +4,18 @@
 基于 HAR 抓包 2026-05-30
 
 环境变量:
-  haitian - refresh_token (多个用 & 分隔)
+  haitian - access_token (多个用 & 分隔)
+            从抓包 login 响应中获取
 
 用法:
-  1. 手机抓包获取 phoneNew/login 响应中的 refresh_token
-  2. 配置环境变量 haitian=<refresh_token>
+  1. 手机抓包获取 phoneNew/login 响应中的 access_token
+  2. 配置环境变量 haitian=<access_token>
   3. 运行脚本
+
+说明:
+  - access_token 有效期约 2 小时
+  - refresh_token 海天服务端不稳定，脚本优先直接用 access_token
+  - token 过期后需重新抓包获取
 
 AppID: wx7a890ea13f50d7b6
 """
@@ -52,66 +58,62 @@ def save_cache(cache):
         json.dump(cache, f, indent=2, ensure_ascii=False)
 
 
-def refresh_token(rt):
-    """用 refresh_token 换新 access_token"""
+def check_token(token):
+    """检查 token 是否有效"""
     try:
-        r = requests.post(f'{BASE}/buyer-api/passport/token',
-                          data=f'refresh_token={rt}',
-                          headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                          timeout=15, verify=False)
-        d = r.json()
-        at = d.get('access_token', '') or d.get('accessToken', '')
-        new_rt = d.get('refresh_token', '') or d.get('refreshToken', '')
-        if at:
-            return at, new_rt
-        log.warning(f'  刷新失败: {d.get("message", "")}')
+        r = requests.get(f'{BASE}/buyer-api/members/points/current',
+                         headers={'Authorization': token}, timeout=10, verify=False)
+        return r.status_code == 200 and 'consum_point' in r.text
+    except:
+        return False
+
+
+def refresh_token(rt):
+    """用 refresh_token 换新 access_token (海天服务端不稳定)"""
+    try:
+        r = requests.get(f'{BASE}/buyer-api/auth/refresh',
+                         headers={'Authorization': rt}, timeout=15, verify=False)
+        if r.status_code == 200:
+            d = r.json()
+            at = d.get('access_token', '') or d.get('accessToken', '')
+            new_rt = d.get('refresh_token', '') or d.get('refreshToken', '')
+            if at:
+                return at, new_rt
+        log.warning(f'  刷新失败: {r.status_code} {r.text[:100]}')
     except Exception as e:
         log.error(f'  刷新异常: {e}')
     return None, None
 
 
-def get_valid_token(idx, rt):
-    """获取有效 token: 直接用 → 缓存 → refresh"""
+def get_valid_token(idx, token):
+    """获取有效 token: 直接用 → 缓存 → refresh(备选)"""
     cache = load_cache()
     key = f'account_{idx}'
 
-    # 1. 有缓存的 access_token，先试用
+    # 1. 直接用提供的 token
+    if token and check_token(token):
+        log.info('  ✓ token 有效')
+        cache[key] = {
+            'access_token': token,
+            'updated': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        save_cache(cache)
+        return token
+
+    # 2. 有缓存的 token，试用
     if key in cache and cache[key].get('access_token'):
         at = cache[key]['access_token']
-        try:
-            r = requests.get(f'{BASE}/buyer-api/members/points/current',
-                             headers={'Authorization': at}, timeout=10, verify=False)
-            if r.status_code == 200 and 'consum_point' in r.text:
-                return at
-        except:
-            pass
+        if check_token(at):
+            log.info('  ✓ 使用缓存 token')
+            return at
 
-    # 2. 直接用提供的 token 当 access_token 测试
-    if rt:
-        try:
-            r = requests.get(f'{BASE}/buyer-api/members/points/current',
-                             headers={'Authorization': rt}, timeout=10, verify=False)
-            if r.status_code == 200 and 'consum_point' in r.text:
-                log.info('  token 直接可用')
-                cache[key] = {
-                    'access_token': rt,
-                    'refresh_token': rt,
-                    'updated': time.strftime('%Y-%m-%d %H:%M:%S')
-                }
-                save_cache(cache)
-                return rt
-        except:
-            pass
-
-    # 3. 尝试 refresh_token 刷新
-    cached_rt = cache.get(key, {}).get('refresh_token', '') or rt
-    if cached_rt:
-        log.info('  刷新 token...')
-        at, new_rt = refresh_token(cached_rt)
-        if at:
+    # 3. 尝试 refresh (海天服务端不稳定，仅作备选)
+    if token:
+        log.info('  尝试 refresh...')
+        at, new_rt = refresh_token(token)
+        if at and check_token(at):
             cache[key] = {
                 'access_token': at,
-                'refresh_token': new_rt or cached_rt,
                 'updated': time.strftime('%Y-%m-%d %H:%M:%S')
             }
             save_cache(cache)
@@ -130,15 +132,15 @@ def api(method, token, path, params=None, json_data=None):
         return r.text
 
 
-def process_account(idx, total, rt):
+def process_account(idx, total, token):
     """处理单个账号"""
     log.info('=' * 50)
     log.info(f'[{idx}/{total}] 海天美味馆')
     log.info('=' * 50)
 
-    token = get_valid_token(idx, rt)
+    token = get_valid_token(idx, token)
     if not token:
-        log.error('  token 获取失败，跳过')
+        log.error('  ✗ token 无效或已过期，需重新抓包获取')
         return False
 
     # 查询积分
@@ -224,18 +226,19 @@ def main():
 
     raw = os.environ.get('haitian', '')
     if not raw:
-        log.error('未配置 haitian 环境变量 (refresh_token)')
-        log.error('用法: 抓包获取 phoneNew/login 响应中的 refresh_token')
-        log.error('      配置环境变量 haitian=<refresh_token>')
+        log.error('未配置 haitian 环境变量')
+        log.error('用法: 抓包获取 phoneNew/login 响应中的 access_token')
+        log.error('      配置环境变量 haitian=<access_token>')
+        log.error('说明: access_token 有效期约2小时，过期需重新抓包')
         sys.exit(1)
 
     tokens = [t.strip() for t in raw.split('&') if t.strip()]
     log.info(f'共 {len(tokens)} 个账号')
 
     ok = 0
-    for i, rt in enumerate(tokens, 1):
+    for i, token in enumerate(tokens, 1):
         try:
-            if process_account(i, len(tokens), rt):
+            if process_account(i, len(tokens), token):
                 ok += 1
         except Exception as e:
             log.error(f'账号 {i} 异常: {e}')
