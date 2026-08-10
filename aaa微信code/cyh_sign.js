@@ -1,8 +1,9 @@
 /**
- * 车友惠出行 微信小程序 —— WCS 登录 + 每日签到 + 分享任务
+ * 车友惠出行 微信小程序 —— WCS 登录 + 每日签到 + 分享任务 + 免费抽奖
  * AppID: wx0d7e4af01d0e7986   API: https://operation.rayoservice.com/api
  *
- * 每日动作: 连续签到领 U 点(1~7 天 10/20/30/40/50/60/100) / 分享小程序任务(+20) / 查询 U 点余额
+ * 每日动作: 连续签到领 U 点(1~7 天 10/20/30/40/50/60/100) / 分享小程序任务(+20)
+ *           / 两处免费抽奖各 +10 U 点(自动领奖) / 查询 U 点余额
  *
  * 环境变量(项目统一约定):
  *   wx_opinion      ★账号来源(WCS openid, & 分隔)
@@ -11,6 +12,8 @@
  *   NICK_MAP        可选 昵称映射 openid:昵称&openid:昵称
  *   PUSH_PLUS_TOKEN PushPlus 推送(可选)
  *   CYH_NO_SHARE    可选 设为 1 关闭分享任务上报
+ *   CYH_NO_LOTTERY  可选 设为 1 关闭抽奖
+ *   CYH_LOTTERY_ROUNDS 可选 每个抽奖位单次最多尝试轮数(默认 3, 上限 6)
  *
  * token 缓存: cyh_token_cache.json (按 openid, JWT 本地判活, 失效自动重登)
  * cron: 25 9 * * *
@@ -31,6 +34,9 @@ const WCS_AUTH = process.env.wx_auth || "";
 const PUSH_TOKEN = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
 const ACCOUNTS = (process.env.wx_opinion || "").split("&").map((s) => s.trim()).filter(Boolean);
 const NO_SHARE = process.env.CYH_NO_SHARE === "1";
+const NO_LOTTERY = process.env.CYH_NO_LOTTERY === "1";
+// 每个抽奖位单次运行最多尝试几轮(抽到"重复参与"即提前停止)
+const LOTTERY_ROUNDS = Math.min(6, Math.max(1, parseInt(process.env.CYH_LOTTERY_ROUNDS || "3", 10) || 3));
 const CACHE_FILE = path.join(__dirname, "cyh_token_cache.json");
 
 // 小程序登录固定参数(页面装修配置下发)
@@ -40,6 +46,11 @@ const RESOURCES_ID = "trzJiREk9VLpFnGOMc6W4TLhjiFY0BeXcG66lNyLvSQ=";
 const SIGN_ACTIVITY = "2041790369687097344"; // 多天签到组件
 const SHARE_TASK = "1980565381282213888"; // 分享小程序任务
 const PAY_ACCOUNT = "1823205144156385281"; // U 点(代币)账户
+// 免费抽奖位(奖品即 U 点); 每次执行前会再查一次是否为付费活动, 付费一律跳过
+const LOTTERIES = [
+  { name: "按钮抽奖", code: "1021415085534482432" },
+  { name: "签到抽奖", code: "1021151902886400000" },
+];
 
 const UA =
   "Mozilla/5.0 (Linux; Android 14; 23127PN0CC Build/UKQ1.230804.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.107 Mobile Safari/537.36 XWEB/1300233 MMWEBSDK/20241202 MMWEBID/2846 MicroMessenger/8.0.56.2800(0x28003837) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android";
@@ -374,6 +385,98 @@ async function doShareTask(token, summary) {
   }
 }
 
+// ============ 业务: 免费抽奖 ============
+/**
+ * 抽奖流程与页面一致: 查活动状态 -> luckyDraw 抽 -> 对 result===1 的奖品 getPrize 领取
+ * 安全护栏: in/activity/status 的 hasPay 为 0 表示"需要支付参加费用", 这类活动一律跳过
+ */
+async function doLottery(token, summary) {
+  if (NO_LOTTERY) {
+    log("ℹ️ 已通过 CYH_NO_LOTTERY 关闭抽奖");
+    return;
+  }
+
+  let phone = "";
+  try {
+    const info = await api("/rayo-dbo-operate/user-client-api/user/info", { token });
+    phone = (info && info.phone) || "";
+  } catch (e) {
+    if (e instanceof TokenExpired) throw e;
+  }
+
+  let got = 0;
+  let done = 0;
+  for (const lot of LOTTERIES) {
+    await sleep(jitter(1500, 500));
+
+    // 1) 付费护栏
+    try {
+      const st = await api("/rayo-dbo-activity/user-client-api/in/activity/status", {
+        token,
+        query: { activityCode: lot.code },
+      });
+      if (!st || st.hasPay !== 1) {
+        log(`⏭️ ${lot.name}: 需支付参加费用, 跳过`);
+        continue;
+      }
+    } catch (e) {
+      if (e instanceof TokenExpired) throw e;
+      log(`⏭️ ${lot.name}: 活动状态异常(${e.message}), 跳过`);
+      continue;
+    }
+
+    // 2) 抽奖: 每个活动每日有多次机会, 抽到服务端返回"重复参与"为止
+    let rounds = 0;
+    for (let i = 0; i < LOTTERY_ROUNDS; i++) {
+      if (i) await sleep(jitter(1600, 400));
+      let wins;
+      try {
+        const r = await api("/rayo-dbo-activity/user-client-api/luckyDraw", {
+          token,
+          query: { activityCode: lot.code },
+        });
+        wins = (r || []).filter((x) => x && x.result === 1);
+      } catch (e) {
+        if (e instanceof TokenExpired) throw e;
+        // 服务端幂等: 机会用尽返回 "重复参与"
+        if (e instanceof BizFail && /重复参与/.test(e.message)) {
+          if (!rounds) log(`ℹ️ ${lot.name}: 今日机会已用完`);
+          break;
+        }
+        log(`⚠️ ${lot.name}: ${e.message}`);
+        break;
+      }
+      rounds++;
+
+      if (!wins.length) {
+        log(`🎲 ${lot.name}: 第 ${rounds} 次未中奖`);
+        continue;
+      }
+
+      // 3) 领奖(中奖后必须领取才到账)
+      for (const w of wins) {
+        await sleep(jitter(900, 300));
+        try {
+          await api("/rayo-dbo-activity/user-client-api/getPrize", {
+            method: "POST",
+            token,
+            body: { prizeId: w.prizeId, phone },
+          });
+          log(`🎉 ${lot.name}: 中「${w.prizeName || "奖品"}」已领取`);
+          got++;
+        } catch (e) {
+          if (e instanceof TokenExpired) throw e;
+          log(`⚠️ ${lot.name}: 中奖但领取失败(${e.message})`);
+        }
+      }
+    }
+    done++;
+  }
+
+  if (got) summary.push(`抽奖领${got}份`);
+  else if (done) summary.push("抽奖已完成");
+}
+
 // ============ 业务: 余额汇总 ============
 async function showBalance(token, summary) {
   const b = await balance(token);
@@ -426,6 +529,8 @@ async function runOne(openid, idx, cache) {
     await doSign(token, summary);
     await sleep(jitter(1800, 500));
     await doShareTask(token, summary);
+    await sleep(jitter(1500, 400));
+    await doLottery(token, summary);
     await sleep(jitter(1200, 300));
     await showBalance(token, summary);
   };
