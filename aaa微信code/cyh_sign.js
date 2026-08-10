@@ -3,6 +3,7 @@
  * AppID: wx0d7e4af01d0e7986   API: https://operation.rayoservice.com/api
  *
  * 每日动作: 连续签到领 U 点(1~7 天 10/20/30/40/50/60/100) / 分享小程序任务(+20)
+ *           / U点广告任务(点卡片即发币, 无需真做: spreadType=2 upClick +10 / spreadType=1 adv/ret +20)
  *           / 两处免费抽奖各 +10 U 点(自动领奖) / 查询 U 点余额
  *
  * 环境变量(项目统一约定):
@@ -13,6 +14,7 @@
  *   PUSH_PLUS_TOKEN PushPlus 推送(可选)
  *   CYH_NO_SHARE    可选 设为 1 关闭分享任务上报
  *   CYH_NO_LOTTERY  可选 设为 1 关闭抽奖
+ *   CYH_NO_AD       可选 设为 1 关闭 U点广告任务
  *   CYH_LOTTERY_ROUNDS 可选 每个抽奖位单次最多尝试轮数(默认 3, 上限 6)
  *
  * token 缓存: cyh_token_cache.json (按 openid, JWT 本地判活, 失效自动重登)
@@ -35,6 +37,7 @@ const PUSH_TOKEN = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || 
 const ACCOUNTS = (process.env.wx_opinion || "").split("&").map((s) => s.trim()).filter(Boolean);
 const NO_SHARE = process.env.CYH_NO_SHARE === "1";
 const NO_LOTTERY = process.env.CYH_NO_LOTTERY === "1";
+const NO_AD = process.env.CYH_NO_AD === "1";
 // 每个抽奖位单次运行最多尝试几轮(抽到"重复参与"即提前停止)
 const LOTTERY_ROUNDS = Math.min(6, Math.max(1, parseInt(process.env.CYH_LOTTERY_ROUNDS || "3", 10) || 3));
 const CACHE_FILE = path.join(__dirname, "cyh_token_cache.json");
@@ -51,6 +54,18 @@ const LOTTERIES = [
   { name: "按钮抽奖", code: "1021415085534482432" },
   { name: "签到抽奖", code: "1021151902886400000" },
 ];
+
+// U点广告任务"点卡片即发币"模块(无需真正做广告动作)
+// 广告列表接口在 pcmp.keyunti.com, 无鉴权, 需 Origin/Referer yinlian
+const AD_LIST_URL = "https://pcmp.keyunti.com/pcmpapi/pcmp-parking-fee/advert/listPushPlan";
+// 上报接口在 yinlian 域(operation 域 upClick 实测不发币)
+const AD_HOST = "https://yinlian.rayoservice.com/api";
+const AD_PAGE_CODE = "MBYM2408029073000002"; // 广告上报 pageCode
+const AD_POSITION = "parking0036"; // U点广告位
+const AD_MASTER = "RYF0010";
+// adv/ret 走 right.rayoservice.com, WAF 要求浏览器 UA + yinlian Referer, 否则返回 SSL EOF/HTTP 000
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36";
 
 const UA =
   "Mozilla/5.0 (Linux; Android 14; 23127PN0CC Build/UKQ1.230804.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.107 Mobile Safari/537.36 XWEB/1300233 MMWEBSDK/20241202 MMWEBID/2846 MicroMessenger/8.0.56.2800(0x28003837) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android";
@@ -99,6 +114,8 @@ function request(url, { method = "GET", headers = {}, body = null, timeout = 250
     const lib = u.protocol === "https:" ? https : http;
     const payload = body == null ? null : typeof body === "string" ? body : JSON.stringify(body);
     const h = { ...headers };
+    // 默认带浏览器 UA: 直接调用的外部接口(pcmp/upClick/adv/ret)无 UA 会被服务端拒
+    if (!h["User-Agent"] && !h["user-agent"]) h["User-Agent"] = BROWSER_UA;
     if (payload != null) h["Content-Length"] = Buffer.byteLength(payload);
 
     const req = lib.request(
@@ -155,6 +172,16 @@ function jwtAlive(token) {
     return !p.exp || p.exp * 1000 - Date.now() > 10 * 60 * 1000;
   } catch (e) {
     return false;
+  }
+}
+
+/** 从 JWT 解 userId(广告列表 userIdent / Client-Auth 之外标识用) */
+function uidOf(token) {
+  try {
+    const p = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString("utf8"));
+    return String(p.userId || "");
+  } catch (e) {
+    return "";
   }
 }
 
@@ -385,6 +412,126 @@ async function doShareTask(token, summary) {
   }
 }
 
+// ============ 业务: U点广告任务(点卡片即发币) ============
+/**
+ * 广告列表在 pcmp.keyunti.com, 无鉴权, 但需 Origin/Referer = yinlian 域。
+ * 每条广告: spreadType=2(无 advertLink) -> POST yinlian/advert/upClick  (+10 U点)
+ *           spreadType=1(有 advertLink) -> GET right.rayoservice.com/adv/ret 302 (+20 U点, 需浏览器 UA 过 WAF)
+ * 每条广告每人每日限领一次; 用余额差核对到账, 余额不变即已领/被拒(未绑手机)。
+ */
+async function listAdTasks(userId) {
+  const r = await request(AD_LIST_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://yinlian.rayoservice.com",
+      Referer: "https://yinlian.rayoservice.com/",
+    },
+    body: {
+      categoryCode: "parking",
+      pushNum: 1,
+      positionCode: AD_POSITION,
+      imgScaleList: ["3:1"],
+      parkCode: "",
+      tenantId: "000000",
+      masterCode: AD_MASTER,
+      pagePlatform: 1,
+      allowPop: true,
+      userIdent: userId,
+      advertiserUserIdent: userId,
+      planIds: [],
+      t: Date.now() / 1000,
+    },
+  });
+  const d = r.data;
+  // pcmp 接口成功标志是 success:true, code 为字符串 "000000"(非 200)
+  if (!d || typeof d !== "object" || d.success !== true) {
+    const peek = typeof r.raw === "string" ? r.raw.slice(0, 200) : JSON.stringify(d).slice(0, 200);
+    log(`⚠️ 广告列表响应异常(HTTP ${r.status}): ${peek}`);
+    throw new BizFail((d && (d.msg || d.message)) || "拉取广告列表失败", d && d.code);
+  }
+  return Array.isArray(d.data) ? d.data : [];
+}
+
+async function doAdTasks(token, userId, summary) {
+  if (NO_AD) {
+    log("ℹ️ 已通过 CYH_NO_AD 关闭 U点广告任务");
+    return;
+  }
+  if (!userId) {
+    log("⚠️ 无法解析 userId, 跳过 U点广告任务");
+    summary.push("广告跳过(无userId)");
+    return;
+  }
+
+  let ads;
+  try {
+    ads = await listAdTasks(userId);
+  } catch (e) {
+    if (e instanceof TokenExpired) throw e;
+    log(`⚠️ 拉取 U点广告任务失败: ${e.message}`);
+    summary.push("广告列表失败");
+    return;
+  }
+  if (!ads.length) {
+    log("ℹ️ 无可用 U点广告任务");
+    return;
+  }
+  log(`📣 共 ${ads.length} 个 U点广告任务`);
+
+  const beforeAll = await balance(token);
+  let ok = 0;
+  let failed = 0;
+
+  for (const a of ads) {
+    const sid = a.sid;
+    const title = (a.title || `sid=${sid}`).slice(0, 24);
+    const link = a.advertLink;
+    const b0 = await balance(token);
+    await sleep(jitter(1100, 350));
+    try {
+      if (link) {
+        // spreadType=1: 落地页 302 跳转, 命中即 +20, 不跟随
+        await request(link, {
+          headers: {
+            "User-Agent": BROWSER_UA,
+            Referer: "https://yinlian.rayoservice.com/",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+        });
+      } else {
+        // spreadType=2: upClick +10
+        await request(`${AD_HOST}/rayo-dbo-product/user-client-api/advert/upClick`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Client-Auth": token, "User-Identity": userId },
+          body: { sid, pageCode: AD_PAGE_CODE },
+        });
+      }
+    } catch (e) {
+      log(`⚠️ 广告「${title}」请求异常: ${e.message}`);
+      failed++;
+      await sleep(jitter(1200, 300));
+      continue;
+    }
+    await sleep(jitter(1400, 400));
+    const b1 = await balance(token);
+    const diff = b0 != null && b1 != null ? Math.round((b1 - b0) * 100) / 100 : null;
+    if (diff && diff > 0) {
+      log(`✅ 广告「${title}」 +${diff} U点`);
+      ok++;
+    } else {
+      // 余额未变: 今日已领 / 未绑手机被服务端静默拒绝
+      log(`ℹ️ 广告「${title}」 余额未变(今日已领/需绑手机)`);
+    }
+  }
+
+  const afterAll = await balance(token);
+  const total = beforeAll != null && afterAll != null ? Math.round((afterAll - beforeAll) * 100) / 100 : 0;
+  if (total > 0) summary.push(`广告+${total}U点`);
+  else summary.push(`广告已完成`);
+  log(`📣 U点广告任务: 到账 ${ok} 笔 / 请求失败 ${failed} 笔, 本次 +${total} U点`);
+}
+
 // ============ 业务: 免费抽奖 ============
 /**
  * 抽奖流程与页面一致: 查活动状态 -> luckyDraw 抽 -> 对 result===1 的奖品 getPrize 领取
@@ -529,6 +676,8 @@ async function runOne(openid, idx, cache) {
     await doSign(token, summary);
     await sleep(jitter(1800, 500));
     await doShareTask(token, summary);
+    await sleep(jitter(1500, 400));
+    await doAdTasks(token, uidOf(token), summary);
     await sleep(jitter(1500, 400));
     await doLottery(token, summary);
     await sleep(jitter(1200, 300));
