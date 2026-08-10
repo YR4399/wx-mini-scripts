@@ -386,16 +386,21 @@ async function showBalance(token, summary) {
 // ============ 推送 ============
 async function push(title, content) {
   if (!PUSH_TOKEN) return;
-  try {
-    const r = await request("https://www.pushplus.plus/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: { token: PUSH_TOKEN, title, content, template: "txt" },
-    });
-    const ok = r.data && (r.data.code === 200 || r.data.code === "200");
-    console.log(ok ? "📢 推送成功" : `📢 推送失败: ${JSON.stringify(r.data).slice(0, 120)}`);
-  } catch (e) {
-    console.log(`📢 推送异常: ${e.message}`);
+  // 容器出网到 pushplus 偶发 socket hang up, 重试两次
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const r = await request("https://www.pushplus.plus/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { token: PUSH_TOKEN, title, content, template: "txt" },
+      });
+      const ok = r.data && (r.data.code === 200 || r.data.code === "200");
+      console.log(ok ? "📢 推送成功" : `📢 推送失败: ${JSON.stringify(r.data).slice(0, 120)}`);
+      return;
+    } catch (e) {
+      console.log(`📢 推送异常(${i}/3): ${e.message}`);
+      if (i < 3) await sleep(jitter(2000 * i, 500));
+    }
   }
 }
 
