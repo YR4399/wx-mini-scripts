@@ -1,67 +1,17 @@
 /**
- * 阿如玊+ 微信小程序 —— WCS 登录 + 每日打卡 + 积分领取 + 互动任务
- * AppID: wx6c6fefac45365d53   版本: 289
- * API:   https://arusu.cn/api/wx
+ * 阿如玊+ 微信小程序 —— WCS 登录 + 每日积分任务
+ * AppID: wx6c6fefac45365d53   API: https://arusu.cn/api/wx
  *
- * ───────────────────────────────────────────────────────────────────────────
- * 【逆向结论 2026-08-10 · wxapkg(radium V1MMWX) 解密解包】
+ * 每日动作: 领步数积分 / 团队打卡 / 点赞笔记 / 评论笔记 / 新手任务奖励确认
  *
- *  0) 解包要点: 主包 __APP__ 与分包 _pagesIndex_/_pagesShop_ 的 AES/XOR 边界不一致
- *     (主包 aes=1023+shift=1+hdr=18+coff=off, 分包 aes=1024/1023+coff=off-6),
- *     必须**逐包自动探测**, 用 app-config.json 能否 json.load + PNG 头是否 \x89PNG
- *     打分挑最优解, 不要拿一套参数套所有包。共解出 257 文件 / 98 页面。
- *     框架是 uni-app(vue3 + swc), 接口调用统一走 api/index.js 的 http(method, path, data)。
- *
- *  1) 请求封装(api/index.js exports.http):
- *        baseURL       = https://arusu.cn/api/wx
- *        Content-Type  = application/json          ★ uni.request 默认 JSON
- *        Authorization = <token>                   ★ 裸 JWT, 无 Bearer
- *        GET           = 参数拼进 querystring, body 置空
- *        成功判定       = body.code === 0, 业务数据在 body.data
- *        token 失效     = body.code === 401 -> 重新 wxLogin 后原样重放
- *        错误文案       = body.message
- *
- *  2) 登录链(api/index.js exports.wxLogin, 一步到位):
- *     a. WCS POST /wx/code {openid, appid}   -> data.code
- *     b. POST /login {code}                  -> {token}
- *        tools/login.js 的 getLoginLaunchParams() 只在有邀请场景时附加
- *        path/scene/chat_type/inviter, 纯签到不需要, 传 {code} 即可。
- *     token 是 JWT, payload 内含 exp, 可本地预判过期, 省一次探活请求。
- *
- *  3) 每日可自动化动作(实测确认):
- *     ① 领取步数积分  GET /integral_num -> {num(可领), step(每step步1分), gap(还差几步)}
- *                     num > 0 时 POST /integral -> {num} 到账
- *                     ⚠️ 步数本身来自微信运动 getWeRunData(encrypted_data/iv),
- *                        WCS 无法提供 werun 加密数据, 故 POST /step 上传步数**不可自动化**,
- *                        脚本只负责"有分就领", 不伪造步数。
- *     ② 团队打卡      GET /team_current -> {team_id}; team_id>0 才可
- *                     GET /team_checkin -> {sports_value} 运动值
- *                     team_id=0(未加入团队)时接口不可用, 脚本跳过并提示。
- *     ③ 互动积分      GET /say_list?page&size&say_type=1 -> list[{id, is_star}]
- *                     POST /say_star {say_id} -> {is_star, integral, is_login}
- *                     ★ 实测积分有**冷却**: 短时间内连点第 2 次起 integral=0,
- *                       间隔若干分钟后再点又能 +1(非严格"每日 1 次")。
- *                       所以脚本每轮**最多点 1 条**, 拿到 0 立即停手,
- *                       绝不连点刷分(既无收益又污染他人内容)。
- *                       只点 is_star=false 的, 避免误触发"取消点赞"。
- *     ④ 新手任务      GET /mission_task -> {list:[{id, task_code, task_status,
- *                       complete_anim_played, reward, progress_value}], integrate}
- *                     task_code: 1=完善资料 2=加入团队 3=点赞N条笔记 4=完成N天步数兑换
- *                     task_status=1 且 complete_anim_played=0 -> POST /anim_mission_task {task_id}
- *                     (该接口是"确认奖励动画已播", 未确认时奖励不入账)
- *     ⑤ 团队一键赞    GET /team_detail{team_id} -> self_star_num > 0 时
- *                     POST /team_batch_star -> {star_num}
- *
- *  4) 查询类: GET /mpuser_info(资料) /step_self_info(步数) /integral_total(总积分)
- *             GET /checkin_month?month=YYYY-MM-01 -> list[{date, is_checkin}]
- * ───────────────────────────────────────────────────────────────────────────
- *
- * 【环境变量 · 全部走项目统一约定】
- *  wx_opinion      : ★账号来源(WCS openid, & 分隔)
- *  wx_server_url   : WCS 地址
- *  wx_auth         : WCS 认证 key
- *  NICK_MAP        : 可选 昵称映射 openid:昵称&openid:昵称
- *  PUSH_PLUS_TOKEN : PushPlus 推送(可选)
+ * 环境变量(项目统一约定):
+ *   wx_opinion      ★账号来源(WCS openid, & 分隔)
+ *   wx_server_url   WCS 地址
+ *   wx_auth         WCS 认证 key
+ *   NICK_MAP        可选 昵称映射 openid:昵称&openid:昵称
+ *   PUSH_PLUS_TOKEN PushPlus 推送(可选)
+ *   ARUSU_REVIEW    可选 自定义评论文案, 用 | 分隔多条(默认内置鼓励语库)
+ *   ARUSU_NO_REVIEW 可选 设为 1 关闭自动评论
  *
  * token 缓存: arusu_token_cache.json (按 openid, 失效自动重登)
  * cron: 30 9 * * *
@@ -227,7 +177,18 @@ async function api(pathname, { method = "GET", query = null, body = null, token 
   const opts = { method, headers };
   if (method.toUpperCase() !== "GET" && body != null) opts.body = body;
 
-  const r = await request(HOST + p, opts);
+  // 网络抖动(socket hang up / ECONNRESET / 超时)自动重试一次
+  let r;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      r = await request(HOST + p, opts);
+      break;
+    } catch (e) {
+      const retriable = /hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket|timeout/i.test(e.message || "");
+      if (attempt >= 1 || !retriable) throw e;
+      await sleep(jitter(1500, 500));
+    }
+  }
   const d = r.data;
   if (!d || typeof d !== "object") throw new Error(`响应异常(HTTP ${r.status}): ${String(r.raw).slice(0, 120)}`);
   if (d.code === 0) return d.data;
@@ -366,42 +327,161 @@ async function teamCheckin(token, summary) {
   }
 }
 
-// ============ 业务: 互动积分(点赞笔记) ============
-/**
- * 实测点赞积分有冷却: 短时间内连点第 2 次起 integral=0, 隔几分钟又可 +1。
- * 因此每轮最多点 1 条, 且只点 is_star=false 的(避免变成"取消点赞")。
- */
-async function interactStar(token, summary) {
-  let list;
+// ============ 业务: 社区互动(点赞 / 评论) ============
+// 积分规则(GET /integral_dict): say_star 1分/次 上限5, say_review 1分/次 上限4
+// 点赞得分不稳定(非固定冷却), 多点几条才凑得满; 评论几乎每条必中, 到 4 分即封顶
+const REVIEW_TEXTS = (process.env.ARUSU_REVIEW || "")
+  .split("|")
+  .map((x) => x.trim())
+  .filter(Boolean);
+const DEFAULT_REVIEWS = [
+  "坚持下来很不容易，加油！",
+  "每天进步一点点，很棒",
+  "一起运动，互相打气～",
+  "看到你的坚持很受鼓舞",
+  "保持节奏，慢慢来也很好",
+  "今天也是元气满满的一天",
+  "运动使人快乐，继续保持",
+  "记录得很用心，学习了",
+];
+
+async function getTotal(token) {
   try {
-    const r = await api("/say_list", { token, query: { page: 1, size: 20, say_type: 1 } });
-    list = (r && r.list) || [];
+    const d = await api("/integral_total", { token });
+    return d && d.total != null ? Number(d.total) : null;
   } catch (e) {
     if (e instanceof TokenExpired) throw e;
-    log(`⚠️ 笔记列表获取失败: ${e.message}`);
-    return;
+    return null;
   }
-  const target = list.find((x) => x && !x.is_star && x.id);
-  if (!target) {
-    log("ℹ️ 无可点赞的新笔记");
-    summary.push("互动: 无目标");
-    return;
-  }
+}
+
+async function getMyId(token) {
   try {
-    await sleep(jitter(2000, 500));
-    const r = await api("/say_star", { method: "POST", token, body: { say_id: target.id } });
-    const got = Number((r && r.integral) || 0);
-    if (got > 0) {
-      log(`👍 互动点赞 +${got} 积分`);
-      summary.push(`互动: +${got}`);
-    } else {
-      log("ℹ️ 本次点赞未计分(冷却中/已达上限)");
-      summary.push("互动: 未计分");
+    const d = await api("/mpuser_id", { token });
+    return d && d.id ? Number(d.id) : 0;
+  } catch (e) {
+    if (e instanceof TokenExpired) throw e;
+    return 0;
+  }
+}
+
+/** 翻页收集"别人发的、我还没赞过"的笔记, 供点赞和评论共用 */
+async function collectSays(token, myId, need) {
+  const out = [];
+  const seen = new Set();
+  for (let page = 1; page <= 8 && out.length < need; page++) {
+    let list;
+    try {
+      const r = await api("/say_list", { token, query: { page, size: 20, say_type: 1 } });
+      list = (r && r.list) || [];
+    } catch (e) {
+      if (e instanceof TokenExpired) throw e;
+      break;
     }
-  } catch (e) {
-    if (e instanceof TokenExpired) throw e;
-    log(`❌ 互动点赞失败: ${e.message}`);
-    summary.push("互动: 失败");
+    if (!list.length) break;
+    for (const x of list) {
+      if (!x || !x.id || seen.has(x.id)) continue;
+      if (myId && x.mpuser_id === myId) continue; // 自己的笔记点赞不计分
+      seen.add(x.id);
+      out.push(x);
+    }
+    await sleep(jitter(600, 200));
+  }
+  return out;
+}
+
+async function interactStar(token, summary, cands) {
+  const targets = cands.filter((x) => !x.is_star).slice(0, 10);
+  if (!targets.length) {
+    log("ℹ️ 无可点赞的新笔记");
+    summary.push("点赞: 无目标");
+    return;
+  }
+  let got = 0;
+  let done = 0;
+  for (const t of targets) {
+    try {
+      const r = await api("/say_star", { method: "POST", token, body: { say_id: t.id } });
+      got += Number((r && r.integral) || 0);
+      done++;
+      t.is_star = true;
+    } catch (e) {
+      if (e instanceof TokenExpired) throw e;
+      log(`⚠️ 点赞失败(${t.id}): ${e.message}`);
+    }
+    if (got >= 5) break; // 已到每日上限
+    await sleep(jitter(3500, 1200));
+  }
+  if (got > 0) {
+    log(`👍 点赞 ${done} 条, +${got} 积分${got >= 5 ? " (已达每日上限)" : ""}`);
+    summary.push(`点赞: +${got}`);
+  } else {
+    log(`ℹ️ 点赞 ${done} 条, 本次未计分(今日已达上限)`);
+    summary.push("点赞: 已满");
+  }
+}
+
+async function interactReview(token, summary, cands, profileOk) {
+  if (process.env.ARUSU_NO_REVIEW === "1") {
+    log("ℹ️ 已关闭自动评论(ARUSU_NO_REVIEW=1)");
+    return;
+  }
+  // 实测: 资料未完善的账号评论不计分, 此时评论只会打扰社区, 直接跳过
+  if (!profileOk) {
+    log("ℹ️ 资料未完善, 评论不计分, 已跳过(请先在 App 内完善资料)");
+    summary.push("评论: 待完善资料");
+    return;
+  }
+  const pool = REVIEW_TEXTS.length ? REVIEW_TEXTS : DEFAULT_REVIEWS;
+  const targets = cands.slice(0, 6);
+  if (!targets.length) {
+    log("ℹ️ 无可评论的笔记");
+    summary.push("评论: 无目标");
+    return;
+  }
+  let before = await getTotal(token);
+  if (before == null) {
+    log("⚠️ 积分读取失败, 跳过评论");
+    return;
+  }
+  let got = 0;
+  let done = 0;
+  let miss = 0;
+  const used = new Set();
+  for (const t of targets) {
+    let text;
+    do {
+      text = pool[Math.floor(Math.random() * pool.length)];
+    } while (used.has(text) && used.size < pool.length);
+    used.add(text);
+    try {
+      const r = await api("/review", { method: "POST", token, body: { say_id: t.id, text } });
+      if (r === undefined || r === null) throw new Error("空响应");
+      done++;
+    } catch (e) {
+      if (e instanceof TokenExpired) throw e;
+      log(`⚠️ 评论失败(${t.id}): ${e.message}`);
+      continue;
+    }
+    await sleep(jitter(2500, 800));
+    const after = await getTotal(token);
+    const delta = after != null && before != null ? after - before : 0;
+    if (delta > 0) {
+      got += delta;
+      miss = 0;
+    } else {
+      miss++;
+    }
+    if (after != null) before = after;
+    if (got >= 4 || miss >= 2) break; // 到上限或连续两条不计分就停
+    await sleep(jitter(4000, 1500));
+  }
+  if (got > 0) {
+    log(`💬 评论 ${done} 条, +${got} 积分${got >= 4 ? " (已达每日上限)" : ""}`);
+    summary.push(`评论: +${got}`);
+  } else {
+    log(`ℹ️ 评论 ${done} 条, 本次未计分(今日已达上限)`);
+    summary.push("评论: 已满");
   }
 }
 
@@ -497,14 +577,22 @@ async function runOne(openid, idx, cache) {
     log("❌ 登录失败, 跳过");
     return `${nick}: 登录失败`;
   }
-  if (auth.info && auth.info.district) log(`👤 ${auth.info.nickname || nick} · ${auth.info.district}`);
+  const inf = auth.info || {};
+  // 资料完善判定: 有地区且昵称不是系统默认的"用户XXXX"
+  const profileOk = !!(inf.district && inf.nickname && !/^用户\d+$/.test(inf.nickname));
+  if (inf.district) log(`👤 ${inf.nickname || nick} · ${inf.district}`);
+  else log(`👤 ${inf.nickname || nick} (资料未完善)`);
 
   const flow = async (token) => {
     await claimIntegral(token, summary);
     await sleep(jitter(1500, 400));
     await teamCheckin(token, summary);
     await sleep(jitter(1500, 400));
-    await interactStar(token, summary);
+    const myId = await getMyId(token);
+    const cands = await collectSays(token, myId, 16);
+    await interactStar(token, summary, cands);
+    await sleep(jitter(1500, 400));
+    await interactReview(token, summary, cands, profileOk);
     await sleep(jitter(1500, 400));
     await doTasks(token, summary);
     await sleep(jitter(1200, 300));
