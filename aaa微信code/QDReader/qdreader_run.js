@@ -1,7 +1,7 @@
-// QDReader 任务包装脚本 v6：完整 hook 方案
-// 1. hook fetch：签名 URL 重定向到本地
-// 2. 拦截 magev6 真实请求：用完整 URL（带 query）重新签名并覆盖 SDKSign 头
-// 3. 修复 magev6 签名：脚本传给签名服务的 URL 丢失 query，此处直接算好签名注入
+// QDReader 任务包装脚本 v7：
+// 主脚本（同进程 require + hook）+ 扩展任务（延迟启动）
+// 由于主脚本缓存了 console.log 引用无法 hook 输出，改用固定延时方案：
+// 主脚本 require 后，等 100 秒（主脚本任务约 60-90 秒）再启动扩展任务
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -10,11 +10,12 @@ const crypto = require('crypto');
 const BASE_DIR = __dirname;
 const SIGN_SERVER = path.join(BASE_DIR, 'qdreader_sign_server.js');
 const MAIN_SCRIPT = path.join(BASE_DIR, 'qdreader.js');
+const EXTRA_SCRIPT = path.join(BASE_DIR, 'qdreader_extra_tasks.js');
 const PORT = 12039;
 const REMOTE_SIGN_HOST = 'https://api.120399.xyz';
 const LOCAL_SIGN_HOST = `http://127.0.0.1:${PORT}`;
 
-// ===== SDKSign 本地生成（与签名服务一致）=====
+// ===== SDKSign 配置（magev6 覆盖用）=====
 const CONFIG = {
   uid: "417394727",
   guid: "120360531697",
@@ -90,16 +91,16 @@ async function ensureServer() {
 async function main() {
   await ensureServer();
 
+  // hook fetch：重定向签名 URL + magev6 签名覆盖
   const origFetch = globalThis.fetch;
   globalThis.fetch = async function(input, init) {
     let urlStr = typeof input === 'string' ? input : (input && input.url) || '';
     init = init || {};
 
-    // ===== 拦截 magev6 真实请求：覆盖 SDKSign（用完整 URL 签名）=====
+    // magev6 真实请求：本地签名覆盖
     if (urlStr.includes('magev6.if.qidian.com') && !urlStr.includes('api.120399')) {
       const ts = Date.now();
       const sdkSign = genSDKSign(urlStr, ts);
-      // 覆盖/添加签名头
       if (init.headers) {
         const h = init.headers;
         if (typeof h.set === 'function') {
@@ -116,10 +117,9 @@ async function main() {
           h['ibex'] = CONFIG.ibex;
         }
       }
-      console.log('[magev6] SDKSign 已本地覆盖:', urlStr.substring(0, 70) + '...');
     }
 
-    // ===== 签名服务 URL 重定向 =====
+    // 签名服务 URL 重定向
     if (urlStr.includes('api.120399.xyz')) {
       urlStr = urlStr.replace(REMOTE_SIGN_HOST, LOCAL_SIGN_HOST);
       input = urlStr;
@@ -129,11 +129,31 @@ async function main() {
   };
 
   console.log('开始运行 QDReader 签到...');
+
+  // ===== 守护调度器：主进程退出后仍能运行扩展任务 =====
+  // 用 unref 的 child_process，独立事件循环，主进程退出不影响它
+  const schedulerCode = `
+    const { spawn } = require('child_process');
+    const path = require('path');
+    const EXTRA_SCRIPT = ${JSON.stringify(EXTRA_SCRIPT)};
+    setTimeout(() => {
+      console.log('\\n========== 开始扩展任务（MoreRewardTab + 广告加码）==========');
+      const extra = spawn('node', [EXTRA_SCRIPT], { stdio: 'inherit', env: process.env });
+      extra.on('exit', (code) => process.exit(code || 0));
+    }, 95000);
+  `;
+  const scheduler = spawn('node', ['-e', schedulerCode], {
+    stdio: 'inherit',
+    env: process.env,
+    detached: true,
+  });
+  scheduler.unref();
+  console.log('[调度] 守护调度器已启动，主脚本结束后将运行扩展任务');
+
   try {
     require(MAIN_SCRIPT);
   } catch (e) {
     console.error('脚本执行异常:', e.message);
-    process.exit(1);
   }
 }
 
