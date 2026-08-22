@@ -105,22 +105,39 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ===== 游戏心跳 =====
 async function gameHeartBeat(count) {
-  const url = 'https://lygame.qidian.com/home/log/heartbeat?gameId=201743&platformId=1';
+  const gameIds = ["201743","201744","201745","201746","201747"];
   const headers = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/QDReaderiOS/5.9.456/728/QDReaderAppstore',
     'Cookie': cookie,
     'Referer': 'https://h5.if.qidian.com/',
   };
-  for (let i = 0; i < count; i++) {
+  let successCount = 0, filteredCount = 0;
+  // 动态间隔：首次15秒，连续过滤超过3次则退到45秒
+  for (let i = 0; i < count * 3 && successCount < count; i++) {
     try {
+      const gid = gameIds[i % gameIds.length];
+      const url = 'https://lygame.qidian.com/home/log/heartbeat?gameId=' + gid + '&platformId=1&t=' + Date.now();
       const resp = await fetch(url, { headers });
       const text = await resp.text();
-      console.log(`[游戏] 心跳 ${i + 1}/${count}: ${text.substring(0, 60)}`);
+      let hd;
+      try { hd = JSON.parse(text); } catch (e) { hd = { raw: text }; }
+      if (hd.code === 0) {
+        successCount++;
+        filteredCount = 0;
+        console.log("[游戏] 心跳 " + (i + 1) + " 成功: data=" + hd.data + " (进度" + successCount + "/" + count + ")");
+        await sleep(15000);
+      } else {
+        filteredCount++;
+        const delay = filteredCount > 3 ? 45000 : 15000;
+        console.log("[游戏] 心跳 " + (i + 1) + " 被过滤(" + filteredCount + "): " + (hd.msg || text.substring(0, 30)) + " 等待" + delay / 1000 + "秒");
+        await sleep(delay);
+      }
     } catch (e) {
-      console.log(`[游戏] 心跳失败: ${e.message}`);
+      console.log("[游戏] 心跳失败: " + e.message);
+      await sleep(15000);
     }
-    await sleep(1000);
   }
+  console.log("[游戏] 心跳完成: 成功" + successCount + "次, 共" + count + "次");
 }
 
 // ===== 完成单个任务 =====
@@ -176,7 +193,7 @@ async function run() {
     if (t.TaskType === 104) { // 玩游戏
       console.log(`[更多奖励] ${t.Title || t.TaskId}: 模拟游戏心跳...`);
       const need = (t.Total - t.Process) || 1;
-      await gameHeartBeat(Math.min(need * 2, 6));
+      await gameHeartBeat(need);
       await sleep(2000);
       await receiveReward(t.TaskId, t.Title || t.TaskId);
       continue;
