@@ -10,16 +10,25 @@
  * 点赞: POST /jv/bbs/post/thumbs_up/{postId}
  * 帖子列表: GET /jv/bbs/post/list-v6/
  *
- * 任务机制 (HAR逆向结论):
- *   detail=8  签到任务   → 通过 signIn 接口完成, 可标记 completeTask
+ * 任务机制 (HAR逆向 + 2026-08-09 实测结论):
+ *   detail=8  签到任务   → signIn 仅打卡(返回连续天数, 不发分);
+ *                          必须再 completeTask(8) 才到账 +2 积分。
+ *                          幂等: 重复标记返回 {code:500,"任务已完成!"}, 不重复发分。
  *   detail=11 每日发帖   → 发帖3次后服务端自动推进 state=1
  *   detail=12 每日评论   → 评论3次后服务端自动推进 state=1
  *   detail=13 每日分享   → 仅标记 completeTask 完成 (无需真实行为)
  *   detail=15 每日点赞   → 点赞3次后服务端自动推进 state=1
- *   completeTask 仅接受 detail=8 和 13
+ *
+ * 【风控】c.cfmoto.com 有严格频率限流: 短时间连发(约4次)即被 WAF 黑洞,
+ *   不返回任何响应直到客户端超时(HTTP 000 / ECONNABORTED), 冷却约25s恢复。
+ *   与 User-Agent / 请求头无关。故全局节流 1.5s + 退避重试 8/16/25s。
  *
  * 环境变量:
  *   CFMOTO_ACCOUNTS  - JSON 数组, 每项 {phone, password}, 如:
+ *                      [{"phone":"19315012646","password":"yr123123"}]
+ *                      (必填, 不再硬编码)
+ *   CFMOTO_SIGN_ONLY - 可选, 设为 "1" 则只做「登录+签到+领签到分+查积分」,
+ *                      跳过发帖/评论/点赞/抽奖等会产生社区内容的行为任务。
  */
 
 // 清除容器内常驻坏代理
@@ -27,6 +36,7 @@ for (const k of ['HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROX
   delete process.env[k];
 
 const axios = require("axios");
+const { report: stdReport } = require("./std_report");
 
 const API_BASE = "https://c.cfmoto.com";
 const APP_NAME = "Cfmoto积分签到";
@@ -158,19 +168,69 @@ function loadAccounts() {
 }
 const accounts = loadAccounts();
 
+// ============= 限流防护：全局节流 + 退避重试 =============
+// 【重要】c.cfmoto.com 服务端有严格频率限流：短时间连发请求会被 WAF "黑洞"处理
+// —— 不返回任何响应，连接一直挂起直到客户端超时（表现为 ECONNABORTED / HTTP 000）。
+// 实测：快速连发 4 次即触发；冷却约 25s 后恢复。与 User-Agent / 请求头无关。
+const MIN_GAP_MS = 1500;          // 相邻请求最小间隔
+const REQ_TIMEOUT = 12000;        // 单次超时（短超时快速失败，交给重试）
+const RETRY_BACKOFF = [8000, 16000, 25000]; // 命中限流后的冷却退避
+
+let _lastReqAt = 0;
+async function throttle() {
+  const wait = _lastReqAt + MIN_GAP_MS - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  _lastReqAt = Date.now();
+}
+
+function isThrottled(e) {
+  // 限流表现：超时 / 连接被重置 / 无响应
+  return e.code === "ECONNABORTED" || e.code === "ETIMEDOUT" ||
+         e.code === "ECONNRESET"   || /timeout/i.test(e.message || "") ||
+         !e.response;
+}
+
+// 统一请求封装：节流 + 限流退避重试
+async function req(config, label = "") {
+  for (let attempt = 0; attempt <= RETRY_BACKOFF.length; attempt++) {
+    await throttle();
+    try {
+      return await axios({ timeout: REQ_TIMEOUT, ...config });
+    } catch (e) {
+      if (attempt < RETRY_BACKOFF.length && isThrottled(e)) {
+        const cool = RETRY_BACKOFF[attempt];
+        L.warn(`${label || config.url} 疑似限流，冷却 ${cool / 1000}s 后重试 (${attempt + 1}/${RETRY_BACKOFF.length})`);
+        await new Promise(r => setTimeout(r, cool));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+// 通用请求头（Accept / Origin / Referer 与真机一致，避免额外风控特征）
+function commonHeaders(ua, ticket, userId, contentType) {
+  const h = {
+    "User-Agent": ua,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Content-Type": contentType || "application/json;charset=utf-8",
+    "Origin": API_BASE,
+    "Referer": API_BASE + "/",
+  };
+  if (ticket) h["Cookie"] = `ticket=${ticket};vehicle_id=-1;user_id=${userId || ""}`;
+  return h;
+}
+
 // ============= HTTP 客户端 =============
 // webview 客户端：用于积分/登录/签到接口
 function makeWebClient(ticket, userId) {
   const fp = buildFingerprint();
-  const headers = {
-    "User-Agent": fp.ua,
-    "Content-Type": "application/json;charset=utf-8",
-  };
-  if (ticket) headers["Cookie"] = `ticket=${ticket};vehicle_id=-1;user_id=${userId || ""}`;
+  const headers = commonHeaders(fp.ua, ticket, userId);
   return {
-    get: (path) => axios.get(API_BASE + path, { headers, timeout: 60000 }),
-    post: (path, data) => axios.post(API_BASE + path, data, { headers, timeout: 60000 }),
-    put: (path, data) => axios.put(API_BASE + path, data, { headers, timeout: 60000 }),
+    get:  (path)        => req({ method: "get",  url: API_BASE + path, headers }, path),
+    post: (path, data)  => req({ method: "post", url: API_BASE + path, headers, data }, path),
+    put:  (path, data)  => req({ method: "put",  url: API_BASE + path, headers, data }, path),
     fp,
   };
 }
@@ -179,14 +239,10 @@ function makeWebClient(ticket, userId) {
 function makeNativeClient(ticket, userId) {
   const dev = DEVICE_POOL[Math.floor(Math.random() * DEVICE_POOL.length)];
   const nativeUA = `MOBILE|Android|${dev.android}|KLICEN_APP|5.9.8|Dalvik/2.1.0 (Linux; U; Android ${dev.android}; ${dev.market} Build/${dev.build})|1220*2656|${rndHex(16)}|100`;
-  const headers = {
-    "User-Agent": nativeUA,
-    "Cookie": `ticket=${ticket};vehicle_id=-1;user_id=${userId || ""}`,
-    "Content-Type": "application/json; charset=UTF-8",
-  };
+  const headers = commonHeaders(nativeUA, ticket, userId, "application/json; charset=UTF-8");
   return {
-    get: (path, params) => axios.get(API_BASE + path, { headers, params, timeout: 60000 }),
-    post: (path, data) => axios.post(API_BASE + path, data, { headers, timeout: 60000 }),
+    get:  (path, params) => req({ method: "get",  url: API_BASE + path, headers, params }, path),
+    post: (path, data)   => req({ method: "post", url: API_BASE + path, headers, data }, path),
     fp: { brand: dev.brand, model: dev.market, android: dev.android },
     nativeUA,
   };
@@ -195,11 +251,16 @@ function makeNativeClient(ticket, userId) {
 // ============= 接口 =============
 
 // 登录
+// 【修复】原实现只带 Content-Type、无 User-Agent（axios 在 Node 下默认发 "axios/1.x"），
+// 且无重试；一旦命中限流即挂起超时 → 登录失败 → 整个账号流程被跳过。
 async function login(ac) {
   try {
-    const res = await axios.post(API_BASE + "/cfmotoservermall/user/loginByPhone/",
-      { phone: ac.phone, password: ac.password },
-      { headers: { "Content-Type": "application/json;charset=utf-8" }, timeout: 60000 });
+    const res = await req({
+      method: "post",
+      url: API_BASE + "/cfmotoservermall/user/loginByPhone/",
+      headers: commonHeaders(buildFingerprint().ua),
+      data: { phone: ac.phone, password: ac.password },
+    }, "登录");
     const d = res.data;
     if (d && d.code === 0 && d.data && d.data.ticket) {
       return { ticket: d.data.ticket, user_id: d.data.user_id, nickname: d.data.nickname || d.data.user_name, phone: ac.phone };
@@ -230,7 +291,7 @@ async function taskList(web) {
 async function completeTask(web, taskDetail) {
   try {
     const res = await web.put("/cfmotoservermall/app/integral/task/complete",
-      { completeStatu: 1, taskDetail }, { timeout: 60000 });
+      { completeStatu: 1, taskDetail }, { timeout: 15000 });
     return res.data;
   } catch (e) { return { code: -1, msg: e.message }; }
 }
@@ -334,15 +395,22 @@ async function processAccount(ac, index, stats) {
   const prefix = `${ICON.acc} 账号${index}｜${ac.phone}`;
   console.log(`\n${prefix}`);
 
+  // 每账号独立结果容器（多账号时不会互相覆盖）
+  const acct = { nickname: null, integral: null, sign: null, tasks: {}, lottery: null, failed: false, msg: "" };
+
   // 1. 登录
   L.act(`登录 ${ac.phone}...`);
   const lr = await login(ac);
   if (!lr) {
     L.fail(`登录失败，跳过`);
     stats.fail++;
-    return;
+    acct.failed = true;
+    acct.msg = "登录失败";
+    return acct;
   }
   L.ok(`登录成功：${lr.nickname} (userId=${lr.user_id})`);
+  acct.nickname = lr.nickname;
+  acct.remark = ac.remark || null;
 
   const web    = makeWebClient(lr.ticket, lr.user_id);
   const native = makeNativeClient(lr.ticket, lr.user_id);
@@ -352,17 +420,54 @@ async function processAccount(ac, index, stats) {
   L.act(`${ICON.sign} 签到...`);
   const sign = await signIn(web);
   if (sign?.code === 0) {
-    const award = sign?.data;
-    L.ok(`签到成功 ${award !== undefined && award !== null ? `(${award})` : ""}`);
+    L.ok(`打卡成功 (连续${sign.data ?? "?"}天)`);
+    acct.sign = { ok: true, days: sign.data };
   } else {
-    L.warn(`签到: ${sign?.msg || "已签到或失败"}`);
+    L.warn(`打卡: ${sign?.msg || "已签到或失败"}`);
+    acct.sign = { ok: false, msg: sign?.msg || "已签到或失败" };
   }
   await humanDelay("think");
+
+  // 【关键】signin 接口仅做打卡记录，不发放积分；
+  // 必须再调 completeTask(detail=8) 才真正到账签到积分（实测 +2 分）。
+  // 幂等安全：重复标记返回 {code:500,msg:"任务已完成!"}，不会重复发分。
+  L.act(`${ICON.coin} 领取签到积分...`);
+  const signMark = await completeTask(web, 8);
+  if (signMark?.code === 0) {
+    L.ok(`签到积分已到账 (+2积分)`);
+    acct.sign = { ...(acct.sign || {}), ok: true, award: "+2积分" };
+  } else if (/已完成/.test(signMark?.msg || "")) {
+    L.info(`今日签到积分已领取过`);
+    acct.sign = { ...(acct.sign || {}), ok: true, award: "今日已领" };
+  } else {
+    L.warn(`签到积分领取失败: ${signMark?.msg || "未知"}`);
+    acct.sign = { ...(acct.sign || {}), ok: false, msg: signMark?.msg || "领取失败" };
+  }
+  await humanDelay("think");
+
+  // 仅签到模式：CFMOTO_SIGN_ONLY=1 时跳过发帖/评论/点赞/抽奖等行为任务
+  if (process.env.CFMOTO_SIGN_ONLY === "1") {
+    L.info(`${ICON.skip} 仅签到模式，跳过任务与抽奖`);
+    const intgOnly = await integralInfo(web);
+    if (intgOnly) {
+      L.info(`当前积分: ${intgOnly.integralTotal} (可用: ${intgOnly.integralDisposable})`);
+      acct.integral = intgOnly.integralTotal;
+    }
+    L.ok(`${ICON.done} 账号${index} 处理完成`);
+    stats.ok++;
+    return acct;
+  }
 
   // 3. 任务列表
   L.act(`${ICON.task} 获取任务列表...`);
   const tasks = await taskList(web);
-  if (!tasks) { L.warn(`任务列表获取失败，跳过`); return; }
+  if (!tasks) {
+    L.warn(`任务列表获取失败，跳过后续任务`);
+    const intgT = await integralInfo(web);
+    if (intgT) acct.integral = intgT.integralTotal;
+    stats.ok++;
+    return acct;
+  }
 
   const taskMap = {};
   for (const group of tasks) {
@@ -397,6 +502,7 @@ async function processAccount(ac, index, stats) {
     const alreadyDone = task.state === 1;
     if (alreadyDone) {
       L.info(`${taskMeta.name} 已完成，跳过`);
+      acct.tasks[detail] = { name: taskMeta.name, success: 3, total: 3, skipped: true };
       continue;
     }
 
@@ -465,7 +571,7 @@ async function processAccount(ac, index, stats) {
       L.ok(`${taskMeta.name} 实际行为完成 ${successCount}/3 次（服务端自动推进）`);
     }
 
-    stats.tasks[detail] = { name: taskMeta.name, success: successCount, total: 3 };
+    acct.tasks[detail] = { name: taskMeta.name, success: successCount, total: 3 };
     await humanDelay("think");
   }
 
@@ -484,15 +590,17 @@ async function processAccount(ac, index, stats) {
         const tickets = detail.data.lottery_user_ticket_list || [];
         const ticketStr = tickets.map(t => t.ticket_code).join(", ");
         L.info(`${ICON.skip} 已参与，当前抽奖码：${ticketStr || "无"}`);
-        stats.lottery = { lotteryId: active.id, num: active.lottery_num, applied: true, tickets: ticketStr, alreadyApplied: true };
+        acct.lottery = { lotteryId: active.id, num: active.lottery_num, applied: true, tickets: ticketStr, alreadyApplied: true };
       } else {
         L.act(`${ICON.lottery} 参与抽奖 ${active.id}...`);
         const apply = await lotteryApply(native, active.id);
         if (apply?.code === 0 && apply?.data?.ticket_code) {
-          L.ok(`${ICON.prize} 参与成功！抽奖码：${apply.data.ticket_code} (开奖时间：${active.open_time})`);
-          stats.lottery = { lotteryId: active.id, num: active.lottery_num, ticket: apply.data.ticket_code, prize: detail?.data?.lottery_prize_list?.[0]?.prize_name || "?" };
+          const openAt = active.open_time || active.lottery_open_time || active.open_prize_time || active.apply_time_end || "未知";
+          L.ok(`${ICON.prize} 参与成功！抽奖码：${apply.data.ticket_code} (开奖/截止：${openAt})`);
+          acct.lottery = { lotteryId: active.id, num: active.lottery_num, ticket: apply.data.ticket_code, prize: detail?.data?.lottery_prize_list?.[0]?.prize_name || "?" };
         } else {
           L.warn(`${ICON.warn} 参与失败：${apply?.msg || "未知"}`);
+          acct.lottery = { lotteryId: active.id, num: active.lottery_num, failed: true, msg: apply?.msg || "未知" };
         }
       }
     } else {
@@ -508,12 +616,12 @@ async function processAccount(ac, index, stats) {
   const intg = await integralInfo(web);
   if (intg) {
     L.info(`当前积分: ${intg.integralTotal} (可用: ${intg.integralDisposable})`);
-    stats.integral = intg.integralTotal;
+    acct.integral = intg.integralTotal;
   }
 
   L.ok(`${ICON.done} 账号${index} 处理完成`);
   stats.ok++;
-  return stats.lottery || null;
+  return acct;
 }
 
 // ============= 推送 =============
@@ -522,7 +630,21 @@ function buildReport(results, stats) {
   report += `${ICON.line}\n`;
   report += `${ICON.acc} 账号 ${results.length} 个｜成功 ${stats.ok}｜失败 ${stats.fail}\n`;
 
-  const intgItems = results.filter(r => r.integral !== undefined);
+  const multi = results.length > 1;
+
+  // 签到（按账号，多账号时不再互相覆盖）
+  const signItems = results.filter(r => r.sign);
+  if (signItems.length) {
+    report += `\n${ICON.sign} 签到:\n`;
+    for (const r of signItems) {
+      const s = r.sign;
+      const daysTxt = s.days ? ` 连续${s.days}天` : "";
+      const txt = s.ok ? `${ICON.ok} 成功${daysTxt}${s.award ? ` ${s.award}` : ""}` : `${ICON.warn} ${s.msg}`;
+      report += `  账号${r.i}: ${txt}\n`;
+    }
+  }
+
+  const intgItems = results.filter(r => r.integral !== undefined && r.integral !== null);
   if (intgItems.length) {
     report += `\n${ICON.coin} 积分统计:\n`;
     for (const r of intgItems) {
@@ -530,12 +652,16 @@ function buildReport(results, stats) {
     }
   }
 
-  const taskKeys = Object.keys(stats.tasks || {});
-  if (taskKeys.length) {
+  // 任务（按账号）
+  const taskItems = results.filter(r => r.tasks && Object.keys(r.tasks).length);
+  if (taskItems.length) {
     report += `\n${ICON.task} 任务完成情况:\n`;
-    for (const tk of taskKeys) {
-      const t = stats.tasks[tk];
-      report += `  ${t.name}: ${t.success}/${t.total}次\n`;
+    for (const r of taskItems) {
+      if (multi) report += `  账号${r.i}:\n`;
+      for (const tk of Object.keys(r.tasks)) {
+        const t = r.tasks[tk];
+        report += `${multi ? "    " : "  "}${t.name}: ${t.skipped ? "已完成" : `${t.success}/${t.total}次`}\n`;
+      }
     }
   }
 
@@ -549,7 +675,7 @@ function buildReport(results, stats) {
       } else if (lt.ticket) {
         report += `  账号${r.i}: ✅ 参与成功 第${lt.num}期 抽奖码:${lt.ticket} 奖品:${lt.prize || "?"}\n`;
       } else if (lt.lotteryId) {
-        report += `  账号${r.i}: ⚠️ 参与失败 第${lt.num}期\n`;
+        report += `  账号${r.i}: ${ICON.warn} 参与失败 第${lt.num}期${lt.msg ? ` (${lt.msg})` : ""}\n`;
       }
     }
   }
@@ -566,13 +692,6 @@ function buildReport(results, stats) {
   return report;
 }
 
-async function sendPush(title, content) {
-  const pk = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
-  if (!pk) return;
-  try { await axios.post("http://www.pushplus.plus/send", { token: pk, title, content }, { timeout: 30000 }); }
-  catch (e) { L.warn(`${ICON.warn} 通知发送失败（不影响执行结果）: ${e.message}`); }
-}
-
 // ============= 主入口 =============
 async function main() {
   console.log(`${ICON.app} ${APP_NAME}`);
@@ -585,8 +704,19 @@ async function main() {
   for (let i = 0; i < accounts.length; i++) {
     const ac = accounts[i];
     try {
-      const lotInfo = await processAccount(ac, i + 1, stats);
-      results.push({ i: i + 1, phone: ac.phone, status: "ok", lottery: lotInfo });
+      const acct = (await processAccount(ac, i + 1, stats)) || {};
+      results.push({
+        i: i + 1,
+        phone: ac.phone,
+        status: acct.failed ? "error" : "ok",
+        msg: acct.msg || "",
+        nickname: acct.nickname || "",
+        remark: acct.remark || "",
+        integral: acct.integral,
+        sign: acct.sign,
+        tasks: acct.tasks || {},
+        lottery: acct.lottery || null,
+      });
     } catch (e) {
       L.fail(`${ICON.acc} 账号${i + 1}(${ac.phone})异常: ${e.message}`);
       results.push({ i: i + 1, phone: ac.phone, status: "error", msg: e.message });
@@ -601,9 +731,37 @@ async function main() {
   sectionLine("执行完成", `${stats.ok}/${accounts.length}成功`);
   L.info(`成功 ${stats.ok} 个｜失败 ${stats.fail} 个`);
 
-  const report = buildReport(results, stats);
-  console.log(`\n${report}`);
-  await sendPush(APP_NAME, report);
+  // ============= 标准推送 (std_report) =============
+  const stdAccounts = results.map(r => {
+    const tasks = Object.keys(r.tasks || {}).length
+      ? Object.values(r.tasks).map(t => ({ name: t.name, status: t.skipped ? "已完成" : `${t.success}/${t.total}次` }))
+      : [];
+    let sign = "";
+    if (r.sign) {
+      const s = r.sign;
+      const days = s.days ? `连续${s.days}天` : "";
+      const award = s.award ? ` ${s.award}` : "";
+      sign = s.ok ? `成功${days}${award}` : (s.msg || "已签到");
+    }
+    let lottery = "";
+    if (r.lottery) {
+      const lt = r.lottery;
+      if (lt.alreadyApplied)     lottery = `已参与 第${lt.num}期 抽奖码:${lt.tickets || "无"}`;
+      else if (lt.ticket)        lottery = `参与成功 第${lt.num}期 抽奖码:${lt.ticket} 奖品:${lt.prize || "?"}`;
+      else if (lt.lotteryId)     lottery = `参与失败 第${lt.num}期${lt.msg ? " (" + lt.msg + ")" : ""}`;
+    }
+    return {
+      idx: r.i,
+      name: r.remark || r.nickname || r.phone,
+      sign,
+      earned: (r.sign && r.sign.award) ? r.sign.award : "",
+      total: r.integral != null ? String(r.integral) : "",
+      streak: (r.sign && r.sign.days != null) ? r.sign.days : "",
+      tasks,
+      lottery,
+    };
+  });
+  await stdReport(APP_NAME, stdAccounts);
 
   console.log(`\n${ICON.app} ${APP_NAME},结束`);
 }

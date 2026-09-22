@@ -6,6 +6,8 @@ AppID: wx975d6360e1ad27b6
 签到: 7天周期，每天10积分，满7天额外20积分，连续签到有额外奖励
 """
 
+# ==================== 推送 ====================
+
 import os
 import sys
 import time
@@ -13,6 +15,7 @@ import json
 import random
 import logging
 import hashlib
+import re
 from _log_tee import enable as _enable_tee
 
 
@@ -27,6 +30,45 @@ except ImportError:
         print(f'⚠️ 推送模块未加载')
         return False
 # ========== 推送通知结束 ==========
+try:
+    from std_report import report as _std_report
+    from std_report import extract_points
+except ImportError:
+    _std_report = None
+    extract_points = None
+_rows = []
+
+# 抽奖奖励通用扫描器: 递归拍平响应, 抓取 lottery/draw/prize/转盘 等字段
+def _dig_lottery(obj):
+    if obj is None:
+        return ""
+    flat = {}
+    def _f(o, pre):
+        if isinstance(o, list):
+            for i, v in enumerate(o):
+                _f(v, pre + "." + str(i) if pre else str(i))
+        elif isinstance(o, dict):
+            for k, v in o.items():
+                nk = pre + "." + str(k) if pre else str(k)
+                if isinstance(v, (dict, list)):
+                    _f(v, nk)
+                else:
+                    flat[str(nk).lower()] = v
+        elif pre:
+            flat[pre] = o
+    _f(obj, "")
+    lottery_keys = [k for k in flat.keys() if re.search(r'lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift', k)]
+    out = []
+    for k in lottery_keys:
+        v = flat[k]
+        if v is None:
+            continue
+        if isinstance(v, (dict, list)):
+            v = json.dumps(v, ensure_ascii=False)
+        s = str(v)
+        if s and s != '{}' and s != '[]':
+            out.append(s)
+    return '｜'.join(out)
 
 
 try:
@@ -450,7 +492,7 @@ class LianjiaClient:
 
 
 # ===== 签到主流程 =====
-def run_one_account(client, remark=''):
+def run_one_account(client, remark='', row=None):
     """单账号签到"""
     prefix = f'[{remark}]' if remark else ''
     log.info(f'{prefix} 开始签到 (uid={client.uid})')
@@ -459,11 +501,19 @@ def run_one_account(client, remark=''):
     info = client.get_sign_info()
     if not info or info.get('code') != 0:
         log.error(f'{prefix} 查询签到状态失败: {info}')
+        if row is not None:
+            row['sign'] = '查询签到状态失败'
         return False
 
     sign_data = info.get('data', {})
     today_signed = sign_data.get('today_has_sign_in', False)
     daily_info = sign_data.get('daily_sign_in_info', {})
+
+    # 连签 (从签到状态提取, 已签分支用)
+    if row is not None:
+        _consec_info = sign_data.get('consecutive_days')
+        if _consec_info is not None:
+            row['streak'] = str(_consec_info)
 
     # 签到周期信息
     re_sign_flag = sign_data.get('re_sign_in_flag', 0)  # 补签类型: 0无补签 2可补签
@@ -482,6 +532,8 @@ def run_one_account(client, remark=''):
         result = client.do_sign(sign_in_type=1)
         if not result or result.get('code') != 0:
             log.error(f'{prefix} 签到失败: {result}')
+            if row is not None:
+                row['sign'] = '签到失败'
             return False
 
         do_data = result.get('data', {})
@@ -491,10 +543,19 @@ def run_one_account(client, remark=''):
         is_full = do_data.get('is_full_signin', False)
 
         log.info(f'{prefix} 签到成功! 连续{consecutive}天, 获得积分: {reward_val}')
-        if is_full:
-            log.info(f'{prefix} 满7天额外奖励20积分!')
+        if row is not None:
+            row['sign'] = f'签到成功, 连续{consecutive}天'
+            row['streak'] = str(consecutive)
+            if str(reward_val) not in ('?', '0'):
+                row['earned'] = f'今日+{reward_val}积分'
+            if is_full:
+                row['earned'] = (row['earned'] + ' +20积分(满7天)' if row['earned'] else '今日+20积分(满7天)')
+            row['lottery'] = _dig_lottery(do_data)
     else:
         log.info(f'{prefix} 今日已签到，跳过')
+        if row is not None:
+            row['sign'] = '今日已签到'
+            row['lottery'] = _dig_lottery(sign_data)
 
     # 3. 补签（如果有补签卡且本周有漏签）
     if resignin_cards > 0 and re_sign_flag == 2:
@@ -521,6 +582,11 @@ def run_one_account(client, remark=''):
         score = u.get('score', '0')
         growth = u.get('growthvalue', 0)
         log.info(f'{prefix} 用户: {nickname} | 等级: {level} | 积分: {score} | 成长值: {growth}')
+        if row is not None:
+            if nickname:
+                row['name'] = str(nickname)
+            if str(score) not in ('', '0'):
+                row['total'] = str(score)
 
     # 5. 查询账户信息
     time.sleep(random.uniform(0.3, 0.8))
@@ -560,8 +626,10 @@ def main():
         for i, a in enumerate(manual_accounts):
             if i > 0:
                 time.sleep(random.uniform(3, 8))
+            _row = {'idx': i + 1, 'name': a.get('remark', ''), 'sign': '', 'earned': '', 'total': '', 'streak': '', 'lottery': ''}
+            _rows.append(_row)
             client = LianjiaClient(a['uid'], a['skey'], a.get('openid', ''))
-            run_one_account(client, a.get('remark', ''))
+            run_one_account(client, a.get('remark', ''), row=_row)
 
     elif WCS_AUTH:
         # WCS 自动登录模式
@@ -581,12 +649,15 @@ def main():
             user_key = acc.get('userKey', openid)
             remark = acc.get('displayName', openid[:8] if openid else f'acct_{i}')
 
+            _row = {'idx': i + 1, 'name': remark, 'sign': '', 'earned': '', 'total': '', 'streak': '', 'lottery': ''}
+            _rows.append(_row)
+
             # 尝试读 token 缓存
             cached = get_cached_token(user_key)
             if cached:
                 log.info(f'[{remark}] 命中 token 缓存，跳过登录')
                 client = LianjiaClient(cached['uid'], cached['skey'], cached.get('openid', openid))
-                run_one_account(client, remark)
+                run_one_account(client, remark, row=_row)
                 continue
 
             # WCS 登录
@@ -597,9 +668,10 @@ def main():
                                        login_info.get('openid', openid))
                 if login_info.get('isnew'):
                     log.info(f'[{remark}] 新用户注册成功!')
-                run_one_account(client, remark)
+                run_one_account(client, remark, row=_row)
             else:
                 log.error(f'[{remark}] 登录失败')
+                _row['sign'] = '登录失败'
 
     else:
         print('=' * 50)
@@ -623,6 +695,12 @@ def main():
         print('  - 有补签卡可补签漏签天数')
         print()
 
+    if _std_report and _rows:
+        try:
+            _std_report('联家超市签到', _rows)
+        except Exception as _e:
+            print(f'[push] 异常: {_e}')
+
 
 if __name__ == '__main__':
     import io
@@ -641,10 +719,4 @@ if __name__ == '__main__':
         _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
-        try:
-            push_notify('lj_sign 签到结果', _logs[-2000:])
-        except:
-            pass
-
-
 

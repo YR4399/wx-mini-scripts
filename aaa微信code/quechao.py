@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+
+def send_push(title, content):
+    return False
 # -*- coding: utf-8 -*-
 
 """
@@ -14,6 +18,7 @@ import http.client
 import random
 import time
 import os
+import re
 from _log_tee import enable as _enable_tee
 
 
@@ -28,6 +33,10 @@ except ImportError:
         print(f'⚠️ 推送模块未加载')
         return False
 # ========== 推送通知结束 ==========
+try:
+    from std_report import report as _std_report
+except ImportError:
+    _std_report = None
 
 
 # ==================== 配置区域（从环境变量读取） ====================
@@ -70,9 +79,33 @@ def log(msg):
     print(msg)
 
 
+_cur_row = None
+_rows = []
 def add_message(msg):
-    global message_lines
+    global message_lines, _cur_row
     message_lines.append(msg)
+    if _cur_row is None:
+        return
+    try:
+        if msg.startswith('用户：'):
+            if not _cur_row.get('name'):
+                _cur_row['name'] = msg[3:].split('(')[0]
+        elif msg.startswith('签到：'):
+            _cur_row['sign'] = msg[3:]
+            m = re.search(r'获得(\d+)巢币', msg)
+            if m:
+                _cur_row['earned'] = f'今日+{m.group(1)}巢币'
+        elif msg.startswith('当前巢币：'):
+            _cur_row['total'] = msg[5:]
+        elif msg.startswith('连签：'):
+            _cur_row['streak'] = msg[3:]
+        elif msg.startswith(('通用任务：', '活动任务：')):
+            k, v = msg.split('：', 1)
+            _cur_row.setdefault('tasks', []).append({'name': k, 'status': v})
+        elif msg.startswith('抽奖：'):
+            _cur_row['lottery'] = msg[3:]
+    except Exception:
+        pass
 
 
 def ws_post(path, payload):
@@ -219,7 +252,8 @@ def do_sign(token):
             log(f'  💰 获得巢币：{d.get("sign_points")} 个')
             if d.get('goods_name'):
                 log(f'  🎁 额外奖励：{d["goods_name"]}')
-            add_message(f'签到：第{d.get("sign_day")}天，获得{d.get("sign_points")}巢币')
+            add_message(f'签到：第{d.get("sign_day")}天，获得{d.get("sign_points")}巢币' + (f'，{d["goods_name"]}' if d.get('goods_name') else ''))
+            add_message(f'连签：{d.get("sign_day")}天')
         else:
             errmsg = data.get('errmsg', '未知错误')
             if any(k in errmsg for k in ['已签到', '已经签到', '重复签到']):
@@ -410,7 +444,8 @@ def do_lucky_draw(token):
             log('🎁 奖品列表：')
             for idx, p in enumerate(prizes):
                 log(f'  {idx + 1}. {p["title"]}' + (f' ({p["value"]})' if p['value'] else ''))
-            add_message(f'抽奖：{draw_count}次，获得{total_coins}巢币')
+            prize_detail = '；'.join(f'{p["title"]}' + (f'({p["value"]})' if p['value'] else '') for p in prizes)
+            add_message(f'抽奖：{draw_count}次，获得{total_coins}巢币｜{prize_detail}')
         else:
             log('ℹ️ 暂无抽奖次数')
             add_message('抽奖：暂无次数')
@@ -434,10 +469,12 @@ def get_user_balance(token):
 
 # ==================== 主流程 ====================
 
-def run_account(openid):
+def run_account(openid, idx=1):
     """执行单个账号的签到流程"""
-    global message_lines
+    global message_lines, _cur_row
     message_lines = []
+    _cur_row = {'idx': idx, 'name': openid[:12], 'sign': '', 'earned': '', 'total': '', 'streak': '', 'tasks': [], 'lottery': ''}
+    _rows.append(_cur_row)
 
     log(f'\n{"=" * 50}')
     log(f'👤 账号：{openid[:15]}...')
@@ -447,6 +484,7 @@ def run_account(openid):
     code = get_auth_code(openid)
     if not code:
         log('[终止] 获取授权码失败')
+        _cur_row['sign'] = '获取授权码失败'
         return
     random_wait(1000, 2000)
 
@@ -454,6 +492,7 @@ def run_account(openid):
     token = get_nestle_token(code)
     if not token:
         log('[终止] 获取令牌失败')
+        _cur_row['sign'] = '获取令牌失败'
         return
     random_wait(1000, 2000)
 
@@ -495,7 +534,13 @@ def main():
         return
     for idx, openid in enumerate(openids):
         log(f'\n\n========== 开始处理第 {idx+1}/{len(openids)} 个账号 ==========')
-        run_account(openid)
+        run_account(openid, idx + 1)
+
+    if _std_report and _rows:
+        try:
+            _std_report('雀巢会员签到', _rows)
+        except Exception as _e:
+            print(f'[push] 异常: {_e}')
 
 
 if __name__ == '__main__':
@@ -515,10 +560,5 @@ if __name__ == '__main__':
         _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
-        try:
-            push_notify('quechao 签到结果', _logs[-2000:])
-        except:
-            pass
 
-
-
+pass  # 旧推送已移除(改用 std_report)

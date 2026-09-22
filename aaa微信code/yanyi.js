@@ -1,8 +1,50 @@
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '妍伊';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 /*
 @Description: 妍伊签到+积分任务
 cron: 30 8 * * *
 */
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+require("https").globalAgent.options.rejectUnauthorized = false;
 const { Env } = require("../tools/env.js");
 const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("妍伊签到");
@@ -98,7 +140,7 @@ class Task {
             L.info("账号[" + this.index + "] 使用缓存 token");
             const valid = await this.getUserInfo();
             if (valid) return true;
-            L.fail("账号[" + this.index + "] 缓存 token 失效，重新登录");
+            L.warn("账号[" + this.index + "] 缓存 token 失效，重新登录");
             this.token = null;
         }
 
@@ -125,7 +167,7 @@ class Task {
     // ========== 用户信息 ==========
     async getUserInfo() {
         try {
-            const resp = await axios.post(`${API_BASE}/p/user/userInfo`, {}, {
+            const resp = await axios.get(`${API_BASE}/p/user/userInfo`, {
                 headers: this.getHeaders(), timeout: 15000, validateStatus: () => true
             });
             return resp.data && resp.data.userId;
@@ -166,7 +208,7 @@ class Task {
             L.info("账号[" + this.index + "] 今日已签到");
             return 0;
         }
-        L.fail("账号[" + this.index + "] 签到失败(" + resp.status + "): " + msg + "");
+        L.error("账号[" + this.index + "] 签到失败(" + resp.status + "): " + msg + "");
         return 0;
     }
 
@@ -178,6 +220,10 @@ class Task {
         if (resp.data?.success) return resp.data.data || [];
         return [];
     }
+
+
+
+
 
     // ========== 主流程 ==========
     async run() {
@@ -191,7 +237,7 @@ class Task {
         const signReward = await this.sign();
 
         // 查询任务
-        let tasks = []; try { tasks = await this.getTaskList(); } catch (e) { L.fail("账号[" + this.index + "] 获取任务列表失败: " + e.response?.status || e.message + ""); }
+        let tasks = []; try { tasks = await this.getTaskList(); } catch (e) { L.warn("账号[" + this.index + "] 获取任务列表失败: " + (e.response?.status || e.message || String(e))); }
         if (tasks.length > 0) {
             L.info("账号[" + this.index + "] 发现 " + tasks.length + " 个任务");
         }
@@ -211,7 +257,7 @@ $.userIdx = 0;
     L.info("共找到" + accounts.length + "个账号");
 
     for (let i = 0; i < accounts.length; i++) {
-        try { await new Task(accounts[i], i + 1).run(); } catch (e) { L.fail("账号[" + i+1 + "] 异常: " + e.response?.status || e.message || e + ""); }
+        try { await new Task(accounts[i], i + 1).run(); } catch (e) { L.error("账号[" + (i + 1) + "] 异常: " + (e.response?.status || e.message || String(e))); }
         if (i < accounts.length - 1) await $.wait(3000 + Math.random() * 5000);
     }
 })().catch((e) => $.log(e.message || e))
@@ -219,6 +265,7 @@ $.userIdx = 0;
         try {
             const _logs = $.notifyStr || [];
             if (_logs.length > 0) await sendPushNotify("妍伊签到", _logs.join("\n"));
+    if (typeof logPoints === 'function') logPoints(null, pointsBefore,"妍伊签到", this.index, "签到成功");
         } catch (_) {}
         $.done && $.done();
     });

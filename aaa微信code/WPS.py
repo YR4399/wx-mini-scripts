@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+
+# ==================== 推送 ====================
+from std_report import report
 # -*- coding: utf-8 -*-
 """
 1、安装python依赖loguru
@@ -29,13 +33,7 @@ from loguru import logger
 # 禁用 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 加载 notify 模块
-try:
-    from _push_helper import send_push_notify as send_notify
-except ImportError:
-    logger.warning("未检测到 notify.py，将无法推送消息")
-    send_notify = None
-    from _push_helper import send_push_notify as send_notify
+# 推送统一引擎（std_report）
 
 # 全局配置
 CFG_THREADS = int(os.getenv('WPS_CONCURRENCY', 3))  # 默认3线程并发
@@ -1225,6 +1223,62 @@ def print_summary_table(results):
     # 推送消息包含明细
     return "\n".join(msg_lines) + "\n" + "\n".join(detail_lines)
 
+def _to_rows(results):
+    """将 WPSUser 结果汇总转换为 std_report 标准账号行"""
+    _rows = []
+    for i, r in enumerate(results or [], 1):
+        modules = r.get('modules', {}) or {}
+        tc = modules.get('task_center', {}) or {}
+        fg = modules.get('fragment', {}) or {}
+        at = modules.get('assistant', {}) or {}
+        pc = modules.get('pc_task_center', {}) or {}
+        ap = modules.get('applet', {}) or {}
+
+        sign_parts = []
+        if tc.get('sign'):
+            sign_parts.append('WPS任务中心✅')
+        if fg.get('sign'):
+            sign_parts.append('天天领福利✅')
+        if ap.get('sign'):
+            sign_parts.append('小程序✅')
+        sign = '、'.join(sign_parts) if sign_parts else (r.get('status') or '未签到')
+
+        task_parts = []
+        if tc.get('task'):
+            task_parts.append(f"任务中心{tc.get('task')}个")
+        if at.get('task'):
+            task_parts.append(f"办公助手{at.get('task')}个")
+        if pc.get('task'):
+            task_parts.append(f"新版任务中心{pc.get('task')}个")
+        tasks = '；'.join(task_parts) if task_parts else None
+
+        lottery_parts = []
+        if tc.get('lottery'):
+            lottery_parts.append(f"任务中心{tc.get('lottery')}次")
+        if fg.get('lottery'):
+            lottery_parts.append(f"天天领福利{fg.get('lottery')}次")
+        if at.get('lottery'):
+            lottery_parts.append(f"办公助手{at.get('lottery')}次")
+        if pc.get('lottery'):
+            lottery_parts.append(f"新版任务中心{pc.get('lottery')}次")
+        lottery = '；'.join(lottery_parts) if lottery_parts else None
+
+        _score = r.get('score')
+        total = str(_score) if _score not in (None, '-', '') else None
+
+        _rows.append({
+            'idx': i,
+            'name': r.get('name'),
+            'sign': sign,
+            'earned': None,
+            'total': total,
+            'streak': None,
+            'tasks': tasks,
+            'lottery': lottery,
+            'taskEarned': None,
+        })
+    return _rows
+
 def main():
     # 1. 读取环境
     env_ck = os.getenv('WPS_TASK_CK', '')
@@ -1282,13 +1336,12 @@ def main():
     # results.sort(key=lambda x: x['name'])
     
     notify_content = print_summary_table(results)
-    
-    if send_notify and notify_content:
-        send_notify("WPS每日任务PRO", notify_content)
-    elif not send_notify:
-        logger.info("未配置推送，跳过")
-    else:
-        logger.info("无有效结果，跳过推送")
+
+    try:
+        if report:
+            report('WPS每日任务', _to_rows(results))
+    except Exception as e:
+        logger.error(f"推送失败: {e}")
 
 if __name__ == '__main__':
     main()

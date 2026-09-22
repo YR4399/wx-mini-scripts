@@ -4,18 +4,20 @@
  * 框架: CRMEB (authori-zation 头 / api/front)
  * AppID: wx9fd5cf7e1f36206a
  * API: https://front-api.fanglin.vip/api/front
- * cron: 30 8 * * *
+ * cron: 28 19 * * *
  *
- * 2026-08-04 重大修复: 签到接口用错!
- *   - POST /user/sign/user  = 查询签到状态 (isDaySign=false 只是"今天还没签", 不是失败)
- *   - GET  /user/sign/integral = 真正执行签到 (CRMEB Java 版源码确认, 返回 {day,integral,title})
- *   - 重复签到: HTTP 200 + code:500 "今日已签到。不可重复签到"
+ * ⚠️ 2026-09-17 契约变更（服务端 8/31 前后改版，导致 8/31~9/16 全部空签）:
+ *   - 新版真正签到接口: GET  /user/sign/integral
+ *       未签到 -> code 200 + data{id,title,day,integral}，调用即完成签到并结算积分
+ *       已签到 -> code 500 "今日已签到。不可重复签到"
+ *   - 旧接口 POST /user/sign/user 现在只是签到状态查询（回 isDaySign/signNum），
+ *     无论怎么调用都不会产生签到记录，仅在新接口 404/405 时作为兜底。
  *
  * 环境变量（统一）:
  *   wx_opinion    - OpenID，多账号用 & 分隔
  *   wx_server_url - WCS 服务地址
  *   wx_auth       - WCS 认证密钥
- *   PUSH_PLUS_TOKEN / PLUSPLUS_TOKEN - PushPlus 推送（可选）
+ *   推送: 已迁移至 std_report (钉钉机器人)
  */
 
 // 清除容器内常驻坏代理
@@ -24,6 +26,7 @@ for (const k of ['HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROX
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const { report } = require("./std_report");
 
 // ==================== 常量 ====================
 const wxOpinion = process.env.wx_opinion || "";
@@ -128,50 +131,41 @@ async function getSignConfig(token) {
   return [];
 }
 
-// 签到: GET /user/sign/integral 执行签到 (CRMEB Java 版真正签到接口, 2026-08-04 源码确认)
-// POST /user/sign/user 只是查询状态 (isDaySign=false = 今天还没签, 不是失败!)
+// 签到: 2026-09-17 起真正生效的是 GET /user/sign/integral
+//   未签到 -> code 200 + data{day,integral}（调用即签到并结算积分）
+//   已签到 -> code 500 "今日已签到。不可重复签到"
 async function doSign(token) {
-  // 网络抖动小重试
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await axios.get(`${API_BASE}/user/sign/integral`,
-        { headers: hdrs(token), timeout: 15000, proxy: false });
-      return res.data; // 成功: {code:200, data:{day,integral,title}} | 已签: {code:500, message:"今日已签到。不可重复签到"}
-    } catch (e) {
-      if (e.response?.data) return e.response.data;
-      if (attempt === 0) { await new Promise(r => setTimeout(r, 3000)); continue; }
-      return { code: -1, message: e.message };
-    }
+  try {
+    const res = await axios.get(`${API_BASE}/user/sign/integral`, { headers: hdrs(token), timeout: 15000, proxy: false });
+    return res.data;
+  } catch (e) {
+    const st = e.response?.status;
+    const d = e.response?.data;
+    // 服务端若回滚旧契约（路由不存在），退回 POST /user/sign/user
+    if (st === 404 || st === 405 || /not supported|Not Found/i.test(d?.message || "")) return await doSignLegacy(token);
+    if (d) return d;
+    return { code: -1, message: e.message };
   }
 }
 
-// 签到后查询用户签到状态 (POST /user/sign/user 是查询接口)
-async function getSignStatus(token) {
+// 旧契约兜底 + 签到状态查询（signNum/sumSignDay/isDaySign）
+async function doSignLegacy(token) {
   try {
     const res = await axios.post(`${API_BASE}/user/sign/user`,
       { all: 0, integral: 0, sign: 1 },
       { headers: hdrs(token), timeout: 15000, proxy: false });
-    return res.data?.data || null; // {signNum,sumSignDay,isDaySign,isYesterdaySign,integral}
-  } catch (e) { return null; }
+    return res.data;
+  } catch (e) {
+    if (e.response?.data) return e.response.data;
+    return { code: -1, message: e.message };
+  }
 }
 
-// 判定本次签到是否真实生效：接口返回 200 且有签到配置奖励，或服务端明确提示已签
+// 判定本次签到是否真实生效
 function isSigned(r) {
-  if (r?.code === 200 && r.data && (r.data.day || r.data.integral || r.data.isDaySign === true)) return true;
-  if (r && /已签|重复|已经签到/i.test(r.message || "")) return true;
-  return false;
-}
-
-// 节日奖励发放检查 (HAR 2026-08-03: GET /festival/checkAndGrant 无参数, data 非 null 表示有节日奖励发放)
-async function checkFestival(token) {
-  try {
-    const res = await axios.get(`${API_BASE}/festival/checkAndGrant`, { headers: hdrs(token), timeout: 15000, proxy: false });
-    if (res.data?.code === 200 && res.data.data) {
-      L.ok(`🎉 节日奖励发放: ${JSON.stringify(res.data.data).slice(0, 80)}`);
-      return true;
-    }
-    L.info("节日奖励: 今日无发放");
-  } catch (e) {}
+  if (r?.code === 200 && r.data) return true;                              // 新版: 返回当天奖励配置=签到完成
+  if (r?.code === 200 && r.data?.isDaySign === true) return true;          // 旧版: 明确 isDaySign
+  if (r && /已签|重复|today|已经签到/i.test(r.message || "")) return true;  // 服务端提示今日已签到
   return false;
 }
 
@@ -207,6 +201,9 @@ async function processAccount(openid, idx) {
   // 3) 签到
   L.act("执行签到...");
   const integralBefore = user?.integral ?? null;
+  let signTxt = null;
+  let earnPts = null;
+  let sharePts = 0;
   let r = await doSign(token);
   let signed = isSigned(r);
 
@@ -228,24 +225,21 @@ async function processAccount(openid, idx) {
   }
 
   if (signed) {
-    // 本次新签: r.data 是签到奖励配置 {day, integral, title}; 已签: r.data=null
-    const reward = (r?.code === 200 && r.data) ? (r.data.integral || 0) : 0;
-    const freshSign = reward > 0;
-    // 查签到状态(连续/累计/当前积分)
-    const st = await getSignStatus(token);
-    const signNum = st?.signNum ?? null;
-    const sumSignDay = st?.sumSignDay ?? null;
-    const u2 = await getUser(token);
-    const integralAfter = u2?.integral ?? st?.integral ?? integralBefore;
-    if (freshSign) {
-      L.ok(`签到成功 | 第${r.data.day}天 +${reward}分 | 连签 ${signNum} 天 | 累计 ${sumSignDay} 天 | 当前积分 ${integralAfter}`);
-    } else {
-      L.info(`今日已签到 | 连签 ${signNum} 天 | 累计 ${sumSignDay} 天 | 当前积分 ${integralAfter}`);
+    const d = r.data || {};
+    // 新版签到接口只回当天奖励配置，连签天数需要状态接口补
+    if (d.signNum == null) {
+      const st = await doSignLegacy(token);
+      if (st?.data) Object.assign(d, st.data);
     }
-
-    // ========== 节日奖励发放检查 (HAR 2026-08-03) ==========
-    await checkFestival(token);
-    await new Promise(r => setTimeout(r, 500));
+    const u2 = await getUser(token);
+    const integralAfter = u2?.integral ?? integralBefore;
+    if (integralBefore != null && integralAfter > integralBefore) {
+      L.ok(`签到成功 | 连签 ${d.signNum} 天 | 累计 ${d.sumSignDay} 天 | +${integralAfter - integralBefore}分 (当前 ${integralAfter})`);
+      signTxt = "签到成功"; earnPts = integralAfter - integralBefore;
+    } else {
+      L.info(`今日已签到 | 连签 ${d.signNum} 天 | 当前积分 ${integralAfter ?? d.integral}`);
+      signTxt = "今日已签到"; earnPts = null;
+    }
 
     // ========== 分享奖励领取 (HAR 2026-08-01 抓包: sharePoster → getRemindListUser → remindRead 领积分) ==========
     try {
@@ -281,21 +275,20 @@ async function processAccount(openid, idx) {
           const u3 = await getUser(token);
           L.ok(`分享奖励共 +${totalGot}分 | 当前积分 ${u3?.integral ?? "?"}`);
         }
+        sharePts = totalGot;
       }
     } catch (e) {
       L.warn(`分享奖励流程异常: ${e.message}`);
     }
 
     const uFinal = await getUser(token);
-    return { status: "ok", integral: uFinal?.integral ?? integralAfter ?? st?.integral, signNum: signNum ?? st?.signNum ?? null };
+    return { status: "ok", integral: uFinal?.integral ?? integralAfter ?? d.integral, signNum: d.signNum, sign: signTxt, earned: earnPts, sharePts };
   } else {
     const msg = r?.message || "签到未生效";
     L.fail(`签到失败: ${msg}（可能已签/时区未跨天，继续分享奖励）`);
     // 签到失败也继续分享奖励（分享每天独立可做）
     try {
-      L.act("执行节日 + 分享 + 领取奖励...");
-      await checkFestival(token);
-      await new Promise(r => setTimeout(r, 500));
+      L.act("执行分享 + 领取奖励...");
       try {
         await axios.post(`${API_BASE}/remind/sharePoster`, {}, { headers: hdrs(token), timeout: 15000, proxy: false });
       } catch (e) {}
@@ -325,19 +318,13 @@ async function processAccount(openid, idx) {
           const u3 = await getUser(token);
           L.ok(`分享奖励共 +${totalGot}分 | 当前积分 ${u3?.integral ?? "?"}`);
         }
+        sharePts = totalGot;
       }
     } catch (e) {
       L.warn(`分享奖励流程异常: ${e.message}`);
     }
-    return { status: "ok", integral: null, signNum: null, msg: "签到未生效(可能已签)但分享已处理" };
+    return { status: "error", integral: null, signNum: null, msg: `签到未生效(${msg})，分享已处理`, sign: "签到失败", earned: null, sharePts };
   }
-}
-
-// ==================== 推送 ====================
-async function sendPush(title, content) {
-  const pk = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
-  if (!pk) return;
-  try { await axios.post("http://www.pushplus.plus/send", { token: pk, title, content }, { proxy: false }); } catch (e) {}
 }
 
 // ==================== 主入口 ====================
@@ -362,9 +349,19 @@ async function main() {
   }
 
   const ok = results.filter(r => r.status === "ok").length;
-  await sendPush("方林会员签到",
-    `共 ${accounts.length} 账号，成功 ${ok} 个\n` +
-    results.map(r => `账号${r.i}: ${r.status === "ok" ? `✅ ${r.msg || ("积分" + (r.integral ?? "-"))}` : `❌ ${r.msg || "失败"}`}`).join("\n"));
+
+  const _rows = results.map(r => ({
+    idx: r.i,
+    name: r.i != null ? '账号' + r.i : null,
+    sign: r.status === "error" ? "失败" : (r.sign || "未知"),
+    earned: r.earned != null ? `+${r.earned}分` : null,
+    total: r.integral != null ? r.integral : null,
+    streak: r.signNum != null ? r.signNum : null,
+    tasks: null,
+    lottery: null,
+    taskEarned: r.sharePts ? `分享+${r.sharePts}分` : null,
+  }));
+  report("方林会员签到", _rows);
 
   console.log(`\n📊 完成: ${ok}/${accounts.length} 账号`);
   console.log(`🔔 方林会员,结束`);

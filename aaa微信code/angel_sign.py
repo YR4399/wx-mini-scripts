@@ -1,4 +1,6 @@
 # ========== SSL和代理修复 ==========
+
+
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -46,6 +48,44 @@ except ImportError:
         print(f'⚠️ 推送模块未加载')
         return False
 # ========== 推送通知结束 ==========
+try:
+    from std_report import report as _std_report, extract_points
+except ImportError:
+    _std_report = None
+    extract_points = None
+
+
+def _dig_lottery(obj):
+    """从签到/抽奖接口返回体里扫描 lottery/draw/prize/转盘 等字段，拼接详情。"""
+    if not isinstance(obj, dict):
+        return ""
+    hits = []
+
+    def walk(o, d):
+        if d > 5 or not isinstance(o, dict) or len(hits) > 6:
+            return
+        for k, v in o.items():
+            lk = str(k).lower()
+            if any(s in lk for s in ("lottery", "draw", "prize", "转盘", "raffle", "turntable")):
+                if v is None or v == "":
+                    continue
+                if isinstance(v, dict):
+                    t = " ".join(str(x) for x in (v.get("title"), v.get("name"),
+                                                  v.get("desc"), v.get("prizeName"), v.get("prize"))
+                                if x not in (None, ""))
+                    if t:
+                        hits.append(t)
+                else:
+                    hits.append(str(v))
+            elif isinstance(v, dict):
+                walk(v, d + 1)
+            elif isinstance(v, list):
+                for it in v:
+                    if isinstance(it, dict):
+                        walk(it, d + 1)
+
+    walk(obj, 0)
+    return " ｜ ".join(hits)
 
 
 # ==== 自动安装依赖 ====
@@ -428,31 +468,71 @@ def parse_manual_account():
 
 # ==== 签到主流程 ====
 
-def run_one(client):
-    """对一个账号执行签到，返回 True/False"""
+
+# ---------- 本地累计积分（接口无总积分字段，本机向前累计每日签到获得积分）----------
+_POINTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "angel_points_cache.json")
+def _read_points():
+    try:
+        if not os.path.exists(_POINTS_FILE): return {}
+        with open(_POINTS_FILE, encoding="utf-8") as f: return json.load(f) or {}
+    except Exception: return {}
+def _write_points(c):
+    try:
+        with open(_POINTS_FILE, "w", encoding="utf-8") as f: json.dump(c, f, ensure_ascii=False, indent=2)
+    except Exception as e: print(f"写入积分缓存失败: {e}")
+def _today():
+    import datetime; return datetime.date.today().isoformat()
+def _roll_day(openid, cache):
+    rec = cache.setdefault(openid, {"hist": 0, "gain": 0, "date": _today()})
+    if rec.get("date") != _today():
+        rec["hist"] = (rec.get("hist") or 0) + (rec.get("gain") or 0); rec["gain"] = 0; rec["date"] = _today()
+    return rec
+def _add_gain(openid, pts, cache):
+    rec = _roll_day(openid, cache)
+    rec["gain"] = (rec.get("gain") or 0) + (pts or 0)
+def _cur_total(openid, cache):
+    rec = cache.get(openid) or {"hist": 0, "gain": 0}
+    return (rec.get("hist") or 0) + (rec.get("gain") or 0)
+
+def run_one(client, row=None):
+    """对一个账号执行签到，返回 True/False；row 为标准推送行(dict)"""
     tag = client.name or client.user_id or client.openid[:8]
+    if row is not None:
+        row['name'] = str(tag)
 
     # 1. 查询签到状态
     log.info(f'[{tag}] 查询签到状态...')
     status = client.get_sign_status()
     if status is None:
         log.error(f'[{tag}] 查询状态失败 (token 可能已失效)')
+        if row is not None:
+            row['sign'] = '查询状态失败(token可能失效)'
         return False
 
     if status.get('code') != '200':
         log.error(f'[{tag}] 查询返回异常: {status.get("message", status)}')
+        if row is not None:
+            row['sign'] = '查询返回异常'
         return False
 
     data = status['data']
     activity_name = data.get('nameActivity', '签到活动')
     sign_records = data.get('signRecords', [])
     already_signed = data.get('alreadySignedNum', 0)
+    if extract_points:
+        _ep_status = extract_points(data) or {}
+        if _ep_status.get('total') is not None and row is not None:
+            row['total'] = str(_ep_status['total'])
 
     today_str = datetime.now().strftime('%Y%m%d')
     already_today = any(r.get('signDd') == today_str for r in sign_records)
 
     if already_today:
         log.info(f'[{tag}] 今日已签到 ✓  ({activity_name}, 已签 {already_signed} 天)')
+        if row is not None:
+            row['sign'] = f'今日已签到, 已签{already_signed}天'
+            if already_signed:
+                row['streak'] = already_signed
         return True
 
     # 2. 执行签到
@@ -462,10 +542,15 @@ def run_one(client):
     result = client.do_sign()
     if result is None:
         log.warning(f'[{tag}] 签到请求失败，token 已自动清除缓存')
+        if row is not None:
+            row['sign'] = '签到请求失败'
         return False
 
     if result.get('code') != '200':
-        log.error(f'[{tag}] 签到失败: {result.get("message", result)}')
+        _msg = result.get('message', result)
+        log.error(f'[{tag}] 签到失败: {_msg}')
+        if row is not None:
+            row['sign'] = f'签到失败: {_msg}'
         return False
 
     sign_data = result['data']
@@ -473,6 +558,24 @@ def run_one(client):
     points = sign_data.get('awardsNum', 0)
 
     log.info(f'[{tag}] ✅ 签到成功!  连续 {days} 天, +{points} 积分')
+    _pc = _read_points(); _roll_day(client.openid, _pc)
+    if points: _add_gain(client.openid, int(points), _pc)
+    _lt = _cur_total(client.openid, _pc); _write_points(_pc)
+    if row is not None:
+        row['sign'] = f'签到成功, 连续{days}天'
+        if days:
+            row['streak'] = days
+        if points:
+            row['earned'] = f'今日+{points}积分'
+        row['total'] = str(_lt)
+        row['totalLabel'] = '累计积分'
+        if extract_points:
+            _ep = extract_points(sign_data) or {}
+            if _ep.get('total') is not None:
+                row['total'] = str(_ep['total'])
+        _lot = _dig_lottery(sign_data)
+        if _lot:
+            row['lottery'] = _lot
     return True
 
 
@@ -490,7 +593,13 @@ def main():
             manual['token'], manual['openid'],
             manual['user_id'], manual['name'],
         )
-        ok = run_one(client)
+        _row = {'idx': 1, 'name': '', 'sign': '', 'earned': '', 'total': ''}
+        ok = run_one(client, _row)
+        if _std_report:
+            try:
+                _std_report('安吉尔签到', [_row])
+            except Exception as _e:
+                print(f'[push] 异常: {_e}')
         print(f'\n结果: {"✅ 成功" if ok else "❌ 失败"}')
         return 0 if ok else 1
 
@@ -520,7 +629,10 @@ def main():
     log.info(f'发现 {len(active)} 个启用账号')
 
     success_count = 0
-    for acc in active:
+    _rows = []
+    for _ai, acc in enumerate(active, 1):
+        _rows.append({'idx': _ai, 'name': '', 'sign': '', 'earned': '', 'total': ''})
+        _row = _rows[-1]
         openid = acc.get('openid', '')
         user_key = acc.get('userKey', openid)
 
@@ -552,6 +664,7 @@ def main():
                 if attempt == 0:
                     continue  # 重试
                 log.error(f'登录失败，跳过账号: {tag}')
+                _row['sign'] = '登录失败'
                 break
 
             client = AngelClient(
@@ -561,7 +674,7 @@ def main():
                 login_info.get('name', ''),
             )
 
-            ok = run_one(client)
+            ok = run_one(client, _row)
             if ok:
                 success_count += 1
                 break
@@ -579,6 +692,11 @@ def main():
     print(f'  完成: {success_count}/{len(active)} 签到成功')
     print('=' * 50)
 
+    if _std_report:
+        try:
+            _std_report('安吉尔签到', _rows)
+        except Exception as _e:
+            print(f'[push] 异常: {_e}')
     return 0 if success_count > 0 else 1
 
 
@@ -611,11 +729,4 @@ if __name__ == "__main__":
         _logs = _log_capture.getvalue()
     if _logs.strip():
         print(_logs)
-        try:
-            push_notify('angel_sign 签到结果', _logs[-2000:])
-        except:
-            pass
     sys.exit(result or 0)
-
-
-

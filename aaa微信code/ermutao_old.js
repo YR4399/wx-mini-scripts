@@ -1,8 +1,70 @@
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "尔木淘签到(旧店)";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null || typeof obj !== "object") return "";
+  const hits = [];
+  const keys = ["lottery", "draw", "prize", "raffle", "turntable", "wheel", "转盘", "抽奖", "奖励"];
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        const lk = String(k).toLowerCase();
+        const hit = keys.some((kk) => lk.includes(kk.toLowerCase()));
+        const val = v[k];
+        if (hit && val != null && val !== "" && typeof val !== "object") hits.push(`${k}=${val}`);
+        if (typeof val === "object") walk(val, depth + 1);
+      }
+      return;
+    }
+  };
+  walk(obj, 0);
+  return hits.length ? hits.join("｜") : "";
+}
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 /*
 @Description: 尔木淘官方商城 签到
 cron: 20 8 * * *
 */
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+require("https").globalAgent.options.rejectUnauthorized = false;
 const { Env } = require("../tools/env.js");
 const $ = new Env("尔木淘签到(旧店)");
 const axios = require("axios");
@@ -38,7 +100,9 @@ function uuid() {
 // ========== Task 类 ==========
 class Task {
     constructor(openid, index) {
-        this.openid = openid;
+        const _parts = String(openid || "").split("#");
+        this.openid = _parts[0].trim();
+        this.remark = (_parts[1] || "").trim();
         this.index = index;
         this.token = null;
         this.sessionId = null;
@@ -184,6 +248,7 @@ class Task {
         const pageData = pageResp.data;
         if (pageData.code !== 0) {
             $.log(`账号[${this.index}] 获取签到页面失败: ${JSON.stringify(pageData).slice(0, 100)}`);
+            if (typeof _setSign === 'function') _setSign(this.index, "签到失败", null, null);
             return false;
         }
         const checkinId = pageData.data?.checkinId || pageData.data?.checkin_id;
@@ -191,6 +256,12 @@ class Task {
             $.log(`账号[${this.index}] 未找到 checkinId`);
             return false;
         }
+        // 从签到页响应提取 总积分/连签/抽奖（通用扫描，缺字段则空）
+        const _ep = extractPoints(pageData.data) || {};
+        if (_ep.total != null) _setSign(this.index, null, null, String(_ep.total));
+        if (_ep.streak != null) _rpGet(this.index).streak = _ep.streak;
+        const _lotP = _digLottery(pageData.data);
+        if (_lotP) _setLottery(this.index, _lotP);
 
         // Step 2: 执行签到
         const signResp = await axios.get(`${API_BASE}/wscump/checkin/checkinV2.json`, {
@@ -204,23 +275,48 @@ class Task {
             const award = signData.data.list || signData.data.awardList || [];
             const desc = award.map(a => a.infos?.title || a.title || "").join(", ") || "奖励";
             $.log(`账号[${this.index}] 签到成功 获得: ${desc}`);
+            const _ep2 = extractPoints(signData.data) || {};
+            if (_ep2.total != null) _setSign(this.index, "签到成功", desc || null, String(_ep2.total));
+            else if (typeof _setSign === 'function') _setSign(this.index, "签到成功", desc || null, null);
             return true;
         }
         const msg = signData.msg || signData.message || JSON.stringify(signData);
         if (msg.includes("已签") || msg.includes("重复") || msg.includes("最大")) {
             $.log(`账号[${this.index}] 今日已签到`);
+            const _ep3 = extractPoints(signData) || {};
+            if (_ep3.total != null) _setSign(this.index, "今日已签到", null, String(_ep3.total));
+            else if (typeof _setSign === 'function') _setSign(this.index, "今日已签到", null, null);
             return true;
         }
         $.log(`账号[${this.index}] 签到失败: ${msg.slice(0, 100)}`);
         return false;
     }
 
+
+
+
+
     // ========== 主流程 ==========
     async run() {
         $.log(`\n========== 尔木淘 账号[${this.index}] ${this.openid.slice(0, 8)}*** ==========`);
+        if (this.remark) _setName(this.index, this.remark);
         await this.login();
         await $.wait(500 + Math.random() * 1000);
         await this.sign();
+        // 查询当前总积分（会员余额接口）
+        try {
+            const ptsResp = await axios.post(`${API_BASE}/wscuser/membercenter/present.json`, null, {
+                params: task.buildQuery(),
+                headers: task.getHeaders(),
+                timeout: 15000,
+                validateStatus: () => true,
+            });
+            const _ep4 = extractPoints(ptsResp.data?.data || ptsResp.data) || {};
+            if (_ep4.total != null) {
+                if (typeof _setSign === 'function') _setSign(this.index, null, null, String(_ep4.total));
+                if (typeof logPoints === 'function') logPoints(null, _ep4.total, '尔木淘签到(旧店)', this.index, '签到成功');
+            }
+        } catch(_) {}
         $.log(`账号[${this.index}] 任务完成`);
     }
 }
@@ -242,9 +338,5 @@ $.userIdx = 0;
     }
 })().catch((e) => $.log(e.message || e))
     .finally(async () => {
-        try {
-            const _logs = $.notifyStr || [];
-            if (_logs.length > 0) await sendPushNotify("尔木淘签到(旧店)", _logs.join("\n"));
-        } catch (_) {}
         $.done && $.done();
     });

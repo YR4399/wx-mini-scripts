@@ -38,6 +38,7 @@ except Exception:
     unpad = None
 
 # ================= 推送模块加载（青龙 Python 方式） =================
+from std_report import report
 notifyFunc = None
 
 def load_notify_module():
@@ -810,73 +811,50 @@ def main():
             print(f"⏳ 等待 {wait_sec} 秒后处理下一个账号...")
             time.sleep(wait_sec)
 
-    # 构造推送消息 - 每个账号：总积分、今日抽奖情况、做任务情况
-    total_accounts = len(results)
-    success_accounts = sum(1 for r in results if r['success'])
-    total_earned = sum(r['points_earned'] for r in results)
-    lottery_count = sum(1 for r in results if r.get('lottery_result') and r['lottery_result'].get('AwardName'))
-
-    content_lines = []
-    content_lines.append(f"📊 伊利QQ星执行汇总 (共{total_accounts}个账号)")
-    content_lines.append(f"✅ 成功: {success_accounts} | ❌ 失败: {total_accounts - success_accounts}")
-    content_lines.append(f"💰 总获得积分: {total_earned:.2f}")
-    content_lines.append(f"🎁 抽中奖品账号数: {lottery_count}")
-    content_lines.append("")
-    content_lines.append("📋 各账号详情:")
-    
+    # 构造标准化推送行（谷雨模板：总积分 / 签到奖励 / 连签 / 抽奖 / 做任务）
+    _rows = []
     for r in results:
-        line = f"【{r['remark']}】"
         if r['success']:
-            done = r['completed'] + r['already_done']
-            line += f" 任务: {done}/{r['total_tasks']}项"
-            line += f" | 总积分: {r['points_after']:.2f}"
-            # 今日抽奖情况
-            lottery_info = r.get('lottery_result')
-            if lottery_info:
-                award_name = lottery_info.get('AwardName')
-                if award_name:
-                    line += f" | 抽奖: {award_name}"
-                else:
-                    line += f" | 抽奖: 无奖励"
-            else:
-                line += f" | 抽奖: 未参与"
-            # 积分变化
-            if r['points_earned'] > 0:
-                line += f" (今日+{r['points_earned']:.2f})"
-            elif r['points_earned'] < 0:
-                line += f" (今日{r['points_earned']:.2f})"
+            _earned = (f"今日+{r['points_earned']:.0f}积分" if r['points_earned'] and r['points_earned'] > 0 else None)
+            _lw = r.get('lottery_result')
+            _lottery = (_lw.get('AwardName') if _lw and _lw.get('AwardName') else None)
+            _task = (f"{r['completed']}项任务" if r['completed'] else None)
+            _rows.append({
+                'idx': len(_rows) + 1,
+                'name': r['remark'],
+                'sign': '任务完成',
+                'earned': _earned,
+                'total': (f"{r['points_after']:.0f}" if r['points_after'] is not None else None),
+                'streak': None,
+                'tasks': None,
+                'taskEarned': _task,
+                'lottery': _lottery,
+            })
         else:
-            line += " ❌ 执行失败"
-        content_lines.append(line)
+            _rows.append({
+                'idx': len(_rows) + 1,
+                'name': r['remark'],
+                'sign': '执行失败',
+                'earned': None,
+                'total': None,
+                'streak': None,
+                'tasks': None,
+                'taskEarned': None,
+                'lottery': None,
+            })
 
-    content = "\n".join(content_lines)
-    title = "伊利QQ星每日任务汇总"
-    send_notify(title, content)
+    try:
+        report('伊利QQ星每日任务', _rows)
+    except Exception as _e:
+        print('report 失败:', _e)
 
-    globals()['_PUSH_TITLE'] = title
-    globals()['_PUSH_SUMMARY'] = content
+    success_accounts = sum(1 for r in results if r['success'])
 
     print("\n" + "="*40)
-    print(f"✅ 执行完毕！成功账号数: {success_accounts}/{total_accounts}")
+    print(f"✅ 执行完毕！成功账号数: {success_accounts}/{len(results)}")
     print("="*40)
 
 if __name__ == "__main__":
     main()
 
-# ========== PushPlus 推送 ==========
-try:
-    import urllib.request as _ur
-    import json as _js
-    _token = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSHPLUS_TOKEN', '')
-    if _token:
-        _content = globals().get('_PUSH_SUMMARY', '伊利QQ星执行完成')
-        _title = globals().get('_PUSH_TITLE', '伊利QQ星')
-        _body = _js.dumps({'token': _token, 'title': _title, 'content': _content, 'template': 'txt'}).encode()
-        _req = _ur.Request('http://www.pushplus.plus/send', data=_body, method='POST')
-        _req.add_header('Content-Type', 'application/json')
-        _resp = _ur.urlopen(_req, timeout=15)
-        _r = _js.loads(_resp.read())
-        if _r.get('code') == 200: print('PushPlus 推送成功')
-        else: print(f'PushPlus 推送失败: {_r.get("msg", "")}')
-except Exception as _e: print(f'推送异常: {_e}')
-# ========== PushPlus 推送结束 ==========
+

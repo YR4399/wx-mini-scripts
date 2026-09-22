@@ -1,19 +1,12 @@
-# ========== SSL和代理修复 ==========
-import urllib3
-urllib3.disable_warnings()
-import os
-os.environ['HTTP_PROXY'] = ''
-os.environ['HTTPS_PROXY'] = ''
-os.environ['http_proxy'] = ''
-os.environ['https_proxy'] = ''
-# ========== SSL和代理修复结束 ==========
-
 #by:哆啦A梦
+from std_report import report, send_push
+
+
 #入口:http://mx.qrurl.net/h5/wxa/link?sid=26407uif5Oq
-#wx_opinion变量填写wx_server里的openid/账号标识，多账号换行分割
+#BREO变量填写wx_server里的openid/账号标识，多账号换行分割
 #需要配置wx_server_url、wx_auth，用于获取wx.login code
-#账号变量名:wx_opinion
-#new Env("wx_opinion")
+#账号变量名:BREO
+#new Env("BREO")
 #cron 8 9,10,11 * * *
 
 
@@ -23,22 +16,6 @@ import os
 import sys
 import time
 from pathlib import Path
-import random
-
-# ========== 推送通知 ==========
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify, send_push_notify
-    from _push_helper import send_push_notify  # 自动采集日志并推送
-
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
-
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -46,15 +23,14 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 MINI_APP_ID = "wx61457400e4212cec"
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+WX_SERVER_URL = os.getenv("wx_server_url", "http://192.168.31.196:8787").rstrip("/")
 WX_AUTH = os.getenv("wx_auth", "")
-TOKEN_CACHE_PATH = Path(__file__).with_name("wx_opinion_token_cache.json")
+TOKEN_CACHE_PATH = Path(__file__).with_name("BREO_token_cache.json")
 LOGIN_BASE = "https://breoplus.breo.cn/app/minic"
 APP_BASE = "https://breoplus.breo.cn/breo-app"
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF"
 
 session = requests.Session()
-session.verify = False
 
 def read_token_cache():
     try:
@@ -214,51 +190,22 @@ def get_token_for_account(account_id, index):
     print(f"账号 {index} code登录成功: {user_info.get('nickname') or user_info.get('telephone') or auth_info.get('uid')}")
     return auth_info["token"]
 
-COMMENT_TEMPLATES = [
-    "不错不错，支持一下",
-    "感谢分享",
-    "写的很好，学习了",
-    "很有帮助，谢谢",
-    "赞",
-    "不错",
-    "支持",
-    "好",
-    "收藏了",
-    "有用",
-    "感谢",
-    "棒",
-    "不错不错",
-    "学到了",
-    "实用",
-]
-
-AI_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-AI_API_KEY = "sk-033fb36a9a304b8e9f40e141439d55de"
-AI_MODEL = "deepseek-r1-distill-qwen-7b"
-
 def get_random_one_word():
     try:
-        resp = requests.post(AI_API_URL,
-            headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": AI_MODEL,
-                "messages": [{"role": "user", "content": "用一句简短自然的话夸一下倍轻松按摩器，10字以内，不要引号不要标点"}],
-                "max_tokens": 1000
-            }, timeout=10, verify=False)
-        if resp.status_code == 200:
-            msg = resp.json()["choices"][0]["message"]
-            text = (msg.get("content") or "").strip()
-            if text:
-                return text
-    except Exception:
-        pass
-    return random.choice(COMMENT_TEMPLATES)
+        response = requests.get("https://uapis.cn/api/say")
+        if response.status_code == 200:
+            return response.text.strip()
+        else:
+            return "无法获取一言"
+    except Exception as e:
+        print(f"获取一言时出错: {e}")
+        return "无法获取一言"
 
 def get_proclamation():
     primary_url = "https://github.com/3288588344/toulu/raw/refs/heads/main/tl.txt"
     backup_url = "https://tfapi.cn/TL/tl.json"
     try:
-        response = requests.get(primary_url, timeout=10, verify=False)
+        response = requests.get(primary_url, timeout=10)
         if response.status_code == 200:
             print("\n" + "=" * 50)
             print("📢 公告信息")
@@ -271,7 +218,7 @@ def get_proclamation():
         print(f"获取公告时发生错误: {e}, 尝试备用链接...")
 
     try:
-        response = requests.get(backup_url, timeout=10, verify=False)
+        response = requests.get(backup_url, timeout=10)
         if response.status_code == 200:
             print("\n" + "=" * 50)
             print("📢 公告信息")
@@ -348,7 +295,7 @@ def comment_post(token, post_id):
             "postId": post_id
         }
         try:
-            response = requests.post(url, headers=headers, data=json.dumps(data), verify=False)
+            response = requests.post(url, headers=headers, data=json.dumps(data))
             if response.status_code == 200:
                 result = response.json()
                 if result.get("success", False):
@@ -370,7 +317,7 @@ def browse_mall(token):
     url = "https://breoplus.breo.cn/breo-app/user/po-task-info/mall"
     headers = breo_task_headers(token)
     try:
-        response = requests.post(url, headers=headers, verify=False)
+        response = requests.post(url, headers=headers)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
@@ -389,240 +336,40 @@ def punch_in(token):
     url = "https://breoplus.breo.cn/breo-app/user/po-task-info/punch"
     headers = breo_task_headers(token)
     try:
-        response = requests.post(url, headers=headers, verify=False)
+        response = requests.post(url, headers=headers)
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
                 print("✅ 签到成功！")
                 reward = result.get("result") or {}
-                print(f"获得点数: {reward.get('point', 0)}")
-                print(f"成长值: {reward.get('grow', 0)}")
+                point = reward.get('point', 0)
+                grow = reward.get('grow', 0)
+                print(f"获得点数: {point}")
+                print(f"成长值: {grow}")
+                return {"sign": "签到成功", "earned": f"今日+{point}点数" if point else None, "total": None}
             else:
-                print(f"❌ 签到失败，错误信息：{result.get('message', '未知错误')}")
+                msg = result.get('message', '未知错误')
+                print(f"❌ 签到失败，错误信息：{msg}")
+                return {"sign": "签到失败", "earned": None, "total": None, "tasks": msg}
         else:
             print(f"❌ 请求失败，状态码：{response.status_code}")
+            return {"sign": "签到失败", "earned": None, "total": None, "tasks": f"状态码{response.status_code}"}
     except Exception as e:
         print(f"❌ 请求错误: {e}")
-
-# ==================== 轻松灵田 (lzgame.breo.com 农场小游戏) ====================
-# 基于 2026-07-23 抓包逆向：登录用 JWT（Bearer），POST /game/farm/user/login 可续期90天
-# 所有业务接口为 GET + query 参数；请求头需固定 authorization/ticket/tenant + 动态 cloud-time + JWT
-LZGAME_BASE = "https://lzgame.breo.com"
-LINGTIAN_AUTH_BASIC = "Basic bHpfd3hfbWE6MzZlNWVkNDJjYjliZjJlNjhlM2Y2NDJjNjY2NmNkN2I="
-LINGTIAN_TICKET = "a8296a63c8224ed58b4216237bc04b92"
-LINGTIAN_TENANT = "bHo="
-LINGTIAN_ORIGIN = "https://game.oauth.i-lz.cn"
-LINGTIAN_REFERER = "https://game.oauth.i-lz.cn/"
-LINGTIAN_UA = ("Mozilla/5.0 (Linux; Android 16; 25113PN0EC Build/BP2A.250605.031.A3; wv) "
-               "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/146.0.7680.178 "
-               "Mobile Safari/537.36 XWEB/1460243 MMWEBSDK/20260502 MMWEBID/38 "
-               "MicroMessenger/8.0.76.3141(0x28004C36) WeChat/arm64 Weixin NetType/WIFI "
-               "Language/zh_CN ABI/arm64 miniProgram/wx61457400e4212cec")
-LINGTIAN_TOKEN_CACHE = Path(__file__).with_name("wx_opinion_lt_token_cache.json")
-
-def lt_headers(token):
-    return {
-        "authorization": LINGTIAN_AUTH_BASIC,
-        "cloud-token": f"Bearer {token}",
-        "token": f"Bearer {token}",
-        "ticket": LINGTIAN_TICKET,
-        "tenant": LINGTIAN_TENANT,
-        "cloud-time": str(int(time.time() * 1000)),
-        "origin": LINGTIAN_ORIGIN,
-        "referer": LINGTIAN_REFERER,
-        "user-agent": LINGTIAN_UA,
-        "accept": "application/json, text/plain, */*",
-        "x-requested-with": "com.tencent.mm",
-        "sec-fetch-site": "cross-site",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-        "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    }
-
-def lt_get(token, path, params=None):
-    try:
-        r = session.get(f"{LZGAME_BASE}{path}", headers=lt_headers(token), params=params, timeout=20, verify=False)
-        return r.json()
-    except Exception as e:
-        return {"code": -1, "msg": str(e)}
-
-def lt_read_token_cache():
-    try:
-        return json.loads(LINGTIAN_TOKEN_CACHE.read_text(encoding="utf-8")) if LINGTIAN_TOKEN_CACHE.exists() else {}
-    except Exception:
-        return {}
-
-def lt_write_token_cache(cache):
-    try:
-        LINGTIAN_TOKEN_CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception as e:
-        print(f"⚠️ 灵田token缓存写入失败: {e}")
-
-def get_farm_token(account_index):
-    """获取灵田游戏 JWT（按账号缓存，user/login 自动续期90天）"""
-    cache = lt_read_token_cache()
-    key = str(account_index)
-    tok = cache.get(key)
-    if not tok:
-        toks = os.getenv("BREO_FARM_TOKENS", os.getenv("BREO_FARM_TOKEN", ""))
-        parts = [t.strip() for t in toks.split("&") if t.strip()]
-        if account_index - 1 < len(parts):
-            tok = parts[account_index - 1]
-        else:
-            return None  # 该账号未配置灵田 token，跳过
-    # 用旧 token 调 user/login 续期（延长90天）
-    try:
-        r = session.post(f"{LZGAME_BASE}/game/farm/user/login", headers=lt_headers(tok), json={}, timeout=20, verify=False)
-        d = r.json()
-        if d.get("code") == 200 and (d.get("data") or {}).get("token"):
-            tok = d["data"]["token"]
-            cache[key] = tok
-            lt_write_token_cache(cache)
-            print(f"🌱 灵田登录续期成功 (expire={d['data'].get('expiration')})")
-        else:
-            print(f"⚠️ 灵田登录续期返回异常: {d.get('msg')} (沿用旧token)")
-    except Exception as e:
-        print(f"⚠️ 灵田登录续期失败: {e} (沿用旧token)")
-    return tok
-
-def _parse_dt(s):
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return time.mktime(time.strptime(s, fmt))
-        except Exception:
-            continue
-    return 0
-
-def farm_sign_in(token):
-    info = lt_get(token, "/game/farm/task/signInInfo")
-    if (info.get("data") or {}).get("todaySigned"):
-        print("✅ 灵田今日已签到")
-        return
-    r = lt_get(token, "/game/farm/task/signIn")
-    if r.get("code") == 200:
-        rw = r.get("data") or []
-        print(f"✅ 灵田签到成功 (奖励{len(rw)}项)")
-    else:
-        print(f"❌ 灵田签到失败: {r.get('msg')}")
-
-def farm_do_tasks(token):
-    r = lt_get(token, "/game/farm/task/userTasklist", {"scene": "2", "page": "1", "pageSize": "30"})
-    tasks = (r.get("data") or {}).get("list") or []
-    done = 0
-    for t in tasks:
-        st = str(t.get("state", "0"))
-        if st in ("0",):  # 跳过进行中
-            continue
-        r2 = lt_get(token, "/game/farm/task/getTaskReward", {"keyId": t.get("keyId")})
-        if r2.get("code") == 200:
-            done += 1
-            print(f"✅ 灵田任务领奖: {t.get('name')}")
-        else:
-            print(f"⚠️ 灵田任务[{t.get('name')}]领奖: {r2.get('msg')}")
-    if done == 0:
-        print("📋 灵田暂无可领任务奖励")
-
-def farm_run(token):
-    """灵田主流程：收获成熟 → 开地种植空地 → 浇水。
-
-    土地状态机（基于 land/list，实测逆向）：
-      state=0 → 未开垦（需游戏内花金币开地解锁，farmCrop 报"田还未开垦"）
-      state=1 → 已解锁未开垦
-      state=2 → 已开垦空地（可 farmCrop 种植）
-      state=3 → 已种作物（可浇水；成熟可收获）
-    农场循环：3(已种) → 收获 → 2(空地) → farmCrop → 3(已种)
-    注：farmSeq>=2 的地需金币解锁（sysUserLandList.price），属付费"开地"动作，
-        抓包无对应免费接口，脚本只对已开垦(state=2)空地种植。
-    """
-    sys_crops = lt_get(token, "/game/farm/crop/sysCropList").get("data") or []
-    # 选第一个有库存的种子（优先低等级作物如艾草）
-    seed = next((c for c in sys_crops if int(c.get("inventory", 0)) > 0), sys_crops[0]) if sys_crops else None
-
-    props = lt_get(token, "/game/farm/prop/list").get("data") or []
-    water = next((p for p in props if str(p.get("type")) == "1" and int(p.get("propNum", 0)) > 0), None)
-    water_uid = None        # 背包内水源实例 uid（消耗品）
-    water_key = None        # 水源 sysProp keyId（回退）
-    if water:
-        pl = water.get("propList") or []
-        if pl:
-            water_uid = pl[0].get("uid")
-        water_key = water.get("keyId")
-
-    now = time.time()
-
-    # 1) 收获成熟作物（cropId 有值 且 planTime 已过）
-    lands = lt_get(token, "/game/farm/land/list").get("data") or []
-    for land in lands:
-        if not land.get("cropId"):
-            continue
-        crop = land.get("crop") or {}
-        plan = crop.get("planTime") or land.get("planTime")
-        if not plan:
-            continue
-        if now >= _parse_dt(plan) - 120:  # planTime 为预计成熟时间
-            hr = lt_get(token, "/game/farm/land/harvestCrop", {"landUid": land.get("uid")})
-            if hr.get("code") == 200:
-                print(f"✅ 灵田收获 landUid={land.get('uid')[:8]} 奖励={hr.get('data')}")
-            else:
-                m = hr.get("msg", "")
-                if "未成熟" not in m and "不能" not in m:
-                    print(f"⚠️ 灵田收获失败: {m}")
-
-    # 2) 开地种植（仅对已开垦空地 state==2 且 cropId 为空；重新拉列表取收获后最新状态）
-    if seed:
-        lands2 = lt_get(token, "/game/farm/land/list").get("data") or []
-        unopened = 0
-        for land in lands2:
-            if land.get("cropId") or str(land.get("state")) != "2":
-                continue  # 只处理已开垦空地
-            fr = lt_get(token, "/game/farm/land/farmCrop",
-                        {"seedUid": seed.get("keyId"), "landUid": land.get("uid")})
-            if fr.get("code") == 200:
-                print(f"✅ 灵田开地种植 landUid={land.get('uid')[:8]} 种子={seed.get('name')}")
-                _farm_water(token, land.get("uid"), water_uid, water_key)
-            else:
-                m = fr.get("msg", "")
-                if "未开垦" in m or "未解锁" in m or "不能" in m:
-                    unopened += 1
-                else:
-                    print(f"⚠️ 灵田种植失败: {m}")
-        if unopened:
-            print(f"📋 灵田有 {unopened} 块地未开垦(需游戏内花金币开地解锁)，已跳过")
-
-    # 3) 浇水（对每块已种作物的地各浇一次）
-    if water_uid or water_key:
-        lands3 = lt_get(token, "/game/farm/land/list").get("data") or []
-        for land in lands3:
-            if land.get("cropId"):
-                _farm_water(token, land.get("uid"), water_uid, water_key)
-
-def _farm_water(token, land_uid, water_uid, water_key):
-    """浇水：优先用背包实例 uid，失败回退 sysProp keyId"""
-    if water_uid:
-        wr = lt_get(token, "/game/farm/land/waterLand",
-                    {"landUid": land_uid, "propUid": water_uid})
-        if wr.get("code") == 200:
-            print(f"✅ 灵田浇水 landUid={str(land_uid)[:8]}")
-            return
-    if water_key:
-        wr = lt_get(token, "/game/farm/land/waterLand",
-                    {"landUid": land_uid, "propUid": water_key})
-        if wr.get("code") == 200:
-            print(f"✅ 灵田浇水 landUid={str(land_uid)[:8]} (用keyId)")
-        else:
-            print(f"⚠️ 灵田浇水失败: {wr.get('msg')}")
+        return {"sign": "签到失败", "earned": None, "total": None, "tasks": str(e)}
 
 if __name__ == "__main__":
     # 获取公告
     #get_proclamation()
 
     # 从环境变量读取 wx_server 账号标识/openid
-    accounts = [item.strip() for item in os.getenv("wx_opinion", "").replace("&", "\n").splitlines() if item.strip()]
+    accounts = [item.strip() for item in os.getenv("BREO", "").replace("&", "\n").splitlines() if item.strip()]
 
     if not accounts:
         print("❌ 未检测到 账号信息，退出脚本。")
     else:
-        skip_community = os.getenv("wx_opinion_SKIP_COMMUNITY", "").lower() in ("1", "true", "yes")
+        rows = []
+        skip_community = os.getenv("BREO_SKIP_COMMUNITY", "").lower() in ("1", "true", "yes")
         print("=============== 开始执行任务 ===============")
         for i, account in enumerate(accounts, 1):
             print(f"\n-------------- 账号 {i} 开始 --------------")
@@ -632,46 +379,29 @@ if __name__ == "__main__":
                 print(f"❌ 账号 {i} 登录失败: {e}")
                 continue
 
-            try:
-                print("🚀 正在签到...")
-                punch_in(token)
+            print("🚀 正在签到...")
+            res = punch_in(token)
+            rows.append({"idx": i, "name": account, "sign": res.get("sign"), "earned": res.get("earned"), "total": res.get("total"), "tasks": res.get("tasks")})
 
-                if skip_community:
-                    print("\n📝 已跳过发帖/收藏/评论任务")
-                else:
-                    print("\n📝 正在发布帖子...")
-                    post_id = post_to_breo(token, "这是一个自动发布的帖子", "自动化测试")
-                    if post_id:
-                        print("\n⭐ 正在收藏帖子...")
-                        collect_post(token, post_id)
+            if skip_community:
+                print("\n📝 已跳过发帖/收藏/评论任务")
+            else:
+                print("\n📝 正在发布帖子...")
+                post_id = post_to_breo(token, "这是一个自动发布的帖子", "自动化测试")
+                if post_id:
+                    print("\n⭐ 正在收藏帖子...")
+                    collect_post(token, post_id)
 
-                        print("\n💬 正在评论帖子...")
-                        comment_post(token, post_id)
-                    else:
-                        print("❌ 发帖失败，跳过后续操作。")
+                    print("\n💬 正在评论帖子...")
+                    comment_post(token, post_id)
+                else:
+                    print("❌ 发帖失败，跳过后续操作。")
 
-                print("\n🛒 正在浏览商城...")
-                lt_tok = get_farm_token(i)
-                if os.getenv("BREO_SKIP_FARM", "0") == "1":
-                    print("\n⏭️ 跳过灵田（由独立脚本处理）")
-                    lt_tok = None
-                else:
-                    browse_mall(token)
-                if lt_tok:
-                    try:
-                        farm_sign_in(lt_tok)
-                        farm_do_tasks(lt_tok)
-                        farm_run(lt_tok)
-                    except Exception as e:
-                        print(f"❌ 灵田任务异常: {e}")
-                else:
-                    print("\n🌱 轻松灵田: 未配置灵田token(BREO_FARM_TOKENS)，跳过")
-            except Exception as e:
-                print(f"❌ 账号 {i} 执行异常: {e}")
+            print("\n🛒 正在浏览商城...")
+            browse_mall(token)
 
             print(f"-------------- 账号 {i} 结束 --------------")
 
         print("\n=============== 所有任务执行完毕 ===============")
-
-# ========== PushPlus 推送 ==========
-send_push_notify("倍轻松签到")
+        if rows:
+            report("BREO签到", rows)

@@ -1,3 +1,9 @@
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -26,17 +32,14 @@ const {
 } = require("../tools/env")
 const $ = new Env("臭宝乐园");
 const WeChatServer = require("./wcs.js");
-const TokenCache = require("./_token_cache");
-const path = require("path");
-const tokenCache = new TokenCache(path.join(__dirname, "choubao_token_cache.json"));
 let ckName = `choubaoleyuan`;
 const strSplitor = "#";
 const axios = require("axios");
 const defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001e31) NetType/WIFI Language/zh_CN miniProgram"
 let wechat = new WeChatServer({
-    url: process.env.wx_server_url || 'http://192.168.31.196:12081',
+    url: process.env.wx_server_url || 'http://host.docker.internal:18788',
     appid: 'wx2206cca563f6f937',
-    auth: process.env.wx_auth || "your-api-key",
+    auth: process.env.wx_auth || "",
 
 }
 );
@@ -45,14 +48,14 @@ class Task {
     constructor(env) {
         this.index = $.userIdx++
         this.user = env.split(strSplitor);
-
         this.wcsid = this.user[0]
+        this.remark = (this.user[1] || "").trim()
     }
 
     async run() {
-        const cached = tokenCache.read(this.wcsid);
-        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
-       
+       //随机延迟5-30s 模拟人工操作
+       if (this.remark) _setName(this.index, this.remark);
+       await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)
@@ -114,6 +117,10 @@ class Task {
         if (result?.status == '200') {
             //打印签到结果
             $.log(`🌸账号[${this.index}]` + `[${result.data.nickName}] 积分[${result.data.points}]🎉`);
+    _setName(this.index, this.remark || result.data.nickName);
+    if (typeof logPoints === 'function') logPoints(null, result.data.points, "臭宝乐园", this.index);
+    const _ep = extractPoints(result.data) || {};
+    if (_ep.streak != null) _rpGet(this.index).streak = _ep.streak;
         } else {
             $.log(`🌸账号[${this.index}] 获取用户信息-失败:${result.msg}❌`)
         }
@@ -195,8 +202,16 @@ class Task {
         if (result?.status == '200') {
             //打印签到结果
             $.log(`🌸账号[${this.index}]` + `签到成功🎉`);
+            const _ep = extractPoints(result.data) || {};
+            const _earned = _ep.earned != null ? "今日+" + _ep.earned + "积分" : "";
+            _setSign(this.index, "签到成功", _earned, "");
+            if (_ep.total != null) _setSign(this.index, null, null, String(_ep.total));
+            if (_ep.streak != null) _rpGet(this.index).streak = _ep.streak;
+            const _lot = _digLottery(result.data);
+            if (_lot) _setLottery(this.index, _lot);
         } else {
             $.log(`🌸账号[${this.index}] 签到-失败:${result.msg}❌`)
+            _setSign(this.index, "签到失败:" + (result.msg || "未知"), "", "");
         }
 
 
@@ -213,9 +228,74 @@ class Task {
 
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '臭宝乐园';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null || typeof obj !== "object") return "";
+  const hits = [];
+  const keys = ["lottery", "draw", "prize", "raffle", "turntable", "wheel", "转盘", "抽奖", "奖励"];
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        const lk = String(k).toLowerCase();
+        const hit = keys.some((kk) => lk.includes(kk.toLowerCase()));
+        const val = v[k];
+        if (hit && val != null && val !== "" && typeof val !== "object") hits.push(`${k}=${val}`);
+        if (typeof val === "object") walk(val, depth + 1);
+      }
+      return;
+    }
+  };
+  walk(obj, 0);
+  return hits.length ? hits.join("｜") : "";
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
     await getNotice()
-$.userIdx = 0;
     $.checkEnv(ckName);
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
@@ -229,10 +309,7 @@ $.userIdx = 0;
 
 })()
     .catch((e) => console.log(e))
-    .then(async () => {
-    const _logs = $.notifyStr || [];
-    if (_logs.length > 0) await sendPushNotify(origin_title, _logs.join("\n"));
-  }).finally(() => $.done());
+    .finally(() => $.done());
 async function getNotice() {
     try {
         let options = {

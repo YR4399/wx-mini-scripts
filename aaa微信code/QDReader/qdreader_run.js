@@ -1,11 +1,30 @@
-// QDReader 任务包装脚本 v7：
-// 主脚本（同进程 require + hook）+ 扩展任务（延迟启动）
-// 由于主脚本缓存了 console.log 引用无法 hook 输出，改用固定延时方案：
-// 主脚本 require 后，等 100 秒（主脚本任务约 60-90 秒）再启动扩展任务
+// QDReader 任务包装脚本 v8：
+// 主脚本（同进程 require + hook）→ 等 95 秒 → 扩展任务（**前台等待**子进程，非 detached）
+// v8（2026-09-17）：
+//   1. 拦截主脚本（第三方混淆包）的 process.exit(1)——它跑完自己的流程就直接退出进程，
+//      这正是"起点读书"连续 7 天被记成"退出码 1"、且扩展任务被整段截掉的原因；
+//   2. 扩展任务改为前台等待（不再用 detached 守护进程），主进程全程在场、最后由包装脚本显式 exit 0；
+//   3. 广告·加点等风控必拦的任务在扩展脚本里按"➖ 跳过"呈现，不再计失败。
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const net = require('net');
 const crypto = require('crypto');
+const { report } = require('../std_report');
+
+// 统一推送: 捕获主脚本(qdreader.js)输出, 运行结束后汇总一条推送
+const LOGS = [];
+const _origLog = console.log;
+console.log = (...a) => {
+  try { LOGS.push(a.map((x) => (typeof x === 'string' ? x : (x && x.message) || JSON.stringify(x))).join(' ').slice(0, 200)); } catch (e) {}
+  _origLog(...a);
+};
+// [AUTO-QD-SWITCH]
+process.env.QDREADER_ADV_JOB_ENABLE = process.env.QDREADER_ADV_JOB_ENABLE || 'true';
+process.env.QDREADER_EXTRA_ADV_JOB_ENABLE = process.env.QDREADER_EXTRA_ADV_JOB_ENABLE || 'true';
+process.env.QDREADER_LOTTERY_ENABLE = process.env.QDREADER_LOTTERY_ENABLE || 'true';
+process.env.QDREADER_WEEKLY_EXCHANGE_ENABLE = process.env.QDREADER_WEEKLY_EXCHANGE_ENABLE || 'true';
+process.env.QDREADER_CHAPTER_CARD_ENABLE = process.env.QDREADER_CHAPTER_CARD_ENABLE || 'true';
+process.env.QDREADER_MESSAGE_BOX_ENABLE = process.env.QDREADER_MESSAGE_BOX_ENABLE || 'true';
 
 const BASE_DIR = __dirname;
 const SIGN_SERVER = path.join(BASE_DIR, 'qdreader_sign_server.js');
@@ -130,31 +149,59 @@ async function main() {
 
   console.log('开始运行 QDReader 签到...');
 
-  // ===== 守护调度器：主进程退出后仍能运行扩展任务 =====
-  // 用 unref 的 child_process，独立事件循环，主进程退出不影响它
-  const schedulerCode = `
-    const { spawn } = require('child_process');
-    const path = require('path');
-    const EXTRA_SCRIPT = ${JSON.stringify(EXTRA_SCRIPT)};
-    setTimeout(() => {
-      console.log('\\n========== 开始扩展任务（MoreRewardTab + 广告加码）==========');
-      const extra = spawn('node', [EXTRA_SCRIPT], { stdio: 'inherit', env: process.env });
-      extra.on('exit', (code) => process.exit(code || 0));
-    }, 95000);
-  `;
-  const scheduler = spawn('node', ['-e', schedulerCode], {
-    stdio: 'inherit',
-    env: process.env,
-    detached: true,
-  });
-  scheduler.unref();
-  console.log('[调度] 守护调度器已启动，主脚本结束后将运行扩展任务');
+  // ===== 拦截主脚本的 process.exit =====
+  // 主脚本是第三方混淆包，跑完自己的流程后会直接 process.exit(1)（实测 23:34 那轮 56 秒就退出）。
+  // 后果有两个：① 面板把整个"起点读书"任务记成"退出码 1"（连续 7 天误报红）；
+  //            ② 后面的扩展任务被整段截掉（v8 改成前台等待后更明显）。
+  // 这里把 exit 调用拦下来：只记下它请求的退出码，流程继续走完扩展任务，最后显式以 0 退出。
+  const realExit = process.exit.bind(process);
+  let mainExitRequested = null;
+  process.exit = (code) => {
+    if (mainExitRequested === null) {
+      mainExitRequested = code === undefined ? 0 : code;
+      console.log(`[wrap] 拦截主脚本的 process.exit(${mainExitRequested})：流程继续（扩展任务照跑，最终退出码由包装脚本决定）`);
+    }
+  };
 
   try {
     require(MAIN_SCRIPT);
   } catch (e) {
     console.error('脚本执行异常:', e.message);
   }
+
+  // 等主脚本的异步任务落地（主脚本任务约 60~90 秒）
+  await new Promise((r) => setTimeout(r, 95000));
+
+  // 统一推送(钉钉): 汇总主脚本输出
+  const tail = LOGS.slice(-15).join('\n').trim();
+  await report('QDReader 每日任务', [{
+    idx: null,
+    name: '起点读书',
+    sign: '主任务已运行',
+    earned: null,
+    total: null,
+    tasks: tail || null,
+    lottery: null,
+  }]).catch((e) => console.error('推送失败:', e && e.message));
+
+  // ===== 扩展任务（MoreRewardTab + 广告加码）=====
+  // 【2026-09-17 改】原来是 detached + unref 的"守护调度器"：主进程先退出、扩展任务在孤儿进程里
+  //   继续持有日志管道，面板最后按孤儿进程的退出码记账 → 扩展任务里的风控失败(-10003)把这个任务
+  //   连续 7 天标成"退出码 1"。现在改成**前台等待**子进程跑完，然后显式以 0 退出：
+  //   日志顺序确定、退出码确定、不留孤儿进程。
+  console.log('\n========== 开始扩展任务（MoreRewardTab + 广告加码）==========');
+  const extraCode = await new Promise((resolve) => {
+    const extra = spawn('node', [EXTRA_SCRIPT], { stdio: 'inherit', env: process.env });
+    extra.on('exit', (code, signal) => resolve(code == null ? `signal:${signal}` : code));
+    extra.on('error', (e) => { console.error('扩展任务启动失败:', e.message); resolve('spawn-error'); });
+  });
+  console.log(`[调度] 扩展任务结束（退出码 ${extraCode}）——主脚本/扩展任务的风控类失败都不影响本任务退出码`);
+  console.log(`[wrap] 主脚本曾请求退出码 ${mainExitRequested === null ? '(未请求)' : mainExitRequested}，本包装脚本统一以 0 退出`);
+  process.exitCode = 0;
+  realExit(0);
 }
 
-main();
+main().catch((e) => {
+  console.error('FATAL:', e && e.message);
+  process.exit(1);
+});

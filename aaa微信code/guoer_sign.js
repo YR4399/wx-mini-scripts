@@ -1,3 +1,49 @@
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "果而惊喜会员社";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, n) { if (n != null && n !== "") _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
 /**
  * 果而惊喜会员社 - 每日签到 + 会员权益领取（数云 shuyun 会员小程序）
  * 逆向来源: 42.81.252.154 HAR（ual.shuyun.com）
@@ -19,12 +65,27 @@
  *   wx_server_url - WCS 服务地址（默认 http://smallcat-client:8787）
  *   wx_auth       - WCS 认证密钥（兜底）
  *   NICK_MAP      - openid:昵称&openid:昵称（可选，日志友好）
- *   PLUSPLUS_TOKEN / PUSH_PLUS_TOKEN - PushPlus 推送（可选）
  */
 
 for (const k of ['HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROXY','all_proxy']) delete process.env[k];
 
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const fs = require("fs");
 const path = require("path");
 
@@ -144,10 +205,13 @@ async function getMemberInfo(sess){
 async function getSignStatus(sess){
   try {
     const res = await req(`${BASE}/activity/info/${ACTIVITY_ID}`, { method: "GET", headers: authHeaders(sess) });
-    // 注意: typeInfo.signFlag 才是「今日是否已签」(1=已签,0=未签); typeInfo.signed 是连续天数计数, 不可用
-    if (res.data?.success) return res.data.data?.typeInfo?.signFlag ?? null;
+    // 注意: typeInfo.signFlag 才是「今日是否已签」(1=已签,0=未签); typeInfo.signed 是连续天数计数(连签天数)
+    if (res.data?.success) {
+      const ti = res.data.data?.typeInfo || {};
+      return { signFlag: ti.signFlag ?? null, signed: ti.signed ?? null };
+    }
   } catch(e){}
-  return null;
+  return { signFlag: null, signed: null };
 }
 
 async function doSign(sess){
@@ -209,43 +273,46 @@ async function claimBenefits(sess){
   return results;
 }
 
-// ==================== 推送 ====================
-async function push(title, content){
-  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
-  if (!token) return;
-  try {
-    await axios.post("https://www.pushplus.plus/send", { token, title, content, template: "txt" }, { timeout: 10000, proxy: false });
-  } catch(e){}
-}
+// ==================== 推送(统一走 std_report 双引擎, 钉钉 markdown) ====================
 
 // ==================== 主流程 ====================
-async function runAccount(openid){
+async function runAccount(openid, idx){
   console.log(`\n========== 账号[${nick(openid)}] ==========`);
+  _setName(idx, nick(openid));
   const sess = await login(openid);
-  if (!sess){ L.fail("登录失败，跳过"); return { ok:false }; }
+  if (!sess){ L.fail("登录失败，跳过"); _setSign(idx, "登录失败"); return { ok:false }; }
   L.ok(`登录成功 uid=${sess.uid.slice(0,12)}…`);
   const info = await getMemberInfo(sess);
   if (info) L.info(`会员: ${info.gradeCaption||'?'}(V${info.grade}) 积分=${info.point}`);
 
-  // 1) 每日签到  (signFlag: 1=今日已签, 0=未签; 切勿用 signed 连续天数计数)
-  let signDone = false;
-  const signFlag = await getSignStatus(sess);
-  if (signFlag === 1){ L.info("今日已签到"); signDone = true; }
-  else {
+  // 1) 每日签到  (signFlag: 1=今日已签, 0=未签; signed=连续天数计数)
+  let signDone = false, qty = 0, signText = "签到未完成";
+  const st = await getSignStatus(sess);
+  if (st.signFlag === 1){
+    L.info("今日已签到");
+    signDone = true; signText = "今日已签到";
+  } else {
     const r = await doSign(sess);
     if (r.ok){
       L.ok(r.already ? "今日已签到(幂等确认)" : `签到成功 +${r.qty}积分`);
-      signDone = true;
+      signDone = true; signText = r.already ? "今日已签到" : "签到成功";
+      qty = r.qty || 0;
       // 防假阳性: 复查确认服务端 signFlag==1
       const re = await getSignStatus(sess);
-      if (re !== 1) L.warn("复查: 服务端 signFlag 仍非1, 签到记录可能未落库(积分奖励 SEND_FAIL 不影响签到日期)");
+      if (re.signFlag !== 1) L.warn("复查: 服务端 signFlag 仍非1, 签到记录可能未落库(积分奖励 SEND_FAIL 不影响签到日期)");
     } else {
-      L.fail("签到未成功");
+      L.fail("签到未成功"); signText = "签到未成功";
     }
   }
+  _setSign(idx, signText, qty > 0 ? `今日+${qty}积分` : "", info?.point != null ? String(info.point) : "");
+  if (st.signed != null && st.signed !== "") _setStreak(idx, st.signed);
 
   // 2) 会员权益领取
   const benefits = await claimBenefits(sess);
+  if (benefits && benefits.length){
+    const sumQty = benefits.reduce((a,b)=> a + (b.qty||0), 0);
+    _setTaskEarned(idx, `会员权益+${sumQty}积分`);
+  }
   return { ok:true, benefits, signDone };
 }
 
@@ -254,12 +321,13 @@ async function runAccount(openid){
   const accounts = wxOpinion.split("&").map(s=>s.trim()).filter(Boolean);
   if (!accounts.length){ console.log("❌ 未配置 wx_opinion"); return; }
   const summary = [];
-  for (const openid of accounts){
+  for (let i = 0; i < accounts.length; i++){
+    const openid = accounts[i];
     try {
-      const r = await runAccount(openid);
+      const r = await runAccount(openid, i + 1);
       if (r.ok) summary.push(`✅ ${nick(openid)}: 签到${r.signDone?"成功":"未完成"}/权益${r.benefits?.length?"已领"+r.benefits.length:"无"}`);
     } catch(e){ L.fail(`账号异常: ${e.message}`); }
   }
   console.log("\n🔔 果而惊喜会员社,结束");
-  if (summary.length) await push("果而惊喜会员社", summary.join("\n"));
+  await flushLogPoints(_rpApp);
 })();

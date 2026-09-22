@@ -8,12 +8,9 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
 
 // ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+require("https").globalAgent.options.rejectUnauthorized = false;
 process.env.HTTP_PROXY = "";
 process.env.HTTPS_PROXY = "";
 process.env.http_proxy = "";
@@ -36,6 +33,7 @@ const wechat = new WeChatServer({
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function random(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function parseAccount(raw = "") { const [id, remark] = String(raw).split("#").map((s) => (s || "").trim()); return { openid: id, remark: remark || "" }; }
 
 function getHeaders(token = "") {
     const h = {"User-Agent": UA, "xweb_xhr": "1", "Referer": "https://servicewechat.com/" + APPID + "/26/page-frame.html"};
@@ -47,7 +45,7 @@ function loadCache() { try { if (fs.existsSync(CACHE_FILE)) return JSON.parse(fs
 function saveCache(data) { fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2)); }
 
 class KuaiBao {
-    constructor(openid, index) { this.index = index; this.openid = openid; this.token = ""; }
+    constructor(raw, index) { this.index = (index != null) ? index : $.userIdx++; this.account = parseAccount(raw); this.openid = this.account.openid; this.token = ""; }
 
     async login() {
         $.log("账号[" + this.index + "] 登录...");
@@ -69,6 +67,7 @@ class KuaiBao {
 
     async checkAndSign() {
         $.log("========== 快宝 账号[" + this.index + "] ==========");
+        if (this.account.remark) _setName(this.index, this.account.remark);
         const cache = loadCache();
         if (cache[this.openid]?.token) this.token = cache[this.openid].token;
 
@@ -92,19 +91,25 @@ class KuaiBao {
         const infos = si.data.data?.signDayInfos || [];
         const signed = infos.find(d => d.dayStatus === 1);
         $.log("账号[" + this.index + "] 签到: " + (signed ? "已签" : "未签") + " | 连续" + signDayNum + "天");
+    console.log('📊 账号[' + this.index + '] 快宝旧衣回收: ' + (signed ? '已签' : '未签') + ' | 连续' + signDayNum + '天');
 
+        let reward = "";
         let signMsg = signed ? "已签" : "";
         if (!signed) {
             const sr = await axios.get(BASE_URL + "/api/v2/sign_join", { headers: getHeaders(this.token), timeout: 10000 });
             if (sr.data?.code === 0) {
-                const reward = sr.data.data?.name || "?";
+                reward = sr.data.data?.name || "?";
                 $.log("账号[" + this.index + "] 签到成功: " + reward);
                 signMsg = "签到:" + reward;
             } else {
                 $.log("账号[" + this.index + "] 签到失败: " + (sr.data?.msg || ""));
+                _setSign(this.index, "签到失败");
                 return { ok: false, reason: sr.data?.msg || "未知", signDayNum };
             }
         }
+
+        _setStreak(this.index, signDayNum);
+        _setSign(this.index, signed ? "今日已签到" : "签到成功", signed ? "" : reward);
 
         // 抽奖
         let lotteryMsg = "";
@@ -135,11 +140,58 @@ class KuaiBao {
                 }
             }
             lotteryMsg = prizes.length ? "抽:" + prizes.join(",") : (count + "次");
+            if (prizes.length) _setLottery(this.index, prizes.join(","));
         } catch(e) { $.log("账号[" + this.index + "] 抽奖异常: " + e.message); lotteryMsg = "抽奖异常"; }
 
         return { ok: true, status: signMsg + (lotteryMsg ? " | " + lotteryMsg : ""), signDayNum };
     }
 }
+
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '快宝旧衣回收';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _setStreak(idx, v) { if (v != null && v !== "") _rpGet(idx).streak = String(v); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 async function main() {
     $.log("=== 快宝旧衣回收 开始 ===");
@@ -153,16 +205,16 @@ $.userIdx = 0;
     for (let i = 0; i < accounts.length; i++) {
         if (i > 0) { const d = random(3000, 8000); await sleep(d); }
         const b = new KuaiBao(accounts[i], i + 1);
-        try { results.push(Object.assign({ openid: accounts[i] }, await b.checkAndSign())); }
+        try { results.push(Object.assign({ openid: accounts[i], index: i + 1 }, await b.checkAndSign())); }
         catch(e) { $.log("账号[" + (i+1) + "] 异常: " + e.message); results.push({ openid: accounts[i], index: i+1, ok: false, reason: e.message }); }
     }
 
     const ok = results.filter(r => r.ok);
     $.log("=== 汇总: " + ok.length + "/" + results.length + " ===");
     let msg = "快宝 " + ok.length + "/" + results.length;
-    for (const r of results) msg += "\n账号[" + r.index + "] " + (r.ok ? "OK " + (r.status || "") : "FAIL " + (r.reason || ""));
-    sendPushNotify("快宝旧衣回收", msg);
-    $.log("=== 快宝旧衣回收 结束 ===");
+    for (const r of results) msg += "\n账号[" + r.index + "] " + (r.ok ? "OK " + (r.status || "") : "FAIL " + (r.reason || "")) + (r.signDayNum ? " | 连续" + r.signDayNum + "天" : "");
+    $.log(msg);
+    $.log("=== 快宝旧衣回收 结束（推送由 std_report 双引擎统一处理） ===");
 }
 
-main().catch(e => { $.log("异常: " + e.message); sendPushNotify("快宝旧衣回收", "异常: " + e.message); });
+main().catch(e => { $.log("异常: " + e.message); });

@@ -21,6 +21,10 @@ except ImportError:
         print(f'⚠️ 推送模块未加载')
         return False
 # ========== 推送通知结束 ==========
+try:
+    from std_report import report as _std_report
+except ImportError:
+    _std_report = None
 
 # -*- coding: utf-8 -*-
 """
@@ -364,10 +368,12 @@ class AdWatcher:
 
         if done >= target_count:
             log.info(f'今日已完成 {done} 次，达到目标！')
+            self.summary = {'name': name, 'done': done, 'limit': limit, 'ld': current_ld, 'succ': 0, 'reward': 0.0}
             return True
 
         if can != 1:
             log.warning(f'canWatch={can}，今日可能已达上限')
+            self.summary = {'name': name, 'done': done, 'limit': limit, 'ld': current_ld, 'succ': 0, 'reward': 0.0}
             return False
 
         remaining = min(target_count - done, limit - done)
@@ -404,6 +410,11 @@ class AdWatcher:
         log.info(f'  本次奖励: +{self.total_reward:.2f} 乐豆')
         log.info('='*50)
 
+        self.summary = {'name': final.get('user_name', name) if final else name,
+                        'done': final['today_count'] if final else done,
+                        'limit': final['max_count'] if final else limit,
+                        'ld': final['ld_number'] if final else current_ld,
+                        'succ': self.success_count, 'reward': self.total_reward}
         return True
 
 
@@ -416,10 +427,27 @@ def main():
     device_env = os.environ.get('LJ_AD_DEVICE', '').strip()
     count_env = int(os.environ.get('LJ_AD_COUNT', '10').strip())
 
+    _rows = []
+    def _flush_report():
+        if _std_report and _rows:
+            try:
+                _std_report('乐购广告观看', _rows)
+            except Exception as _e:
+                print(f'[push] 异常: {_e}')
+
     if token_env and uid_env:
         log.info('使用环境变量 Token 模式')
         watcher = AdWatcher(token_env, uid_env, device_env or None)
         watcher.run(count_env)
+        sm = getattr(watcher, 'summary', None)
+        if sm:
+            _rows.append({'idx': 1, 'name': sm.get('name', ''),
+                          'sign': f"今日观看{sm['done']}/{sm['limit']}次",
+                          'earned': (f"本次+{sm['reward']:.2f}乐豆" if sm.get('reward') else ''),
+                          'total': f"乐豆{sm['ld']}", 'streak': '', 'lottery': ''})
+        else:
+            _rows.append({'idx': 1, 'name': '', 'sign': '查询广告状态失败', 'earned': '', 'total': '', 'streak': '', 'lottery': ''})
+        _flush_report()
         return
 
     # 方式2: 通过 WCS 控制台自动登录（对乐购小程序执行 wx.login）
@@ -441,6 +469,8 @@ def main():
             user_key = acc.get('userKey', openid)
             display = acc.get('displayName', '') or openid[:12]
             aid = f'{display}(#{idx+1})'
+            _row = {'idx': idx + 1, 'name': display, 'sign': '', 'earned': '', 'total': '', 'streak': '', 'lottery': ''}
+            _rows.append(_row)
 
             log.info(f'\n------ {aid} ------')
 
@@ -448,14 +478,24 @@ def main():
             result = login_wcs_get_token(openid, user_key)
             if not result:
                 log.error(f'{aid} 登录失败，跳过')
+                _row['sign'] = '登录失败'
                 continue
 
             p_token, uid, device_id = result
             watcher = AdWatcher(p_token, uid, device_id)
             watcher.run(count_env)
+            sm = getattr(watcher, 'summary', None)
+            if sm:
+                _row['sign'] = f"今日观看{sm['done']}/{sm['limit']}次"
+                if sm.get('reward'):
+                    _row['earned'] = f"本次+{sm['reward']:.2f}乐豆"
+                _row['total'] = f"乐豆{sm['ld']}"
+            else:
+                _row['sign'] = '查询广告状态失败'
 
             if idx < len(active) - 1:
                 time.sleep(random.uniform(5, 10))
+        _flush_report()
         return
 
     # 方式3: 无任何配置
@@ -479,6 +519,7 @@ def main():
     sys.exit(1)
 
 
+
 if __name__ == '__main__':
     import io
 
@@ -498,9 +539,5 @@ if __name__ == '__main__':
         _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
-        try:
-            push_notify('ljg_ad_watcher 签到结果', _logs[-2000:])
-        except Exception as _push_e:
-            print(f'推送异常: {_push_e}')
 
 

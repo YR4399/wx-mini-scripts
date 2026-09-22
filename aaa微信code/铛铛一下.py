@@ -22,11 +22,9 @@ os.environ['https_proxy'] = ''
   4. 抽奖
   5. 查询余额
   6. 满 0.3 自动提现
-  7. PushPlus 推送
   8. 品赞代理，业务请求优先代理，失败直连兜底
 
 环境变量：
-  PLUSPLUS_TOKEN    PushPlus token，可选
   PROXY_API         品赞代理提取 API，可选
   PROXY_TYPE        http / socks5，默认 http
   DD1X_CHANNEL_ID   渠道 ID，默认 154
@@ -54,13 +52,11 @@ import requests
 APP_NAME = "铛铛一下旧衣服回收小程序"
 APPID = "wxe378d2d7636c180e"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+wx_auth = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 
 CHANNEL_ID = os.getenv("DD1X_CHANNEL_ID", "154")
-
-PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 PROXY_API = os.getenv("PROXY_API", "")
 PROXY_TYPE = os.getenv("PROXY_TYPE", "http").lower()
 
@@ -291,34 +287,20 @@ def request_with_proxy(
     return session.request(method, url, **kwargs)
 
 
-def send_pushplus(title: str, content: str) -> None:
-    if not PLUSPLUS_TOKEN:
-        print("⚠️ [PushPlus] 未配置 PLUSPLUS_TOKEN，跳过推送")
-        return
-
+def send_notify(title: str, content: str) -> None:
+    from std_report import send_push as _dd_push
     try:
-        requests.post(
-            "https://www.pushplus.plus/send",
-            json={
-                "token": PLUSPLUS_TOKEN,
-                "title": title,
-                "content": content,
-                "template": "txt",
-            },
-            timeout=10,
-            verify=False)
-        print("✅ [PushPlus] 推送成功")
+        _dd_push(title, content)
     except Exception as exc:
-        print(f"❌ [PushPlus] 推送失败: {exc}")
-
+        print(f"推送失败：{exc}")
 
 def get_code(openid: str) -> str | None:
     print(f"🔐 [授权] 通过WCS获取code: {openid[:10]}...")
     try:
         response = requests.post(
-            f"{WX_SERVER_URL}/wx/code",
+            f"{wx_server_url}/wx/code",
             json={"appid": APPID, "openid": openid},
-            headers={"auth": WX_AUTH},
+            headers={"auth": wx_auth},
             timeout=60,
             proxies={"http": None, "https": None},
             verify=False)
@@ -485,7 +467,12 @@ def build_withdraw_payload(trade_resp: Any) -> Tuple[Dict[str, Any] | None, str]
         if money <= 0:
             continue
 
-        available.append(item)
+        # 与小程序抓包一致: 提交条目固定带 disabled:false / isShow:true,
+        # 保留服务端下发的原字段(logTime/orderSn/title/tradeSnList/whetherEvaluate/withdrawalType)
+        entry = dict(item)
+        entry["disabled"] = False
+        entry["isShow"] = True
+        available.append(entry)
 
     if not available:
         return None, "没有可提现订单"
@@ -591,12 +578,8 @@ def run_account(index: int, total: int, openid: str) -> Dict[str, Any]:
         result["balance"] = str(total_raw)
         print(f"💰 [余额] 当前总金额: {total_raw} 元")
 
-        if total < 0.3:
-            result["withdrawMsg"] = "余额不足 0.3 元，跳过提现"
-            print(f"⚠️ [提现] {result['withdrawMsg']}")
-            result["success"] = True
-            return result
-
+        # 注意: 可提现金额不在 get_account_detailed.total 里(抓包显示 total=0.00 时
+        # 活动红包 0.8 仍可提现), 真实可提数据在 get_withdrawal_trade_list 的分组条目中
         trade_resp = api_get(server, WITHDRAWAL_TRADE_LIST_URL, token, proxies)
         payload, withdraw_prepare_msg = build_withdraw_payload(trade_resp)
         print(f"💸 [提现] {withdraw_prepare_msg}")
@@ -607,12 +590,19 @@ def run_account(index: int, total: int, openid: str) -> Dict[str, Any]:
             return result
 
         withdraw_resp = api_post(server, WITHDRAWAL_URL, token, proxies, payload)
-        result["withdrawMsg"] = (
-            withdraw_resp.get("msg")
-            or withdraw_resp.get("message")
-            or json_preview(withdraw_resp)
-        )
-        print(f"💸 [提现] {result['withdrawMsg']}")
+        # 该接口 code=1 / msg=success 才是成功(与其它接口 code=0 相反)
+        if withdraw_resp.get("code") == 1 or withdraw_resp.get("msg") == "success":
+            result["withdrawMsg"] = (
+                "提现成功 " + payload["totalMoney"] + " 元"
+            )
+            print(f"✅ [提现] {result['withdrawMsg']}")
+        else:
+            result["withdrawMsg"] = (
+                withdraw_resp.get("msg")
+                or withdraw_resp.get("message")
+                or json_preview(withdraw_resp)
+            )
+            print(f"⚠️ [提现] {result['withdrawMsg']}")
 
         result["success"] = True
         return result
@@ -703,7 +693,7 @@ def main() -> None:
     print(f"║ 🕒 结束时间: {now_text():<32}║")
     print("╚" + "═" * 50 + "╝")
 
-    send_pushplus("♻️ 铛铛一下四账号任务完成", build_notify(results))
+    send_notify("♻️ 铛铛一下四账号任务完成", build_notify(results))
 
 if __name__ == "__main__":
     main()

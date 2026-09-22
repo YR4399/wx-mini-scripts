@@ -1,15 +1,15 @@
 /*
-君品荟 - 登录、签到、查询、酒谷之旅农场、滑块验证、PushPlus推送
+君品荟 - 登录、签到、查询、酒谷之旅农场、滑块验证、std_report双引擎推送
 cron: 45 8 * * *
 每4小时推送一次数据汇总，新增定时 0 0,4,8,12,16,20 * * *
 
 变量名：junpinhui
 变量值：wx_server 中保存的 openid/账号标识，多账号用 & 或换行分隔
       也支持 openid#token 或仅 token
-依赖变量：wx_server_url、wx_auth、地块、PUSH_PLUS_TOKEN
+依赖变量：wx_server_url、wx_auth、地块
 依赖模块: axios, crypto-js
 新增控制变量：FORCE_SLIDE_VERIFY 设为true每次账号强制重新滑块
-推送变量：PUSH_PLUS_TOKEN 填写pushplus一对一token实现消息推送
+推送：经 std_report 双引擎（钉钉 markdown）统一推送，无需额外配置
 */
 
 // ====================== 替换掉缺失的 env.js 依赖 ======================
@@ -37,6 +37,22 @@ const $ = {
 // =======================================================================
 
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -47,19 +63,15 @@ const APP_VERSION = "1.0.12";
 const FM_BASE = "https://fm.exijiu.com";
 const GARDEN_BASE = "https://apimallwm.exijiu.com";
 const TOKEN_CACHE_FILE = path.join(__dirname, "junpinhui_token_cache.json");
-const PUSH_CACHE_FILE = path.join(__dirname, "junpinhui_push_cache.json");
 // 强制每次执行滑块开关，青龙环境变量 FORCE_SLIDE_VERIFY=true 开启
 const FORCE_SLIDE = process.env.FORCE_SLIDE_VERIFY === "true";
-// PushPlus配置
-const PUSH_PLUS_TOKEN = process.env.PUSH_PLUS_TOKEN || "";
 
 // === [本地账号服务配置] 根据抓包数据更新 ===
-const WX_SERVER_URL = process.env.wx_server_url || "http://host.docker.internal:18788";
+const WX_SERVER_URL = process.env.wx_server_url || "http://100.122.1.00:18788";
 const WX_AUTH = process.env.wx_auth || "b47ad1";
 
 // ================= 新增滑块验证依赖全局配置 =================
 const OCR_SERVER = process.env.OCR_SERVER || 'https://ddddocr.xzxxn7.live';
-const TWOCAPTCHA_KEY = process.env.TWOCAPTCHA_APIKEY || process.env.TWOCAPTCHA_KEY || '56c8245006ed3a5bbd407639dbc7cf8c';
 
 // 随机生成虚拟IP
 const generateRandomIP = () => {
@@ -82,77 +94,7 @@ function aesEncrypt(e, n) {
     return cryptoJS.enc.Base64.stringify(r.ciphertext);
 }
 
-// 滑块OCR请求封装 (ddddocr 失败时 fallback 2captcha)
-const { execSync } = require('child_process');
-function solveSlide2Captcha(slidingImageB64, backImageB64) {
-  // 调用容器 python3.12(PIL) 拼接图片 + 2captcha 识别缺口 x 坐标
-  const py = String.raw`
-import base64, io, sys, time
-try:
-    import requests
-    from PIL import Image
-except Exception as e:
-    print('DEP_ERR:' + str(e), file=sys.stderr); sys.exit(2)
-KEY = '${TWOCAPTCHA_KEY}'
-def submit(img_path):
-    for i in range(3):
-        try:
-            with open(img_path, 'rb') as f:
-                r = requests.post('https://2captcha.com/in.php',
-                                  data={'key': KEY, 'method': 'normal', 'softid': '234'},
-                                  files={'file': f}, timeout=30)
-            txt = r.text.strip()
-            if txt.startswith('OK|'):
-                return txt.split('|')[1]
-            if 'ERROR' in txt:
-                time.sleep(3); continue
-        except Exception as e:
-            time.sleep(3)
-    return None
-def poll(cid, timeout=120):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            r = requests.get('https://2captcha.com/res.php',
-                             params={'key': KEY, 'action': 'get', 'id': cid}, timeout=20)
-            txt = r.text.strip()
-            if txt.startswith('OK|'):
-                return txt.split('|')[1].strip()
-            if 'CAPCHA_NOT_READY' not in txt:
-                time.sleep(2)
-        except Exception:
-            pass
-        time.sleep(3)
-    return None
-try:
-    back = Image.open(io.BytesIO(base64.b64decode('${backImageB64}'))).convert('RGB')
-    slide = Image.open(io.BytesIO(base64.b64decode('${slidingImageB64}'))).convert('RGB')
-    sm = slide.resize((max(1, back.width // 3), max(1, slide.height // 3)))
-    combined = Image.new('RGB', (back.width, back.height + sm.height), (255, 255, 255))
-    combined.paste(back, (0, 0))
-    combined.paste(sm, (0, back.height))
-    p = '/tmp/captcha_combined.png'
-    combined.save(p)
-    cid = submit(p)
-    if not cid:
-        print('NO_ID'); sys.exit(3)
-    x = poll(cid)
-    if x is None:
-        print('NO_ANS'); sys.exit(4)
-    print(x)
-except Exception as e:
-    print('ERR:' + str(e), file=sys.stderr); sys.exit(5)
-`;
-  try {
-    const out = execSync('/app/Dumb-Panel/deps/python/3.12/bin/python3.12 -c ' + JSON.stringify(py), { timeout: 150000, encoding: 'utf-8' });
-    const x = parseInt(out.trim().split('\n').pop(), 10);
-    if (isNaN(x)) throw new Error('2captcha 返回异常: ' + out.slice(0, 80));
-    $.log(`🧩 2captcha 识别缺口 x=${x}`);
-    return x;
-  } catch (e) {
-    throw new Error(`2captcha 滑块识别失败: ${e.message}`);
-  }
-}
+// 滑块OCR请求封装
 const slidePost = async (body, randomIP) => {
     try {
         const response = await axios.post(`${OCR_SERVER}/capcode`, body, {
@@ -163,126 +105,52 @@ const slidePost = async (body, randomIP) => {
             },
             timeout: 15000
         });
-        if (!response.data || response.data.result === undefined || response.data.result === null) {
-            throw new Error('OCR 未返回 result: ' + JSON.stringify(response.data).slice(0, 100));
-        }
         return response.data;
     } catch (error) {
-        $.log(`⚠️ 滑块OCR识别失败(${error.message})，切换 2captcha 识别缺口...`);
-        const x = solveSlide2Captcha(body.slidingImage, body.backImage);
-        return { result: x };
+        $.log(`滑块OCR识别请求失败: ${error.message}`);
+        throw error;
     }
 };
 // =========================================================
 
-// ===================== PushPlus推送封装 =====================
-// 推送缓存读写
-function readPushCache() {
-    try {
-        if (!fs.existsSync(PUSH_CACHE_FILE)) return {};
-        return JSON.parse(fs.readFileSync(PUSH_CACHE_FILE, "utf8")) || {};
-    } catch {
-        return {};
-    }
+// ===================== std_report 双引擎推送（钉钉 markdown） =====================
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '君品荟';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
-function writePushCache(cache) {
-    try {
-        fs.writeFileSync(PUSH_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
-    } catch (e) {
-        $.log(`推送缓存写入失败: ${e.message}`);
-    }
+function _setName(idx, name) { if (name != null && name !== "") _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null && sign !== "") r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
 }
-
-// 判断是否可以执行4小时汇总推送（按小时去重）
-function canSendSummaryPush() {
-    const now = new Date();
-    const today = now.toISOString().split("T")[0];
-    const hour = now.getHours();
-    const cache = readPushCache();
-    const lastPushDay = cache.lastSummaryDay || "";
-    const lastPushHour = cache.lastSummaryHour ?? -1;
-    return lastPushDay !== today || lastPushHour !== hour;
+function _setStreak(idx, streak) { if (streak != null && streak !== "") _rpGet(idx).streak = String(streak); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
 }
-
-// 更新汇总推送记录
-function updateSummaryPushRecord() {
-    const now = new Date();
-    const cache = readPushCache();
-    cache.lastSummaryDay = now.toISOString().split("T")[0];
-    cache.lastSummaryHour = now.getHours();
-    writePushCache(cache);
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
 }
-
-// 保存单账号数据
-function saveAccountData(accountKey, data) {
-    const cache = readPushCache();
-    if (!cache.accountList) cache.accountList = {};
-    cache.accountList[accountKey] = data;
-    writePushCache(cache);
-}
-
-// 推送消息到PushPlus
-async function pushPlusSend(title, content) {
-    if (!PUSH_PLUS_TOKEN) {
-        $.log("⚠️ 未配置PUSH_PLUS_TOKEN，跳过推送");
-        return false;
-    }
-    try {
-        const res = await axios.post("http://www.pushplus.plus/send", {
-            token: PUSH_PLUS_TOKEN,
-            title: title,
-            content: content,
-            template: "txt"
-        }, { timeout: 10000 });
-        if (res.data.code === 200) {
-            $.log(`✅ PushPlus推送成功: ${title}`);
-            return true;
-        } else {
-            $.log(`❌ PushPlus推送失败: ${res.data.msg}`);
-            return false;
-        }
-    } catch (err) {
-        $.log(`❌ PushPlus推送请求异常: ${err.message}`);
-        return false;
-    }
-}
-
-// 生成汇总推送文本
-function buildSummaryContent() {
-    const cache = readPushCache();
-    const list = cache.accountList || {};
-    let content = "";
-    let idx = 1;
-    for (const key in list) {
-        const item = list[key];
-        content += `━━━ 账号${idx} ${item.nickName || "未知用户"} ━━━\n`;
-        content += `💎积分:${item.integration || 0} | 💧水滴:${item.water || 0} | 🌾小麦:${item.wheat || 0}\n`;
-        content += `🌱种子:${item.sorghum || 0} | 🍷酒滴:${item.wine || 0} | 🧪有机肥:${item.manure || 0}\n`;
-        if (item.wineStatus) content += `🍷 ${item.wineStatus}\n`;
-        if (item.farmLogs && item.farmLogs.length) {
-            item.farmLogs.forEach(log => { content += `${log}\n`; });
-        }
-        content += "\n";
-        idx++;
-    }
-    return content.trim();
-}
-
-// 执行全局汇总推送
-async function sendAllSummaryPush() {
-    if (!canSendSummaryPush()) {
-        $.log("⏳ 当前小时已推送过汇总，跳过4小时汇总推送");
-        return;
-    }
-    const content = buildSummaryContent();
-    if (!content) {
-        $.log("⚠️ 暂无账号数据，跳过推送");
-        return;
-    }
-    await pushPlusSend("【君品荟】数据汇总", content);
-    updateSummaryPushRecord();
-}
-// =========================================================
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+// =========================================================================
 
 function readCache() {
   try {
@@ -485,36 +353,26 @@ class Task {
 
   async getWxCode() {
     if (!this.openid) throw new Error("缺少 openid，无法自动登录");
-    // WCS 上游(47.94.122.154:18789)间歇 EOF → 重试 3 次
-    const MAX_RETRY = 3;
-    for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
-      try {
-        const codeRes = await axios.post(`${WX_SERVER_URL}/wx/code`, {
-          openid: this.openid,
-          appid: MINI_APP_ID 
-        }, {
-          headers: { 
-            'auth': WX_AUTH, 
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0'
-          },
-          timeout: 30000,
-        });
+    
+    try {
+      const codeRes = await axios.post(`${WX_SERVER_URL}/wx/code`, {
+        openid: this.openid,
+        appid: MINI_APP_ID 
+      }, {
+        headers: { 
+          'auth': WX_AUTH, 
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0'
+        }
+      });
 
-        if (codeRes.data && codeRes.data.status === true && codeRes.data.data && codeRes.data.data.code) {
-          return codeRes.data.data.code;
-        } else {
-          throw new Error(`wx_server 未返回 code: ${JSON.stringify(codeRes.data)}`);
-        }
-      } catch (error) {
-        const msg = `${error.message}`;
-        if (attempt < MAX_RETRY && /EOF|socket hang up|ECONNRESET|timeout|ETIMEDOUT/i.test(msg)) {
-          $.log(`⚠️ 账号[${this.index}] 获取 code 失败(${msg})，第 ${attempt}/${MAX_RETRY} 次重试...`);
-          await $.wait(2000, 4000);
-          continue;
-        }
-        throw new Error(`wx_server 获取 code 失败: ${msg}`);
+      if (codeRes.data && codeRes.data.status === true && codeRes.data.data && codeRes.data.data.code) {
+        return codeRes.data.data.code;
+      } else {
+        throw new Error(`wx_server 未返回 code: ${JSON.stringify(codeRes.data)}`);
       }
+    } catch (error) {
+      throw new Error(`wx_server 获取 code 失败: ${error.message}`);
     }
   }
 
@@ -753,6 +611,10 @@ class Task {
     try {
       const data = await this.withRelogin(fn);
       $.log(`账号[${this.index}] 签到成功: ${shortJson(data || "ok")}`);
+      _setName(this.index, this.pushData.nickName || this.openid);
+      // 推送补充总积分（会员 integration 字段）
+      const _int = this.pushData && this.pushData.integration != null ? Number(this.pushData.integration) : null;
+      _setSign(this.index, "签到成功", null, _int != null && _int > 0 ? String(_int) : null);
     } catch (e) {
       $.log(`账号[${this.index}] 签到失败: ${e.message || e}`);
     }
@@ -772,6 +634,7 @@ class Task {
 
   async makeYeast() {
     try {
+
       const res = await this.withRelogin(async () => {
         const response = await axios({
           method: "post",
@@ -902,6 +765,7 @@ class Task {
       .map((v) => `#${v.serial_number ?? v.id ?? "?"}:${v.status ?? "?"}`)
       .join(" ");
     $.log(`账号[${this.index}] 地块: ${lands.length || 0}块 ${summary}`.trim());
+    this.pushData.landSummary = `地块${lands.length || 0}块 ${summary}`.trim();
     return lands;
   }
 
@@ -1098,10 +962,8 @@ class Task {
             $.log(`账号[${this.index}] 收获成功`);
             this.addFarmLog(`🌾 收获成功：地块${i + 1} ${name}`);
             $.log(`账号[${this.index}] 开始种植新一轮作物`);
-            await $.wait(5000, 8000);  // 收获后延迟，避免风控
             await this.queryMember();
             await plantCropWithRotation();
-            await $.wait(3000, 5000);  // 种植后延迟
           } catch (e) { 
             $.log(`账号[${this.index}] 收获/种植失败: ${e.message || e}`); 
           }
@@ -1110,10 +972,8 @@ class Task {
         if (land.status == 0) {
           $.log(`账号[${this.index}] 第${i + 1}块地已清空，开始播种`);
           await plantCropWithRotation();
-          await $.wait(5000, 8000);  // 种植后延迟
         } else if (land.status == 2) {
           await harvestAndPlant();
-          await $.wait(5000, 8000);  // 收获种植后延迟
         } else {
           let code = 0, retry = 0;
           let isMature = false; 
@@ -1142,7 +1002,6 @@ class Task {
           if (isMature) {
              $.log(`账号[${this.index}] 识别到植物已成熟，立刻进行收获与种植操作！`);
              await harvestAndPlant();
-             await $.wait(5000, 8000); // 收获种植后延迟
              continue; 
           }
 
@@ -1171,7 +1030,6 @@ class Task {
           if (isMature) {
              $.log(`账号[${this.index}] 识别到植物已成熟，立刻进行收获与种植操作！`);
              await harvestAndPlant();
-             await $.wait(5000, 8000);  // 收获种植后延迟
           }
         }
       }
@@ -1286,23 +1144,29 @@ class Task {
 
     await this.ensureLogin(); 
     await this.queryMember();
-    
+    _setName(this.index, this.pushData.nickName || this.openid);
+    // 注意：会员积分(总积分)改由签到脚本(君品荟签到/jph_runner.py)推送，本花园脚本只展示种植/收获等花园流程
+
     const todayDate = new Date(Date.now() + 8 * 3600 * 1000).toISOString().split('T')[0];
     const cacheData = this.getCached();
 
-    // 强制滑块开关开启时，无视今日缓存，直接重跑滑块
-    if (FORCE_SLIDE || cacheData.lastSignDate !== todayDate) {
+    // 签到(含滑块)已由 jph_runner.py(君品荟签到)负责，本脚本专注花园/农场，默认关闭签到
+    // 如需恢复本脚本签到，设置环境变量 JPH_ENABLE_SIGN=true
+    const enableSign = process.env.JPH_ENABLE_SIGN === "true";
+    if (!enableSign) {
+      $.log(`账号[${this.index}] 签到功能已关闭（签到由君品荟签到脚本负责），跳过滑块与签到`);
+    } else if (FORCE_SLIDE || cacheData.lastSignDate !== todayDate) {
       const randomDelay = Math.floor(Math.random() * 5000) + 10000;
       $.log(`账号[${this.index}] 登录校验完成，等待 ${randomDelay / 1000}s 后执行滑块验证`);
       await $.wait(randomDelay, randomDelay);
-      
+
       // 调用重构后的强制滑块方法，重新完整跑一次滑块任务
       await this.reVerifyCaptcha();
-      await $.wait(2000, 5000); 
+      await $.wait(2000, 5000);
 
       await this.dailySign();
       this.saveCache({ lastSignDate: todayDate });
-      
+
       await $.wait(20000, 25000);
     } else {
       $.log(`账号[${this.index}] 今日已完成滑块签到，跳过滑块流程（设置 FORCE_SLIDE_VERIFY=true 可强制重跑滑块）`);
@@ -1317,9 +1181,31 @@ class Task {
 
     await this.queryMember();
     await this.queryFarm();
+    this.flushGardenPush();
+  }
 
-    // 保存账号数据用于汇总推送
-    saveAccountData(this.cacheKey, this.pushData);
+  // 将种植/收获日志与酒谷状态整理进推送的「任务」列表，替代原本的积分展示
+  flushGardenPush() {
+    const r = _rpGet(this.index);
+    // 种植/收获流程（farmLogs 已是完整中文描述，直接作为任务项，避免 "名称: 状态" 冗余）
+    for (const log of (this.pushData.farmLogs || [])) {
+      if (log) r.tasks.push(String(log));
+    }
+    // 酒谷(酿酒/收酒)状态
+    if (this.pushData.wineStatus) {
+      r.tasks.push("🍷 " + String(this.pushData.wineStatus));
+    }
+    // 花园状态(水滴/种子/酒滴): 每轮都展示, 不再只在「本轮无动作」时才补
+    // 用户要求：像以前没收获时的那版推送一样，固定把种子等全局数据带上
+    // 2026-09-15 用户要求去掉「地块N块 #1:10 #2:-1 …」，故不再拼 landSummary
+    {
+      const p = this.pushData;
+      const parts = [];
+      if (p.water != null && p.water !== "") parts.push(`水滴${p.water}`);
+      if (p.sorghum != null && p.sorghum !== "") parts.push(`种子${p.sorghum}`);
+      if (p.wine != null && p.wine !== "") parts.push(`酒滴${p.wine}`);
+      r.tasks.push("🌿 花园状态：" + (parts.length ? parts.join(" ｜ ") : "暂无更新"));
+    }
   }
 }
 
@@ -1333,8 +1219,8 @@ class Task {
       $.log(`账号执行失败: ${e.message || e}`);
     }
   }
-  // 全部账号跑完后，执行汇总推送
-  await sendAllSummaryPush();
+  // 全部账号跑完后，由 beforeExit 钩子经 std_report 双引擎统一推送
+  await flushLogPoints(_rpApp);
 })()
   .catch((e) => $.log(`脚本异常: ${e.message || e}`))
   .finally(() => $.done && $.done());

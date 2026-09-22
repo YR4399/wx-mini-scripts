@@ -1,7 +1,10 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+const { report, send_push } = require("./std_report");
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -26,24 +29,12 @@ cron: 30 7 * * *
 */
 
 const { Env } = require("../tools/env")
-const fs = require("fs");
-const path = require("path");
 const $ = new Env("海尔智家");
-const TOKEN_CACHE_FILE = path.join(__dirname, "hezj_token_cache.json");
-let ckName = "wx_opinion";
+let ckName = `hezj`;
 const strSplitor = "#";
 const axios = require("axios");
 const crypto = require("crypto");
-const WeChatCodeServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
+const WeChatCodeServer = require("./wcs");
 const defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.31(0x18001e31) NetType/WIFI Language/zh_CN miniProgram"
 const MINI_APP_ID = "wxe24b2f1f4e378891";
 const PAGE_VERSION = "475";
@@ -210,6 +201,7 @@ class Task {
         if (result?.retCode == '00000') {
             //打印签到结果
             $.log(`🌸账号[${this.index}]` + `🕊当前已签到${result.data.totalSignDay}天🎉`);
+    if (typeof logPoints === 'function') logPoints(null, result?.data?.totalSignDay ?? null,"海尔智家", this.index, "签到成功") // no points in response;
         } else {
             $.log(`🌸账号[${this.index}] 签到-失败:${result.retInfo}❌`)
         }
@@ -228,9 +220,59 @@ class Task {
 
 }
 
+
+// ===== 统一积分日志/推送 (自动注入 v2: 末次汇总推送1次) =====
+let _lpRows = [];
+let _lpApp = '';
+let _lpFlushed = false;
+function digPoints(obj) {
+  if (obj == null) return null;
+  const keys = ['point','points','score','scores','integral','growth','coin','beans','bean','balance','addScore','getScore','addPoint','todayScore','signScore','awardScore','awardAmount','awardVipcoinTotal','vipGrow','VipGrow','currentIntegral','changeIntegeral','totalPoint','totalPoints','credit','credits','exp','growthValue','keepScore','signScore'];
+  let found = null;
+  const walk = (o, depth) => {
+    if (found != null || depth > 4 || !o || typeof o !== 'object') return;
+    for (const k of Object.keys(o)) {
+      const lk = k.toLowerCase();
+      if (keys.includes(lk) && (typeof o[k] === 'number' || (typeof o[k] === 'string' && o[k] !== '' && !isNaN(Number(o[k]))))) { found = Number(o[k]); return; }
+      if (typeof o[k] === 'object') walk(o[k], depth + 1);
+      if (found != null) return;
+    }
+  };
+  walk(obj, 0);
+  return found;
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  const tp = Number(todayPoints) || 0;
+  const tot = Number(totalPoints) || 0;
+  _lpApp = app || _lpApp;
+  if (!_lpFlushed) _lpRows.push({
+    idx: idx,
+    name: app,
+    sign: status || "签到完成",
+    earned: tp > 0 ? '今日+' + tp + '积分' : null,
+    total: tot > 0 ? '累计' + tot + '积分' : null,
+  });
+}
+async function flushLogPoints(app) {
+  if (_lpFlushed) return;
+  _lpFlushed = true;
+  if (!_lpRows.length) return;
+  await report(app || _lpApp || '签到', _lpRows);
+}
+// 进程退出前/退出时汇总推送1次
+{
+  const _lpOE = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_lpApp);
+    if (p && typeof p.then === 'function') { p.then(() => _lpOE(code)).catch(() => _lpOE(code)); }
+    else { _lpOE(code); }
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_lpApp); });
+
+
 !(async () => {
-    
-$.userIdx = 0;
+    await getNotice()
     $.checkEnv(ckName);
 
     for (let user of $.userList) {
@@ -238,15 +280,22 @@ $.userIdx = 0;
     }
 })()
     .catch((e) => console.log(e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("海尔智家", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());
+
+async function getNotice() {
+	try {
+		let options = {
+			url: `https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json`,
+			headers: {
+				"User-Agent": defaultUserAgent,
+			},
+            timeout:3000
+		}
+		let {
+			data: res
+		} = await axios.request(options);
+		$.log(res)
+		return res
+	} catch (e) {}
+
+}

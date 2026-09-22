@@ -1,3 +1,10 @@
+// ========== 环境配置 ==========
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -25,9 +32,6 @@ const {
 } = require("../tools/env")
 const $ = new Env("谢瑞麟小程序签到");
 const WeChatServer = require("./wcs.js");
-const TokenCache = require("./_token_cache");
-const path = require("path");
-const tokenCache = new TokenCache(path.join(__dirname, "tslj_token_cache.json"));
 let ckName = `tslj`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -44,6 +48,7 @@ class Task {
     constructor(env) {
         this.index = $.userIdx++
         this.user = env.split(strSplitor);
+        this.remark = this.user[1] ? this.user[1].trim() : ""
         this.token = null
         this.wcsid = this.user[0]
         this.openid = null
@@ -51,9 +56,9 @@ class Task {
     }
 
     async run() {
-        const cached = tokenCache.read(this.wcsid);
-        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
-       
+       //随机延迟5-30s 模拟人工操作
+       await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
+       if (this.remark) _setName(this.index, this.remark);
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)
@@ -117,9 +122,11 @@ class Task {
         if (result?.code == '0') {
             //打印签到结果
             $.log(`🌸账号[${this.index}]` + `[${result.data.mobile}] 积分[${result.data.integral}]🎉`);
+            _rpGet(this.index).total = String(result.data.integral);
             for (let task of result.data.task_list) {
                 if (task.name == '每日签到') {
-                    this.isSign = task.status
+                    this.isSign = task.status;
+                    if (task.status) _setSign(this.index, "今日已签到");
                 }
             }
         } else {
@@ -150,8 +157,13 @@ class Task {
             //打印签到结果
             const { integral, total_days } = result?.data;
             $.log(`签到成功, 已连续签到 ${total_days} 天, 获得 ${integral} 积分 🎉`);
+            _setSign(this.index, "签到成功", integral != null ? "今日+" + integral + "积分" : "", "");
+            const _ri = _rpGet(this.index);
+            if (total_days != null) _ri.streak = String(total_days);
+            _setLottery(this.index, _digLottery(result?.data));
         } else {
             $.log(`🌸账号[${this.index}] 签到-失败:${result.msg}❌`)
+            _setSign(this.index, "签到失败: " + (result.msg || "未知"));
         }
 
 
@@ -168,31 +180,92 @@ class Task {
 
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '谢瑞麟';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], taskEarned: "", lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
     await getNotice()
-$.userIdx = 0;
     $.checkEnv(ckName);
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
             await new Task(user).run();
         }
     } else {
+        
         $.log(`${ckName}未配置微信SERVER配置 搭建可看仓库目录下的readme.md❌`)
         return
     }
-    // Push summary via pushplus
-    try {
-        const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
-        if (token) {
-            const log = ($.notifyStr || []).slice(-10).join(String.fromCharCode(10));
-            await require("axios").post("http://www.pushplus.plus/send", {
-                token, title: "谢瑞麟", content: log || "谢瑞麟执行完成", template: "txt"
-            }, { timeout: 10000 });
-        }
-    } catch(e) {}
+
 })()
     .catch((e) => console.log(e))
-    .finally(() => { $.done(); process.exit(0); });
+    .finally(() => $.done());
 async function getNotice() {
     try {
         let options = {
@@ -210,5 +283,3 @@ async function getNotice() {
     } catch (e) { }
 
 }
-
-

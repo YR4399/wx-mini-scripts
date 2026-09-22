@@ -19,33 +19,15 @@ node oppo.js
 ==================================================
 */
 const axios = require("axios");
-const notifyLines = [];
-const _origLog = console.log;
-console.log = function (...args) {
-  try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
-  _origLog.apply(console, args);
-};
-async function sendToPushPlus(title, content) {
-  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
-  if (!token || !content.trim()) return;
-    if (content.length > 6000) content = content.slice(-6000);
-  const payload = { token, title, content, template: "txt" };
-  try {
-    if (typeof axios !== "undefined") {
-      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
-    } else {
-      const data = JSON.stringify(payload);
-      await new Promise((resolve, reject) => {
-        const req = https.request("https://www.pushplus.plus/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
-          timeout: 10000,
-        }, (res) => { res.resume(); res.on("end", resolve); });
-        req.on("error", reject); req.write(data); req.end();
-      });
-    }
-    _origLog("✅ PushPlus推送成功: " + title);
-  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
+const { report } = require("./std_report");
+
+// 统一推送(std_report, 钉钉加签): 每个账号 run() 累积一行, main 末 _reportOnce 发送(防重入)
+const _rows = [];
+let _rpFlushed = false;
+async function _reportOnce() {
+  if (_rpFlushed) return;
+  _rpFlushed = true;
+  if (_rows.length) report("OPPO商城", _rows);
 }
 
 const APP = {
@@ -53,8 +35,8 @@ const APP = {
     appid: "wxe705c556754a1de2",
     version: 361,
 };
-const WX_SERVER_URL = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/$/, "");
-const WX_AUTH = process.env.wx_auth || "";
+const wx_server_url = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/$/, "");
+const wx_auth = process.env.wx_auth || "";
 const MINI_API = "https://omoapplet-api-cn.heytap.com";
 const H5_API = "https://hd.opposhop.cn";
 const SIGN_ACTIVITY_ID = "2061050217641549824";
@@ -155,12 +137,12 @@ async function request(options) {
 }
 
 async function getWxCode(openid) {
-    if (!WX_AUTH) throw new Error("未配置 wx_auth，无法从 wx_server 获取 code");
+    if (!wx_auth) throw new Error("未配置 wx_auth，无法从 wx_server 获取 code");
     const { status, data } = await request({
         method: "POST",
-        url: `${WX_SERVER_URL}/wx/code`,
+        url: `${wx_server_url}/wx/code`,
         headers: {
-            auth: WX_AUTH,
+            auth: wx_auth,
             "content-type": "application/json",
             Referer: `https://servicewechat.com/${APP.appid}/${APP.version}/page-frame.html`,
         },
@@ -327,7 +309,7 @@ class OppoTask {
 
     async signIn() {
         const { signed } = await this.querySignDetail();
-        if (signed) return this.log("签到结果: 今日已签到，跳过");
+        if (signed) { this._sign = "今日已签到"; return this.log("签到结果: 今日已签到，跳过"); }
         const result = await this.h5Request("POST", "/api/cn/oapi/marketing/cumulativeSignIn/signIn", {
             activityId: SIGN_ACTIVITY_ID,
             captchaCode: "",
@@ -336,9 +318,11 @@ class OppoTask {
         });
         const data = result.data || {};
         if (data.receiveStatus === false) {
+            this._sign = "签到失败";
             this.log(`签到结果: 失败，${data.receiveFailMsg || result.message || "未知原因"}`);
             return;
         }
+        this._sign = "签到成功";
         this.log(`签到结果: 成功，获得 ${data.awardValue ?? "-"}${awardTypeName(data.awardType)}`);
         await this.querySignDetail();
     }
@@ -355,19 +339,31 @@ class OppoTask {
             } catch (e) {}
             await wait(800);
 
-            const result = await this.h5Request("GET", "/api/cn/oapi/marketing/task/receiveAward", {
-                taskId,
-                activityId: TASK_ACTIVITY_ID,
-                creditsAddActionId: CREDITS_ADD_ACTION_ID,
-                business: BUSINESS
-            });
+            let result;
+            try {
+                result = await this.h5Request("GET", "/api/cn/oapi/marketing/task/receiveAward", {
+                    taskId,
+                    activityId: TASK_ACTIVITY_ID,
+                    creditsAddActionId: CREDITS_ADD_ACTION_ID,
+                    business: BUSINESS
+                });
+            } catch (e) {
+                const errorMsg = e.message || String(e);
+                if (["已领取", "已经领取", "已完成", "已参与", "未完成", "无需领取", "该任务未完成或者已经领取"].some(k => errorMsg.includes(k))) {
+                    this.log(`任务【${name}】${errorMsg.split(":").pop().trim() || errorMsg}`);
+                    return true;
+                }
+                this.log(`任务【${name}】失败：${errorMsg}`);
+                return false;
+            }
+            
             const data = result.data || {};
             if (data.receiveStatus) {
                 this.log(`任务【${name}】完成，获得 ${data.awardValue ?? "-"}${awardTypeName(data.awardType)}`);
                 return true;
             } else {
                 const msg = result.message || result.errorMessage || "";
-                if (["已领取", "已完成", "已参与"].some(k => msg.includes(k))) {
+                if (["已领取", "已经领取", "已完成", "已参与", "未完成", "无需领取"].some(k => msg.includes(k))) {
                     this.log(`任务【${name}】${msg}`);
                     return true;
                 }
@@ -390,9 +386,12 @@ class OppoTask {
             await wait(500);
         }
         this.log(`浏览任务总进度：${okCount}/${TASKS.length}`);
+        this._taskOk = okCount;
     }
 
     async run() {
+        this._sign = null;
+        this._taskOk = 0;
         try {
             this.log(`开始执行 ${APP.name}`);
             await this.login();
@@ -409,13 +408,24 @@ class OppoTask {
             this.log(`当前总积分：${this.finalPoints}`);
         } catch (e) {
             this.log(`执行失败: ${e.message || e}`);
+            if (!this._sign) this._sign = "执行失败";
         }
+        const earned = this.finalPoints - this.initialPoints;
+        _rows.push({
+            idx: this.index,
+            name: this.account.remark || null,
+            sign: this._sign || "执行完成",
+            earned: earned !== 0 ? `+${earned}积分` : null,
+            total: this.finalPoints || null,
+            tasks: `浏览任务 ${this._taskOk}/${TASKS.length}`,
+            lottery: null,
+        });
     }
 }
 
 async function main() {
     const envKey = "oppo";
-    const rawEnv = process.env[envKey] || process.env.wx_opinion || "";
+    const rawEnv = process.env.wx_opinion || "";
     if (!rawEnv.trim()) {
         log(`未找到环境变量 ${envKey}，请配置后再运行`);
         return;
@@ -436,12 +446,13 @@ async function main() {
 
     const cost = ((Date.now() - startTime) / 1000).toFixed(2);
     log(`🔔${APP.name}, 结束! 耗时 ${cost} 秒`);
-    await sendToPushPlus("OPPO商城", notifyLines.join("\n"));
+    await _reportOnce();
     process.exit(0);
 }
 
 main()
-    .catch((e) => {
+    .catch(async (e) => {
         log(`脚本异常: ${e.message || e}`);
+        await _reportOnce();
         process.exit(1);
     });

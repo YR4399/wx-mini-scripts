@@ -31,28 +31,6 @@ console.log = function (...args) {
   try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
   _origLog.apply(console, args);
 };
-async function sendToPushPlus(title, content) {
-  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
-  if (!token || !content.trim()) return;
-    if (content.length > 6000) content = content.slice(-6000);
-  const payload = { token, title, content, template: "txt" };
-  try {
-    if (typeof axios !== "undefined") {
-      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
-    } else {
-      const data = JSON.stringify(payload);
-      await new Promise((resolve, reject) => {
-        const req = https.request("https://www.pushplus.plus/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
-          timeout: 10000,
-        }, (res) => { res.resume(); res.on("end", resolve); });
-        req.on("error", reject); req.write(data); req.end();
-      });
-    }
-    _origLog("✅ PushPlus推送成功: " + title);
-  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
-}
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
@@ -73,8 +51,8 @@ const $ = new Env();
 
 // ==================== 配置 ====================
 const CFG = {
-  WX_SERVER: process.env.wx_server_url || process.env.wxcodeurl || 'http://host.docker.internal:18788',
-  WX_AUTH: process.env.wx_auth || process.env.WXAPIKEY || process.env.WX_SERVER_APIKEY || '',
+  WX_SERVER: process.env.wx_server_url || process.env.wx_server_url || 'http://host.docker.internal:18788',
+  wx_auth: process.env.wx_auth || process.env.wx_auth || process.env.WX_SERVER_APIKEY || '',
   OPENIDS: parseOpenids(),
   APPID: 'wxfeb453e6377c3137',
   GAME_HOST: 'gm-pension-map.weijuju.com',
@@ -235,7 +213,7 @@ async function miniLogin(openid, cache) {
   // 1. 通过 WCS 获取 wx.login code
   $.info(`[${openid}] 获取微信 code...`);
   const codeResp = await wcsReq('POST', '/wx/code',
-    { 'auth': CFG.WX_AUTH },
+    { 'auth': CFG.wx_auth },
     JSON.stringify({ openid, appid: CFG.APPID })
   );
 
@@ -378,7 +356,8 @@ const TASK_TYPE_MAP = { 0: '分享', 1: '浏览', 2: '跳转', 3: '邀请' };
 const TASK_TYPES_SKIP = [0, 3]; // 分享类(需微信分享回调)和邀请类任务跳过
 
 // ==================== 单账号处理 ====================
-async function processAccount(openid, cache) {
+async function processAccount(openid, cache, idx) {
+  const _idx = (idx != null) ? idx : null;
   $.info(`\n======== 账号: ${openid} ========`);
   const summary = { sign: false, tasks: 0, taskAwards: 0, points: 0, dice: 0, diceRolled: 0 };
 
@@ -417,11 +396,17 @@ async function processAccount(openid, cache) {
 
   // Step 5: 签到
   if (!initData.todaySigned) {
-    await gameSign(gameToken, rsaKeys);
+    const _signRes = await gameSign(gameToken, rsaKeys);
     summary.sign = true;
+    if (_idx != null) {
+      _setSign(_idx, "签到成功");
+      const _ep = _signRes ? extractPoints(_signRes) : null;
+      if (_ep && _ep.earned != null) _rpGet(_idx).earned = String(_ep.earned);
+    }
   } else {
     $.log('今日已签到，跳过');
     summary.sign = true;
+    if (_idx != null) _setSign(_idx, "今日已签到");
   }
 
   // Step 6: 摇骰子（有骰子就摇）
@@ -527,15 +512,66 @@ async function processAccount(openid, cache) {
   summary.points = finalInit ? finalInit.userPointCount : 0;
   summary.dice = finalInit ? finalInit.diceCount : 0;
   $.ok(`👤 ${openid} 完成! 签到:${summary.sign} 骰子:${summary.dice} 国小豆:${summary.points}`);
+  if (_idx != null) {
+    _rpGet(_idx).total = String(summary.points);
+    if (summary.taskAwards > 0) _setTaskEarned(_idx, "做任务+" + summary.taskAwards + "国小豆");
+  }
   return summary;
 }
+
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '赵钱孙李';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], taskEarned: "", lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _setStreak(idx, text) { if (text != null && text !== "") _rpGet(idx).streak = String(text); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
 
 // ==================== 主函数 ====================
 async function main() {
   const t = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
   console.log(`\n【赵钱孙李·签到任务】 ${t}`);
 
-  if (!CFG.WX_AUTH) { $.err('未配置 wx_auth'); return; }
+  if (!CFG.wx_auth) { $.err('未配置 wx_auth'); return; }
   if (CFG.OPENIDS.length === 0) { $.err('未配置 wx_opinion'); return; }
 
   const cache = loadCache();
@@ -543,7 +579,8 @@ async function main() {
 
   let totalSign = 0, totalTasks = 0, totalPoints = 0;
   for (let i = 0; i < CFG.OPENIDS.length; i++) {
-    const r = await processAccount(CFG.OPENIDS[i], cache);
+    _setName(i + 1, CFG.OPENIDS[i]);
+    const r = await processAccount(CFG.OPENIDS[i], cache, i + 1);
     if (r.sign) totalSign++;
     totalTasks += r.tasks;
     totalPoints = Math.max(totalPoints, r.points);
@@ -553,7 +590,6 @@ async function main() {
   console.log(`\n========================================`);
   console.log(`📊 汇总: 签到 ${totalSign}/${CFG.OPENIDS.length} | 任务 ${totalTasks} 个 | 最高国小豆 ${totalPoints}`);
   $.ok('所有任务执行完毕！🎉');
-  await sendToPushPlus("赵钱孙李", notifyLines.join("\n"));
 }
 
 if (require.main === module) {

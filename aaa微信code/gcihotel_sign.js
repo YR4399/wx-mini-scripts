@@ -49,7 +49,6 @@
  *  wx_auth          : WCS 认证 key
  *  gcihotel_openid  : 可选。小程序 openid 覆盖，& 分隔，【按位置对应 wx_opinion】，
  *                     留空的位置自动走 oauth 发现。例: "oPV0xxx&&"
- *  PUSH_PLUS_TOKEN  : PushPlus 推送 token (兼容 PLUSPLUS_TOKEN)
  *
  * cron: 20 8 * * *
  */
@@ -343,6 +342,7 @@ class Account {
 
   async run() {
     L.step(`${this.remark} 开始`);
+    _setName(this.index + 1, this.remark);
     await this.resolveOpenid();
     await sleep(jitter(900, 300));
 
@@ -355,6 +355,7 @@ class Account {
           ? "会员信息不存在(配置的 openid 未注册会员)"
           : "该微信号未注册绿地酒店会员，请先在小程序内注册；若已在小程序注册，请抓包取小程序 openid 填入 gcihotel_openid 对应位置";
         L.warn(this.tag(this.result.detail));
+        _setSign(this.index + 1, "未注册会员");
         return this.result;
       }
       throw e;
@@ -375,6 +376,8 @@ class Account {
       this.result.ok = true;
       this.result.detail = `今日已签到 · 连签${st.ladderDays}天 · 积分${this.member.point}`;
       L.ok(this.tag("今日已签到，跳过"));
+      _setSign(this.index + 1, "今日已签到", "", String(this.member.point));
+      _setStreak(this.index + 1, st.ladderDays);
       return this.result;
     }
 
@@ -385,12 +388,14 @@ class Account {
       this.result.ok = true;
       this.result.detail = `今日已签到 · 积分${this.member.point}`;
       L.ok(this.tag(r.msg));
+      _setSign(this.index + 1, "今日已签到", "", String(this.member.point));
       return this.result;
     }
     if (!r.ok) {
       this.result.ok = false;
       this.result.detail = `签到失败: ${r.msg}`;
       L.fail(this.tag(this.result.detail));
+      _setSign(this.index + 1, "签到失败");
       return this.result;
     }
 
@@ -405,23 +410,49 @@ class Account {
     this.result.ok = true;
     this.result.detail = `签到成功 +${r.points} 积分 · 连签${r.ladder}天 · 当前积分${latest}`;
     L.ok(this.tag(this.result.detail));
+    _setSign(this.index + 1, "签到成功", r.points > 0 ? `+${r.points}积分` : "", String(latest));
+    _setStreak(this.index + 1, r.ladder);
     return this.result;
   }
 }
 
-// ============================== 推送 ==============================
-async function push(title, content) {
-  const token = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN;
-  if (!token) return;
-  try {
-    await axios.post("http://www.pushplus.plus/send", {
-      token, title, content: content.replace(/\n/g, "<br/>"), template: "html",
-    }, { timeout: 15000 });
-    L.info("PushPlus 推送完成");
-  } catch (e) {
-    L.warn(`推送失败: ${e.code || e.message}`);
-  }
+// ============================== 推送(std_report 双引擎, 钉钉 markdown) ==============================
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = NAME + "签到";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, n) { if (n != null && n !== "") _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 // ============================== 主流程 ==============================
 (async () => {
@@ -453,6 +484,7 @@ async function push(title, content) {
       // 账号级隔离：单账号异常不影响后续账号
       L.fail(acc.tag(`执行异常: ${e.message}`));
       results.push({ name: acc.remark, ok: false, detail: `异常: ${e.message}` });
+      _setSign(i + 1, "执行异常: " + e.message);
     }
     if (i < accounts.length - 1) await sleep(jitter(4000, 1500));
   }
@@ -464,7 +496,7 @@ async function push(title, content) {
   const okCount = results.filter((r) => r.ok).length;
   console.log(`\n📊 成功 ${okCount}/${results.length}`);
 
-  await push(`${NAME}签到`, lines.join("\n"));
+  await flushLogPoints(_rpApp);
 
   process.exit(okCount > 0 ? 0 : 1);
 })();

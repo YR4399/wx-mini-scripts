@@ -5,6 +5,22 @@ cron: 20 8 * * *
 const { Env } = require("../tools/env.js");
 const $ = new Env("小王姐妹福利社");
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
@@ -17,9 +33,9 @@ const USER_AGENT =
 let ckName = "wx_opinion";
 
 const wechat = new WeChatServer({
-    url: process.env.wx_server_url || process.env.wxcodeurl || "http://host.docker.internal:18788",
+    url: process.env.wx_server_url || process.env.wx_server_url || "http://host.docker.internal:18788",
     appid: MINI_APP_ID,
-    auth: process.env.wx_auth || process.env.WXAPIKEY || "",
+    auth: process.env.wx_auth || process.env.wx_auth || "",
 });
 
 // ---------- token 缓存 ----------
@@ -129,43 +145,82 @@ class Task {
             if (today && today.daySignStatus === 1) signed = true;
         } catch (_) {}
 
-        if (signed) { log(`账号[${this.index}] 今日已签到`); return; }
+        if (signed) { log(`账号[${this.index}] 今日已签到`); _setSign(this.index, "今日已签到"); return; }
 
         const resp = await this.req("GET", `/dtapi/pointsSign/user/sign?date=${encodeURIComponent(todayStr())}`);
         const d = resp.data || {};
         if (d.error === 0 && d.data) {
             const r = d.data.signReward ?? 0;
             const ex = d.data.extraSignReward ?? 0;
+            const got = Number(r) + Number(ex);
             log(`账号[${this.index}] 签到成功: +${r}积分${ex ? " (额外+" + ex + ")" : ""}`);
+            _setSign(this.index, "签到成功", got > 0 ? "今日+" + got + "积分" : "", "");
         } else if (/已签|已经签到|repeat|signed/i.test(JSON.stringify(d))) {
             log(`账号[${this.index}] 今日已签到`);
+            _setSign(this.index, "今日已签到");
         } else {
             log(`账号[${this.index}] 签到返回: ${JSON.stringify(d).slice(0, 150)}`);
+            _setSign(this.index, "签到失败");
         }
     }
 
     async run() {
         try {
+            _setName(this.index, this.nick || ("账号" + this.index));
             await this.ensureLogin();
+            if (this.nick) _setName(this.index, this.nick);
             await this.sign();
             const p = await this.getPoints();
-            if (p !== undefined) log(`账号[${this.index}] 当前积分: ${p}`);
+            if (p !== undefined) {
+                log(`账号[${this.index}] 当前积分: ${p}`);
+                _rpGet(this.index).total = String(p);
+            }
         } catch (e) {
             log(`账号[${this.index}] 执行失败: ${e.message}`);
+            _setSign(this.index, "执行失败");
         }
     }
 }
 
-// ---------- PushPlus 推送 ----------
-async function pushPlus(title, content) {
-    const token = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN;
-    if (!token) return;
-    try {
-        await axios.post("https://www.pushplus.plus/send", {
-            token, title, content: content.replace(/\n/g, "<br>"), template: "html",
-        }, { timeout: 15000 });
-    } catch (_) {}
+// ========== 推送：经 std_report 双引擎（钉钉 markdown）统一推送，无需额外配置 ==========
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '小王姐妹福利社';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
+function _setName(idx, name) { if (name != null && name !== "") _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null && sign !== "") r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, streak) { if (streak != null && streak !== "") _rpGet(idx).streak = String(streak); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 (async () => {
     const raw = process.env[ckName] || "";
@@ -173,8 +228,8 @@ async function pushPlus(title, content) {
     if (!openids.length) { $.log(`未配置 ${ckName} 环境变量`); return; }
     $.log(`共 ${openids.length} 个账号`);
     for (let i = 0; i < openids.length; i++) {
-        await new Task(openids[i], i).run();
+        await new Task(openids[i], i + 1).run();
         if (i < openids.length - 1) await sleep(3000 + Math.random() * 5000);
     }
-    await pushPlus("小王姐妹福利社", logLines.length ? logLines.join("\n") : "签到完成");
+    await flushLogPoints(_rpApp);
 })();

@@ -1,4 +1,9 @@
 # ========== SSL和代理修复 ==========
+
+
+# ==================== 统一推送 (std_report / 钉钉) ====================
+import sys
+from std_report import report
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -9,18 +14,6 @@ os.environ['https_proxy'] = ''
 # ========== SSL和代理修复结束 ==========
 from _log_tee import enable as _enable_tee
 
-
-# ========== 推送通知 ==========
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -55,8 +48,8 @@ from urllib3.util.retry import Retry
 # ============================================================================
 
 # wechatserver 配置（优先从呆呆面板小写环境变量读取）
-WX_SERVER_URL = os.getenv("wx_server_url") or os.getenv("WX_SERVER_URL", "")
-WX_AUTH = os.getenv("wx_auth") or os.getenv("WX_AUTH", "")
+wx_server_url = os.getenv("wx_server_url") or os.getenv("wx_server_url", "")
+wx_auth = os.getenv("wx_auth") or os.getenv("wx_auth", "")
 
 # 小程序 AppID
 APPID = os.getenv("NIUNIU_APPID", "wxcb95401f250e9a53")
@@ -109,7 +102,7 @@ if not WX_USERKEYS and not MANUAL_TOKENS:
     print("  NIUNIU_TOKENS  : 手动 token（从小程序抓包）")
     sys.exit(1)
 
-if WX_USERKEYS and not WX_SERVER_URL:
+if WX_USERKEYS and not wx_server_url:
     print("❌ 配置了 NIUNIU_ACCOUNT 但未设置 wx_server_url")
     sys.exit(1)
 
@@ -251,8 +244,8 @@ def load_accounts() -> List[AccountConfig]:
 
 def get_wx_code(userkey: str, account: AccountConfig) -> Optional[str]:
     """通过 wechatserver /wx/code 获取 wx.login code"""
-    url = f"{WX_SERVER_URL.rstrip('/')}/wx/code"
-    headers = {"AUTH": WX_AUTH}
+    url = f"{wx_server_url.rstrip('/')}/wx/code"
+    headers = {"AUTH": wx_auth}
     payload = {"userKey": userkey, "openid": userkey, "appid": APPID}
 
     for attempt in range(3):
@@ -1076,6 +1069,10 @@ def do_daily_tasks(account: AccountConfig, cache: TaskCache) -> Dict:
     result["start_integral"] = get_integral(token, account, cache)
     log(f"当前积分: {result['start_integral']}", "INFO", account.display_name)
 
+    # 0. 自动提现（前置，避免被时长任务 time.sleep 阻塞）
+    if account.is_runnable():
+        result["cash_out"] = auto_cash_out(token, account, cache)
+
     # 1. 签到 & 补签
     if not cache.is_daily_task_done(account.account_id, "sign"):
         result["sign"], result["resign"] = do_sign_and_resign(token, account, cache)
@@ -1132,13 +1129,6 @@ def do_daily_tasks(account: AccountConfig, cache: TaskCache) -> Dict:
     earned = result["end_integral"] - result["start_integral"]
     if earned > 0:
         log(f"本次获得: +{earned} 积分", "SUCCESS", account.display_name)
-
-    # 7. 自动提现
-    if account.is_runnable():
-        random_sleep(TASK_INTERVAL)
-        result["cash_out"] = auto_cash_out(token, account, cache)
-    else:
-        result["cash_out"] = {"attempted": False, "amount": 0, "msg": "账号状态异常"}
 
     result["status"] = account.status
     return result
@@ -1214,8 +1204,10 @@ def process_account(account: AccountConfig, cache: TaskCache) -> Dict:
                 "status": account.status, "status_message": "无法获取 Token",
             }
 
-        # 验证 token 是否有效
-        _ = get_integral(account.token, account, cache)
+        # 验证 token 是否有效（直接 check_response，避免 safe_check 吞掉 TOKEN_EXPIRED 状态导致不刷新）
+        _v_url = f"{BUSINESS_API_BASE}/app/integral/selectByUserId"
+        _v_resp = safe_request("GET", _v_url, headers=make_headers(account.token))
+        _v_ok, _v_data = check_response(_v_resp, account, cache)
         if not account.is_runnable():
             if account.status == AccountStatus.TOKEN_EXPIRED and account.account_type == "wx":
                 # token 过期，清除缓存后重新获取
@@ -1262,7 +1254,7 @@ def main():
     print(f"=== 开始执行 [{start.strftime('%Y-%m-%d %H:%M:%S')}] ===")
     print(f"📍 小程序AppID: {APPID}")
     if WX_USERKEYS:
-        print(f"📍 wechatserver: {WX_SERVER_URL}")
+        print(f"📍 wechatserver: {wx_server_url}")
     print("=" * 60)
 
     accounts = load_accounts()
@@ -1296,6 +1288,7 @@ def main():
 
     total_earned = 0
     success_count = 0
+    _rows = []
 
     for account, result in all_results:
         earned = result["end_integral"] - result["start_integral"]
@@ -1305,18 +1298,24 @@ def main():
         s = result["status"]
         if s == AccountStatus.BANNED:
             print("  状态: 🚫 已封禁")
+            sign_text = "已封禁"
         elif s == AccountStatus.TOKEN_EXPIRED:
             print("  状态: ⏰ Token已过期")
+            sign_text = "Token已过期"
         elif s in (AccountStatus.TOKEN_INVALID, AccountStatus.WX_ERROR):
             print(f"  状态: ❓ {result['status_message']}")
+            sign_text = "登录异常"
         elif s == AccountStatus.NETWORK_ERROR:
             print("  状态: 🌐 网络错误")
+            sign_text = "网络错误"
         elif s == AccountStatus.UNKNOWN_ERROR:
             print(f"  状态: ❌ {result['status_message']}")
+            sign_text = "执行异常"
         else:
             success_count += 1
             print("  状态: ✅ 正常")
             print(f"  签到: {'✅' if result['sign'] else '❌'}")
+            sign_text = "签到成功" if result["sign"] else "签到失败"
             if result["resign"] > 0:
                 print(f"  补签: +{result['resign']} 次")
             print(f"  点赞: {result['like']}/2 次")
@@ -1333,10 +1332,34 @@ def main():
                 print(f"  提现: ⏭️ {co.get('msg', '')}")
             print(f"  积分: {result['start_integral']} → {result['end_integral']} (+{earned})")
 
+        # 构造统一推送 row
+        tparts = []
+        if result.get("resign", 0) > 0:
+            tparts.append(f"补签+{result['resign']}")
+        if s == AccountStatus.NORMAL:
+            tparts.append(f"点赞{result['like']}/2")
+            tparts.append(f"吃饭补贴{'✅' if result['eat'] else '❌'}")
+            tparts.append(f"看广告{result['video']}/{MAX_VIDEO_PER_DAY}")
+            co = result.get("cash_out", {})
+            if co and co.get("attempted") and co.get("amount", 0) > 0:
+                tparts.append(f"提现{co['amount']}元")
+        _rows.append({
+            "idx": len(_rows) + 1,
+            "name": account.display_name,
+            "sign": sign_text,
+            "earned": (f"+{earned}积分") if (earned > 0 and s == AccountStatus.NORMAL) else None,
+            "total": result["end_integral"] if s == AccountStatus.NORMAL else None,
+            "tasks": (" | ".join(tparts)) if tparts else None,
+            "lottery": None,
+        })
+
     print(f"\n{'='*50}")
     print(f"✅ 成功: {success_count} | ❌ 失败: {len(accounts)-success_count} | 💰 总获得: +{total_earned}")
     end = datetime.now()
     print(f"=== 执行结束 [{end.strftime('%H:%M:%S')}] 耗时 {(end-start).total_seconds():.1f}s ===")
+
+    if _rows:
+        report("牛牛短剧每日任务", _rows)
 
 
 class Tee:
@@ -1384,12 +1407,5 @@ if __name__ == "__main__":
         sys.stderr = _old_stderr
 
         _logs = _tee.getvalue()
-    if _logs.strip():
-        try:
-            push_notify('牛牛短剧 签到结果', _logs[-2000:])
-        except:
-            pass
-
 
 # ========== 已在main中处理推送 ==========
-

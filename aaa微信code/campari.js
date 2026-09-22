@@ -1,28 +1,27 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
+------------------------------------------
+@Author: sm
+@Date: 2026.05.31
 @Description: 金巴厘杯中空间签到
 cron: 31 8 * * *
+------------------------------------------
+变量名：campari
+变量值：wx_server 里的 openid/账号标识，多账号用 & 或换行
+------------------------------------------
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("金巴厘杯中空间签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx059d0e2508ab7045";
 const PAGE_VERSION = "70";
@@ -30,7 +29,7 @@ const API_BASE = "https://camparicrm.81680.cn";
 const TOKEN_CACHE_FILE = path.join(__dirname, "campari_token_cache.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "campari";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -51,7 +50,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e );
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -65,39 +64,44 @@ function rewardText(flowList) {
     const point = last.leftPoint;
     const day = last.signInDay;
     return [
-        point !== undefined ? "积分+" + point : "",
-        day !== undefined ? "连续" + day + "天" : "",
+        point !== undefined ? `积分+${point}` : "",
+        day !== undefined ? `连续${day}天` : "",
     ].filter(Boolean).join("，");
 }
 
 class Task {
-    constructor(openid) {
+    constructor(raw) {
+        const _parts = String(raw || "").split("#");
+        this.openid = _parts[0].trim();
+        this.remark = (_parts[1] || "").trim();
         this.index = $.userIdx++;
-        this.openid = String(openid || "").trim();
         this.session = {};
+        this.signedRecorded = false;
     }
 
     async run() {
+        if (this.remark) _row(this.index).name = this.remark;
         const cached = this.getCachedToken();
         if (cached) {
             this.session = cached;
-            L.info("账号[" + this.index + "] 使用缓存token");
+            $.log(`账号[${this.index}] 使用缓存token`);
             if (!(await this.checkToken())) {
-                L.fail("账号[" + this.index + "] 缓存token失效，尝试刷新");
+                $.log(`账号[${this.index}] 缓存token失效，尝试刷新`);
                 if (!(await this.refreshToken())) {
                     this.removeCachedToken();
-                    L.fail("账号[" + this.index + "] 刷新失败，重新登录");
+                    $.log(`账号[${this.index}] 刷新失败，重新登录`);
                 }
             }
         }
 
         if (!this.session.token) {
             await this.loginByWxCode();
-            if (!this.session.token) return;
+            if (!this.session.token) { _setSign(this.index, "登录失败", "", ""); return; }
         }
 
         await this.doSign();
         this.saveCachedToken();
+        if (!this.signedRecorded) _setSign(this.index, "未执行签到", "", "");
     }
 
     getCachedToken() {
@@ -161,7 +165,7 @@ class Task {
     async loginByWxCode() {
         try {
             const code = await this.getLoginCode();
-            const res = await this.request("/cgs-api/wxApi/getCodeToSession/" + encodeURIComponent(code), {});
+            const res = await this.request(`/cgs-api/wxApi/getCodeToSession/${encodeURIComponent(code)}`, {}, "");
             const data = res.data || {};
             this.session = {
                 token: data.token || "",
@@ -170,9 +174,9 @@ class Task {
             };
             if (!this.session.token) throw new Error("登录未返回token");
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] 登录成功");
+            $.log(`账号[${this.index}] 登录成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
+            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
         }
     }
 
@@ -206,40 +210,78 @@ class Task {
 
     async doSign() {
         try {
-            const info = await this.getSignInfo();
-            const text = rewardText(info.pointFlowList);
-            if (info.todaySignInFlag) {
-                L.info("账号[" + this.index + "] 今日已签到" + (text ? "，" + text : ""));
+        const info = await this.getSignInfo();
+        const text = rewardText(info.pointFlowList);
+        const last = (info.pointFlowList || []).slice(-1)[0] || {};
+        const bal = (last.leftPoint !== undefined && !isNaN(Number(last.leftPoint))) ? String(last.leftPoint) : "";
+        const earn = text || "";
+        if (last.signInDay != null && !isNaN(Number(last.signInDay))) _row(this.index).streak = Number(last.signInDay);
+        const _lot = _digLottery(info); if (_lot) _row(this.index).lottery = _lot;
+        if (info.todaySignInFlag) {
+                $.log(`账号[${this.index}] 今日已签到${text ? `，${text}` : ""}`);
+                _setSign(this.index, "今日已签到", earn, bal); this.signedRecorded = true;
                 return;
             }
-            L.info("账号[" + this.index + "] 签到完成" + (text ? "，" + text : ""));
+            $.log(`账号[${this.index}] 签到完成${text ? `，${text}` : ""}`);
+            _setSign(this.index, "签到完成", earn, bal); this.signedRecorded = true;
         } catch (e) {
             const message = e.message || e;
-            L.fail("账号[" + this.index + "] 签到失败: " + message );
+            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            _setSign(this.index, "签到失败: " + message, "", "");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
+
+// ===== 统一推送 (标准格式 v1) =====
+const { report } = require("./std_report");
+const _report = [];
+function _row(idx) { if (!_report[idx]) _report[idx] = { idx }; return _report[idx]; }
+function _setSign(idx, sign, earned, total) {
+  const r = _row(idx);
+  r.sign = sign;
+  if (earned != null) r.earned = earned;
+  if (total != null) r.total = total;
+}
+// 通用抽奖/奖品提取：扫描 lottery/draw/prize/转盘 等字段
+function _digLottery(obj) {
+  if (!obj || typeof obj !== "object") return "";
+  const hits = [];
+  const walk = (o, d) => {
+    if (d > 5 || !o || typeof o !== "object" || hits.length > 6) return;
+    for (const k of Object.keys(o)) {
+      const lk = String(k).toLowerCase();
+      if (/(lottery|draw|prize|转盘|turntable|raffle)/.test(lk)) {
+        const v = o[k];
+        if (v == null || v === "") continue;
+        if (typeof v === "object") {
+          const t = [v.title, v.name, v.desc, v.prizeName, v.prize].filter((x) => x != null && x !== "").map(String).join(" ");
+          if (t) hits.push(t);
+        } else hits.push(String(v));
+      } else if (typeof o[k] === "object") walk(o[k], d + 1);
+      if (hits.length > 6) return;
+    }
+  };
+  walk(obj, 0);
+  return hits.join(" ｜ ");
+}
+async function _flush() {
+  const accs = _report.filter(Boolean);
+  if (accs.length) await report("金巴厘杯中空间签到", accs);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (c) { const p = _flush(); if (p && typeof p.then === "function") p.then(() => _oe(c)).catch(() => _oe(c)); else _oe(c); };
+}
+process.on("beforeExit", _flush);
+
+
 !(async () => {
-  sectionLine("金巴厘", "");
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("金巴厘杯中空间签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());

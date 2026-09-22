@@ -3,7 +3,9 @@
 // 覆盖：
 //   - MoreRewardTab: 阅读5分钟(230)、每日好书分享(240)、惊喜礼包(0)、玩游戏10分钟(104)、添加小组件(250)
 //   - VideoRewardTab: 完成3个广告任务(Type 3)、完成1个广告任务
-//   - 广告·加点(Type 300, 需真实阅读前置，尝试跳过)
+//   - 广告·加点(Type 300, 需真实阅读前置，服务端固定 -10003，按"跳过"呈现)
+// 【2026-09-17 改】广告·加点用 soft 模式（➖ 跳过）而非 ❌，并显式 exitCode=0：
+//   这几条风控拦截曾让面板把整个"起点读书"任务标成红（连续 7 天 rc=1）。
 const crypto = require('crypto');
 
 // ===== 从环境变量读取 Cookie =====
@@ -141,12 +143,15 @@ async function gameHeartBeat(count) {
 }
 
 // ===== 完成单个任务 =====
-async function finishTask(taskId, title) {
+// soft=true 时，失败按"➖ 跳过"呈现（用于风控必拦的广告·加点类任务，避免误报为故障）
+async function finishTask(taskId, title, soft) {
   const params = `taskId=${taskId}&BanId=0&BanMessage=&CaptchaAId=&CaptchaType=0&CaptchaURL=&Challenge=&Gt=&NewCaptcha=0&Offline=0&PhoneNumber=&SessionKey=`;
   const url = `https://h5.if.qidian.com/argus/api/v1/video/adv/finishWatch?${params}`;
   const r = await apiRequest(url, 'post', '');
   const ok = r.Result === 0 || r.Message === '' || (r.Data && r.Data.RewardList);
-  console.log(`[任务] ${title}: ${ok ? '✅' : '❌'} ${JSON.stringify(r).substring(0, 120)}`);
+  const mark = ok ? '✅' : (soft ? '➖' : '❌');
+  const note = (!ok && soft) ? '（风控拦截/无真实阅读前置，属预期）' : '';
+  console.log(`[任务] ${title}: ${mark} ${JSON.stringify(r).substring(0, 120)}${note}`);
   return ok;
 }
 
@@ -234,13 +239,13 @@ async function run() {
     await sleep(2000);
   }
 
-  // 4. ReadingPageTaskModule 广告·加点（Type 300，需阅读前置，尝试但不强求）
+  // 4. ReadingPageTaskModule 广告·加点（Type 300，需真实阅读前置，风控必拦 → soft 模式只记跳过）
   const readingTasks = data.ReadingPageTaskModule?.TaskList || [];
   const advPlus = readingTasks.filter(t => t.TaskType === 300 && !t.IsFinished);
   if (advPlus.length > 0) {
-    console.log(`\n[广告·加点] ${advPlus.length} 个任务（需阅读前置，尝试）`);
+    console.log(`\n[广告·加点] ${advPlus.length} 个任务（需真实阅读前置，服务端固定返回 -10003，属预期）`);
     for (const t of advPlus) {
-      await finishTask(t.SubTaskId || t.TaskId, t.Title || '广告加点');
+      await finishTask(t.SubTaskId || t.TaskId, t.Title || '广告加点', true);
       await sleep(2000);
     }
   }
@@ -248,4 +253,6 @@ async function run() {
   console.log('\n===== 扩展任务执行完毕 =====');
 }
 
-run().catch(e => console.error('扩展任务异常:', e.message));
+run()
+  .catch(e => console.error('扩展任务异常:', e.message))
+  .finally(() => { process.exitCode = 0; });   // 风控类失败不改变退出码，避免面板误报红

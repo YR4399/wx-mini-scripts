@@ -25,6 +25,7 @@ const {
 } = require("../tools/env")
 const $ = new Env("浓五的酒馆签到+抽奖");
 const WeChatServer = require("./wcs.js");
+const { report } = require("./std_report");
 let ckName = `nwdjg`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -51,6 +52,12 @@ class Task {
         this.wcsid = this.user[0]
         this.points = 0
         this.nygToken = null
+        this._sign = null
+        this._earned = null
+        this._streak = null
+        this._lottery = []
+        this._name = (this.user.length > 1 && this.user[1]) ? this.user[1] : this.user[0]
+        this._row = { idx: this.index, name: null, sign: null, earned: null, total: null, streak: null, tasks: null, lottery: null, taskEarned: null }
     }
 
     async run() {
@@ -77,6 +84,17 @@ class Task {
         } else {
             $.log(`🌸账号[${this.index}] 积分[${this.points}]<150，跳过浓友购抽奖任务`)
         }
+        this._row = {
+            idx: this.index,
+            name: this._name,
+            sign: this._sign,
+            earned: this._earned,
+            total: (this.points != null ? String(this.points) : null),
+            streak: this._streak,
+            tasks: null,
+            lottery: this._lottery.length ? this._lottery.join('、') : null,
+            taskEarned: null
+        };
     }
 
     async getUserToken(code) {
@@ -195,51 +213,83 @@ class Task {
             let signDays = result.data.signDays
             let prizeName = result.data.prize?.prizeName || '未知'
             let today = result.data.today
+            this._streak = signDays
             if (today) {
+                this._sign = '今日已签到'
+                this._earned = prizeName
                 $.log(`🌸账号[${this.index}] 今日已签到，签到天数[${signDays}]，获得[${prizeName}]`)
             } else {
+                this._sign = '签到成功'
+                this._earned = prizeName
                 $.log(`🌸账号[${this.index}] 签到成功✅ 签到天数[${signDays}]，获得[${prizeName}]`)
             }
         } else {
-            $.log(`🌸账号[${this.index}] 签到-失败:${result?.msg || '未知'}❌`)
+            // 检查是否是"已签到"的提示信息
+            let msg = result?.msg || ''
+            if (msg.includes('已签到') || msg.includes('已经签') || msg.includes('重复')) {
+                this._sign = '今日已签到'
+                this._earned = '无'
+                $.log(`🌸账号[${this.index}] 今日已签到✅ (${msg})`)
+            } else {
+                this._sign = '签到失败'
+                $.log(`🌸账号[${this.index}] 签到-失败:${msg}❌`)
+            }
         }
     }
 
-    // 动态获取砸蛋/趣味抽奖活动 promotionId（从 base/config 的 miniDraw 页面路径提取）
+    // 动态获取趣味抽奖活动 promotionId
+    // 步骤1: base/config → 找 customDesign/customDesign?id=DECO... 的页面id
+    // 步骤2: deco/design/custom/{decoId} → 从 setting.components[].setting.content.hots[] 找 miniDraw promotionId
     async getLotteryPromotionId() {
-        let options = {
-            method: 'GET',
-            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/mini/index/base/config`,
-            headers: {
-                'User-Agent': defaultUserAgent,
-                'Content-Type': 'application/json',
-                'xweb_xhr': '1',
-                'sec-fetch-site': 'cross-site',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-dest': 'empty',
-                'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
-                'accept-language': 'zh-CN;q=0.9',
-                authorization: this.token
-            }
+        let hdrs = {
+            'User-Agent': defaultUserAgent,
+            'Content-Type': 'application/json',
+            'xweb_xhr': '1',
+            'referer': 'https://servicewechat.com/wxed3cf95a14b58a26/260/page-frame.html',
+            'accept-language': 'zh-CN;q=0.9',
+            authorization: this.token
         };
         try {
-            let { data: result } = await axios.request(options);
-            let raw = JSON.stringify(result);
-            let m = raw.match(/miniDraw\/miniDraw\?promotionId=([A-Za-z0-9]+)/);
-            if (m) {
-                $.log(`🌸账号[${this.index}] 动态获取抽奖活动ID[${m[1]}]`);
-                return m[1];
+            // 步骤1: base/config 提取 customDesign 页面 id
+            let configRes = await axios.get(
+                'https://stdcrm.dtmiller.com/scrm-promotion-service/mini/index/base/config',
+                { headers: hdrs }
+            );
+            let configRaw = JSON.stringify(configRes.data);
+            let decoMatch = configRaw.match(/customDesign\/customDesign\?id=([A-Za-z0-9]+)/);
+            if (!decoMatch) {
+                $.log(`🌸账号[${this.index}] base/config 未找到 customDesign 页面id`);
+                return 'PI6a954b8411ff59000a1c73ca';
             }
-        } catch (e) { }
-        $.log(`🌸账号[${this.index}] 获取抽奖活动ID失败，使用兜底ID`);
-        return 'PI6a681a9a4bcd4000aaaabea';
+            let decoId = decoMatch[1];
+
+            // 步骤2: customDesign 详情 → 找 miniDraw promotionId
+            let detailRes = await axios.get(
+                `https://stdcrm.dtmiller.com/scrm-interact-manage-service/deco/design/custom/${decoId}`,
+                { headers: hdrs }
+            );
+            let setting = detailRes.data?.data?.setting;
+            if (setting) {
+                let settingRaw = typeof setting === 'string' ? setting : JSON.stringify(setting);
+                let m = settingRaw.match(/miniDraw\/miniDraw\?promotionId=([A-Za-z0-9]+)/);
+                if (m) {
+                    $.log(`🌸账号[${this.index}] 动态获取抽奖活动ID[${m[1]}]`);
+                    return m[1];
+                }
+            }
+            $.log(`🌸账号[${this.index}] customDesign 未找到 miniDraw 活动ID`);
+        } catch (e) {
+            $.log(`🌸账号[${this.index}] 获取抽奖活动ID异常:${e.message}`);
+        }
+        $.log(`🌸账号[${this.index}] 使用兜底抽奖活动ID`);
+        return 'PI6a954b8411ff59000a1c73ca';
     }
 
-    // 查询酒馆砸蛋剩余次数
-    async getLuckDrawNum(lotteryPid) {
+    // 查询剩余抽奖次数
+    async getRemainingLotteryTimes(activityId) {
         let options = {
             method: 'GET',
-            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/draw/user/getluckdrawNum?promotionId=${lotteryPid}`,
+            url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/draw/lottery?promotionId=${activityId}`,
             headers: {
                 'User-Agent': defaultUserAgent,
                 'Content-Type': 'application/json',
@@ -254,30 +304,23 @@ class Task {
         };
         try {
             let { data: result } = await axios.request(options);
+            // code=0 表示成功，data.state=1 表示还有次数
             if (result?.code == 0 || result?.code == '0') {
-                return result.data?.freeDrawNum || 0;
+                return result.data?.state === 1 ? 1 : 0;
             }
         } catch (e) { }
         return 0;
     }
 
-    // 酒馆砸蛋趣味抽奖（每日一次）
+    // 趣味抽奖
     async doSmashEgg() {
-        let lotteryPid = await this.getLotteryPromotionId();
-        let drawNum = await this.getLuckDrawNum(lotteryPid);
-        $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)剩余次数[${drawNum}]`);
-        if (drawNum <= 0) {
-            $.log(`🌸账号[${this.index}] 今日无趣味抽奖(砸蛋)次数，跳过`);
-            return;
-        }
-        let totalPoints = 0;
-        // 趣味抽奖：每日仅一次
-        let maxLoop = 1;
-        for (let i = 0; i < maxLoop; i++) {
-            await $.wait(Math.floor(Math.random() * 3 + 1) * 1000);
+        let activityId = await this.getLotteryPromotionId();
+        // 直接尝试抽奖一次
+        $.log(`🌸账号[${this.index}] 开始趣味抽奖`);
+        try {
             let options = {
                 method: 'GET',
-                url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/draw/lottery?promotionId=${lotteryPid}`,
+                url: `https://stdcrm.dtmiller.com/scrm-promotion-service/promotion/draw/lottery?promotionId=${activityId}`,
                 headers: {
                     'User-Agent': defaultUserAgent,
                     'Content-Type': 'application/json',
@@ -290,31 +333,17 @@ class Task {
                     authorization: this.token
                 }
             };
-            try {
-                let { data: result } = await axios.request(options);
-                if (result?.code == 0 || result?.code == '0') {
-                    let prize = result.data?.prize;
-                    if (prize) {
-                        let prizeName = prize.goodsName || prize.prizeName || '未知';
-                        let m = prizeName.match(/(\d+)\s*积分/);
-                        let p = m ? parseInt(m[1], 10) : 0;
-                        totalPoints += p;
-                        $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋): ${prizeName}${p ? (' +' + p + '积分') : ''}✅`);
-                    } else {
-                        $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)未中奖`);
-                        break;
-                    }
-                } else {
-                    $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)失败:${result?.msg || '无次数'}❌`);
-                    break;
-                }
-            } catch (e) {
-                $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)异常:${e.message}❌`);
-                break;
+            await $.wait(Math.floor(Math.random() * 3 + 1) * 1000);
+            let { data: result } = await axios.request(options);
+            if (result?.code == 0 || result?.code == '0') {
+                let prize = result.data?.msg || '谢谢参与';
+                this._lottery.push('趣味抽奖: ' + prize);
+                $.log(`🌸账号[${this.index}] 趣味抽奖: ${prize}`);
+            } else {
+                $.log(`🌸账号[${this.index}] 趣味抽奖失败:${result?.msg || '未知'}❌`);
             }
-        }
-        if (totalPoints > 0) {
-            $.log(`🌸账号[${this.index}] 趣味抽奖(砸蛋)共获得[${totalPoints}]积分✅`);
+        } catch (e) {
+            $.log(`🌸账号[${this.index}] 趣味抽奖异常:${e.message}❌`);
         }
     }
 
@@ -403,6 +432,7 @@ class Task {
             let drawResult = await this.drawOnce(activityId)
             if (drawResult) {
                 drawResults.push(drawResult)
+                this._lottery.push('浓友购大转盘: [' + drawResult.awardName + '] - ' + drawResult.prizeName)
                 // 领取奖品
                 await this.receivePrize(drawResult.recordId)
             } else {
@@ -526,6 +556,7 @@ class Task {
     }
 }
 
+let _rows = [];
 !(async () => {
     await getNotice()
     $.checkEnv(ckName);
@@ -534,7 +565,9 @@ class Task {
     }
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
-            await new Task(user).run();
+            let t = new Task(user);
+            await t.run();
+            _rows.push(t._row);
         }
     } else {
         
@@ -546,14 +579,7 @@ class Task {
     .catch((e) => console.log(e))
     .finally(async () => {
     try {
-      const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
-      if (token) {
-        const axios = require("axios");
-        const log = ($.notifyStr || []).slice(-10).join(String.fromCharCode(10));
-        await axios.post("http://www.pushplus.plus/send", {
-          token, title: "浓五", content: log || "浓五执行完成", template: "txt"
-        }, { timeout: 10000 });
-      }
+      if (report) await report('浓五的酒馆签到抽奖', _rows);
     } catch(e) {}
     $.sendMsg = async () => {}; $.done();
   });;

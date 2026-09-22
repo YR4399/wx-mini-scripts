@@ -2,7 +2,7 @@
 @Description: 梦百合 签到
 cron: 30 8 * * *
 */
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+require("https").globalAgent.options.rejectUnauthorized = false;
 const { Env } = require("../tools/env.js");
 const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("梦百合");
@@ -10,9 +10,6 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
 
 const MINI_APP_ID = "wxac481dbea7d77e73";
 const API_BASE = "https://mfapi.mlily.com";
@@ -31,7 +28,9 @@ function writeCache(c) { try { fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify
 class Task {
     constructor(openid) {
         this.index = $.userIdx++;
-        this.openid = openid;
+        const _p = String(openid || "").split("#");
+        this.openid = _p[0];
+        this.remark = _p[1] ? _p[1].trim() : "";
         this.token = "";
         this.guestToken = "c4ba89ff4292291b9ac65471c7527d9";
     }
@@ -84,6 +83,7 @@ class Task {
     }
 
     async run() {
+        if (this.remark) _setName(this.index, this.remark);
         const cached = this.getCached();
         if (cached?.token) {
             this.token = cached.token;
@@ -109,12 +109,21 @@ class Task {
                 timeout: 15000,
                 validateStatus: () => true,
             });
+            const _rp = _rpGet(this.index);
             if (resp.data?.code === 1) {
                 L.ok("账号[" + this.index + "] 签到成功: +" + (resp.data?.data || "积分"));
+                const ep = extractPoints(resp.data);
+                _setSign(this.index, "签到成功");
+                if (ep.earned != null) _rp.earned = "今日+" + ep.earned + "积分";
+                else if (resp.data?.data != null && resp.data.data !== "" && !isNaN(Number(resp.data.data))) _rp.earned = "今日+" + resp.data.data + "积分";
+                if (ep.total != null) _rp.total = String(ep.total);
+                _setLottery(this.index, _digLottery(resp.data));
             } else if (/已签到|已签|already/i.test(resp.data?.msg || "")) {
                 L.info("账号[" + this.index + "] 今日已签到");
+                _setSign(this.index, "今日已签到");
             } else {
                 $.log("账号[" + this.index + "] 签到失败: " + (resp.data?.msg || JSON.stringify(resp.data)));
+                _setSign(this.index, "签到失败: " + String(resp.data?.msg || "").slice(0, 60));
             }
         } catch (e) {
             $.log("账号[" + this.index + "] 签到异常: " + e.message);
@@ -125,9 +134,80 @@ class Task {
             const info = await this.get("/v1/account/info");
             const authInfo = info?.authInfo || {};
             L.info("账号[" + this.index + "] 积分:" + (authInfo.integral || 0) + " | " + (authInfo.levelName || "会员"));
+            const _pt = authInfo.integral;
+            if (_pt != null && _pt !== "" && !isNaN(Number(_pt))) _rpGet(this.index).total = String(_pt);
         } catch {}
     }
 }
+
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+let _rpRows = [];
+let _rpApp = '梦百合';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 async function main() {
 $.userIdx = 0;
@@ -135,17 +215,15 @@ $.userIdx = 0;
     const users = $.userList || [];
     if (!users.length) { L.info("未配置wx_opinion"); return; }
     L.info("共" + users.length + "个账号");
-    const results = [];
     for (const user of users) {
         try {
             const t = new Task(user);
             await t.run();
-            results.push("账号[" + t.index + "] OK");
         } catch (e) {
-            results.push("账号失败: " + e.message);
+            $.log("账号失败: " + e.message);
         }
     }
-    sendPushNotify("梦百合", results.join("\n") || "梦百合执行完成");
+    // 推送统一由 beforeExit / process.exit 钩子经 std_report 完成
 }
 
-main().catch(e => { $.log("异常: " + e.message); sendPushNotify("梦百合", "异常: " + e.message); });
+main().catch(e => { $.log("异常: " + e.message); });

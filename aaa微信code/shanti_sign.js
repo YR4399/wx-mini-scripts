@@ -14,8 +14,25 @@
 for (const k of ['HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROXY','all_proxy']) delete process.env[k];
 
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const fs = require("fs");
 const path = require("path");
+const { report } = require("./std_report");
 
 // ==================== 常量 ====================
 const wxOpinion = process.env.wx_opinion || "";
@@ -178,12 +195,12 @@ async function processAccount(openid, index) {
   // 1. 获取 code
   L.act(`获取微信 code...`);
   const code = await getWxCode(openid);
-  if (!code) { L.fail(`获取 code 失败`); console.log(`🔔 shanti尊享,结束`); return; }
+  if (!code) { L.fail(`获取 code 失败`); _setSign(index, '获取code失败'); console.log(`🔔 shanti尊享,结束`); return; }
 
   // 2. 登录（含邀请码绑定）
   L.act(`登录 shanti尊享...`);
   const loginData = await login(openid, code);
-  if (!loginData?.token) { L.fail(`登录失败`); console.log(`🔔 shanti尊享,结束`); return; }
+  if (!loginData?.token) { L.fail(`登录失败`); _setSign(index, '登录失败'); console.log(`🔔 shanti尊享,结束`); return; }
   const token = loginData.token;
   L.ok(`登录成功`);
   L.info(`用户: ${loginData.nickname || "未知"} | ID: ${loginData.user_id}`);
@@ -302,16 +319,55 @@ async function processAccount(openid, index) {
     }
   }
 
+  // 推送数据汇总
+  const _cnt = signStatus ? (signStatus.today_sign_count || 0) : 0;
+  let _sign;
+  if (totalEarned > 0) _sign = `签到成功(今日${_cnt}/3)`;
+  else if (signStatus) _sign = `今日已签到(${_cnt}/3)`;
+  else _sign = '签到状态未知';
+  _setName(index, loginData.nickname || openid);
+  _setSign(index, _sign, totalEarned > 0 ? `今日+${totalEarned}积分` : '', String(afterPoints));
+
   console.log(`🔔 shanti尊享,结束`);
 }
 
 // ==================== 推送 ====================
-async function sendPush(title, content) {
-  const pk = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
-  if (!pk) return;
-  try { await axios.post("http://www.pushplus.plus/send", { token: pk, title, content }, { proxy: false }); }
-  catch(e) {}
+let _lpRows = [];
+let _lpApp = 'shanti尊享';
+let _lpFlushed = false;
+function _lpGet(idx) {
+  if (!_lpRows[idx]) _lpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _lpRows[idx];
 }
+function _setName(idx, name) { if (name != null) _lpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _lpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, v) { if (v != null && v !== "") _lpGet(idx).streak = String(v); }
+function _setLottery(idx, text) { if (text != null && text !== "") _lpGet(idx).lottery = String(text); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _lpGet(idx).taskEarned = String(text); }
+async function flushLogPoints(app) {
+  if (_lpFlushed) return;
+  _lpApp = app || _lpApp;
+  const rows = _lpRows.filter(Boolean);
+  if (!rows.length) return;
+  _lpFlushed = true;
+  await report(_lpApp, rows);
+}
+// 进程退出前/退出时汇总推送1次
+{
+  const _lpOE = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_lpApp);
+    if (p && typeof p.then === 'function') { p.then(() => _lpOE(code)).catch(() => _lpOE(code)); }
+    else { _lpOE(code); }
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_lpApp); });
+
 
 // ==================== 主入口 ====================
 async function main() {
@@ -344,9 +400,7 @@ async function main() {
   }
 
   const ok = results.filter(r => r.status === "ok").length;
-  await sendPush("shanti尊享签到",
-    `共 ${accounts.length} 账号，成功 ${ok} 个\n` +
-    results.map(r => `账号${r.i}: ${r.status === "ok" ? "✅ 成功" : `❌ ${r.msg||"失败"}`}`).join("\n"));
+  await flushLogPoints(_lpApp);
 
   console.log(`\n📊 完成: ${ok}/${accounts.length} 账号`);
   console.log(`🔔 shanti尊享,结束`);

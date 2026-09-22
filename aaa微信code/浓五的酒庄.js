@@ -37,34 +37,6 @@ appid: wx7ce1afa12935c862 | API: https://nxjz-api.plsbd.com/v8
 */
 
 const crypto = require('crypto');
-const notifyLines = [];
-const _origLog = console.log;
-console.log = function (...args) {
-  try { notifyLines.push(args.map(a => (a && a.stack) ? a.stack : String(a)).join(" ")); } catch (e) {}
-  _origLog.apply(console, args);
-};
-async function sendToPushPlus(title, content) {
-  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
-  if (!token || !content.trim()) return;
-    if (content.length > 6000) content = content.slice(-6000);
-  const payload = { token, title, content, template: "txt" };
-  try {
-    if (typeof axios !== "undefined") {
-      await axios.post("https://www.pushplus.plus/send", payload, { timeout: 10000 });
-    } else {
-      const data = JSON.stringify(payload);
-      await new Promise((resolve, reject) => {
-        const req = https.request("https://www.pushplus.plus/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
-          timeout: 10000,
-        }, (res) => { res.resume(); res.on("end", resolve); });
-        req.on("error", reject); req.write(data); req.end();
-      });
-    }
-    _origLog("✅ PushPlus推送成功: " + title);
-  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
-}
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -109,9 +81,9 @@ function parseSeedIds() {
 const SEED_IDS = parseSeedIds();
 
 const CFG = {
-  WX_SERVER: process.env.wx_server_url || process.env.wxcodeurl
-    || process.env.WECHAT_WX_SERVER_URL || process.env.nxjzWxServer || '',
-  WX_AUTH: process.env.wx_auth || process.env.WXAPIKEY
+  WX_SERVER: process.env.wx_server_url || process.env.wx_server_url
+    || process.env.wx_server_url || process.env.nxjzWxServer || '',
+  wx_auth: process.env.wx_auth || process.env.wx_auth
     || process.env.WX_SERVER_APIKEY || process.env.nxjzWxAuth || '',
   WX_OPENIDS: parseOpenids(),
   MANUAL_CODE: process.env.nxjzCode || '',
@@ -220,7 +192,7 @@ async function getAuthForOpenid(openid) {
   }
   $.info(`获取账号 ${openid} 的 Code...`);
   const r = await http('POST', `${CFG.WX_SERVER}/wx/code`,
-    { 'auth': CFG.WX_AUTH }, { openid, appid: CFG.APPID });
+    { 'auth': CFG.wx_auth }, { openid, appid: CFG.APPID });
   if (r.body?.status === true && r.body.data?.code) {
     $.ok('Code 获取成功');
     const result = await loginWithCode(r.body.data.code);
@@ -243,7 +215,14 @@ async function dailySignIn(token) {
   const r = await signedPost('/task/signIn', {}, token);
   if (!r) return null;
   if (isTokenExpired(r)) return 'TOKEN_EXPIRED';
-  if (r.data?.num >= 0) { $.ok(`签到成功! 第 ${r.data.num} 天`); }
+  if (r.data?.num >= 0) {
+    $.ok(`签到成功! 第 ${r.data.num} 天`);
+    if (_curRpIdx != null) {
+      const _earned = (r.data.coin != null && r.data.coin !== "") ? ("今日+" + r.data.coin + "金币") : "";
+      _setSign(_curRpIdx, "签到成功", _earned);
+      _setStreak(_curRpIdx, r.data.num);
+    }
+  }
   return r;
 }
 
@@ -462,6 +441,7 @@ async function rotorLottery(token) {
     const prizes = d.prizes || [];
     const prize = prizes.find(p => p.id === prizeId);
     $.ok(`🎉 中奖: ${prize?.name || 'ID:'+prizeId} x${prize?.number || ''}`);
+    _rpAccumLottery((prize?.name || ('ID:'+prizeId)) + (prize?.number ? 'x'+prize.number : ''));
   } else if (isTokenExpired(r)) return 'TOKEN_EXPIRED';
 }
 
@@ -478,7 +458,7 @@ async function goldenEgg(token) {
   $.log(`免费 ${free} 次/周, 已用 ${used} 次`);
   if (used >= free) { $.log('本周已用完'); return; }
   const r = await signedPost('/activity/goldeggs/push', {}, token);
-  if (r && !isTokenExpired(r)) $.ok(`🎉 ${r.data?.prop_name || '奖品'} x${r.data?.yield || 1}`);
+  if (r && !isTokenExpired(r)) { const _p = (r.data?.prop_name || '奖品') + 'x' + (r.data?.yield || 1); $.ok(`🎉 ${_p}`); _rpAccumLottery(_p); }
   else if (isTokenExpired(r)) return 'TOKEN_EXPIRED';
 }
 
@@ -654,9 +634,12 @@ async function baseHarvest(token) {
 }
 
 // ==================== 单账号任务执行（带 token 自动续期） ====================
-async function runTasks(getTokenFn, label) {
+async function runTasks(getTokenFn, label, idx) {
+  _curRpIdx = (idx != null) ? idx : null;
+  if (_curRpIdx != null) _setName(_curRpIdx, label);
   let token = await getTokenFn();
   $.info(`\n======== 账号: ${label} ========`);
+  if (_curRpIdx != null && typeof getTokenFn.coin === 'function') { const c = getTokenFn.coin(); if (c != null && c !== '') _rpGet(_curRpIdx).total = String(c); }
 
   async function withRefresh(fn) {
     const result = await fn(token);
@@ -691,6 +674,55 @@ async function runTasks(getTokenFn, label) {
   $.ok(`👤 ${label} 全部任务完成！`);
 }
 
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '浓五的酒庄';
+let _curRpIdx = null;
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _setStreak(idx, v) { if (v != null && v !== "") _rpGet(idx).streak = String(v); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _rpAccumLottery(prize) { if (_curRpIdx != null && prize) { const r = _rpGet(_curRpIdx); r.lottery = (r.lottery ? r.lottery + "、" : "") + String(prize); } }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 // ==================== 主流程 ====================
 async function main() {
   const t = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
@@ -700,31 +732,35 @@ async function main() {
   if (CFG.WX_SERVER && CFG.WX_OPENIDS.length > 0) {
     const tokenProviders = CFG.WX_OPENIDS.map((openid) => {
       let cached = null;
-      return async (forceRefresh = false) => {
+      const provider = async (forceRefresh = false) => {
         if (!forceRefresh && cached && isTokenValid(cached)) return cached.token;
         $.info(`[${openid}] ${forceRefresh ? '强制刷新' : '获取'} token...`);
         const result = await getAuthForOpenid(openid);
-        if (result) { cached = { token: result.token, cachedAt: Date.now() }; return result.token; }
+        if (result) { cached = { token: result.token, cachedAt: Date.now(), coin: result.info && result.info.coin }; return result.token; }
         return null;
       };
+      provider.coin = () => (cached ? cached.coin : null);
+      return provider;
     });
     $.info(`共 ${CFG.WX_OPENIDS.length} 个账号`);
     for (let i = 0; i < CFG.WX_OPENIDS.length; i++) {
-      await runTasks(tokenProviders[i], CFG.WX_OPENIDS[i]);
+      const _raw = CFG.WX_OPENIDS[i];
+      const _label = _raw.includes('#') ? _raw.split('#')[1].trim() : _raw;
+      await runTasks(tokenProviders[i], _label, i + 1);
       if (i < CFG.WX_OPENIDS.length - 1) await $.wait(3000);
     }
   } else if (CFG.MANUAL_CODE) {
     $.info('手动 Code 模式');
     const result = await loginWithCode(CFG.MANUAL_CODE);
-    if (result) await runTasks(async () => result.token, '手动Code');
+    if (result) await runTasks(async () => result.token, '手动Code', 1);
   } else if (CFG.MANUAL_TOKEN) {
     $.info('手动 Token 模式');
-    await runTasks(async () => CFG.MANUAL_TOKEN, '手动Token');
+    await runTasks(async () => CFG.MANUAL_TOKEN, '手动Token', 1);
   } else {
     $.err('未配置账号。请设置 wx_opinion（或 nxjzCode/nxjzToken）；WCS 用 wx_server_url + wx_auth');
   }
   $.ok('所有任务执行完毕！🎉');
-  await sendToPushPlus("浓五的酒庄", notifyLines.join("\n"));
+  // 推送由 std_report 双引擎经 beforeExit/process.exit 钩子统一处理
 }
 
 if (require.main === module) {

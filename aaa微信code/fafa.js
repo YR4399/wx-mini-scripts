@@ -1,7 +1,9 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -21,15 +23,6 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wxd15ddc3916302f35";
 const PAGE_VERSION = "99";
@@ -39,7 +32,7 @@ const API_BASE = "https://smp-api.iyouke.com/dtapi";
 const TOKEN_CACHE_FILE = path.join(__dirname, "fafa_token_cache.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "fafa";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -86,7 +79,9 @@ function maskMobile(mobile = "") {
 class Task {
     constructor(account) {
         this.index = $.userIdx++;
-        this.account = String(account || "").trim();
+        const _parts = String(account || "").split("#");
+        this.account = _parts[0].trim();
+        this.remark = (_parts[1] || "").trim();
         this.accessToken = "";
         this.authorization = "";
         this.userInfo = {};
@@ -246,9 +241,10 @@ class Task {
         };
         this.saveCachedToken();
         if (log) {
-            const name = data.nickName || data.memberName || data.userId || "未知";
+            const name = this.remark || data.nickName || data.memberName || data.userId || "未知";
             const mobile = data.userMobile || data.mobile || "";
             $.log(`账号[${this.index}] 用户: ${name}${mobile ? ` ${maskMobile(mobile)}` : ""}`);
+            if (typeof _setName === 'function') _setName(this.index, name || null);
         }
         return data;
     }
@@ -260,6 +256,11 @@ class Task {
                 apiPath: "/pointsSign/user/pointsInfo/query",
             });
             $.log(`账号[${this.index}] 积分: ${data?.pointsNums ?? "未知"} 连签=${data?.seriesDays ?? 0} 今日=${data?.signTodayResult ? "已签" : "未签"}`);
+    if (typeof logPoints === 'function') logPoints(null, data?.pointsNums != null ? String(data.pointsNums) : null,"发发藏宝洞小程序签到", this.index, "签到成功");
+            if (data?.pointsNums != null && data.pointsNums !== "") _setSign(this.index, null, null, String(data.pointsNums));
+            if (data?.seriesDays != null && data.seriesDays !== "") _rpGet(this.index).streak = data.seriesDays;
+            const _lot = _digLottery(data);
+            if (_lot) _setLottery(this.index, _lot);
             return data;
         } catch (e) {
             const message = e.message || e;
@@ -290,6 +291,7 @@ class Task {
     async doSign() {
         if (this.isTodaySign) {
             $.log(`账号[${this.index}] 今日已签到`);
+            if (typeof _setSign === 'function') _setSign(this.index, "今日已签到", null, null);
             return;
         }
         try {
@@ -299,11 +301,16 @@ class Task {
                 apiPath: "/pointsSign/user/sign",
                 params: { date },
             });
-            $.log(`账号[${this.index}] 签到成功: +${data?.signReward ?? data?.reward ?? "未知"}积分`);
+            const rw = data?.signReward ?? data?.reward;
+            $.log(`账号[${this.index}] 签到成功: +${rw ?? "未知"}积分`);
+            if (typeof _setSign === 'function') _setSign(this.index, "签到成功", rw != null && rw !== "" && rw !== 0 ? "今日+" + rw + "积分" : null, null);
+            const _lot = _digLottery(data);
+            if (_lot) _setLottery(this.index, _lot);
         } catch (e) {
             const message = String(e.message || e);
             if (/已签|重复|今日.*签/i.test(message)) {
                 $.log(`账号[${this.index}] 今日已签到`);
+                if (typeof _setSign === 'function') _setSign(this.index, "今日已签到", null, null);
                 return;
             }
             $.log(`账号[${this.index}] 签到失败: ${message}`);
@@ -312,24 +319,76 @@ class Task {
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "发发藏宝洞小程序签到";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null || typeof obj !== "object") return "";
+  const hits = [];
+  const keys = ["lottery", "draw", "prize", "raffle", "turntable", "wheel", "转盘", "抽奖", "奖励"];
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        const lk = String(k).toLowerCase();
+        const hit = keys.some((kk) => lk.includes(kk.toLowerCase()));
+        const val = v[k];
+        if (hit && val != null && val !== "" && typeof val !== "object") hits.push(`${k}=${val}`);
+        if (typeof val === "object") walk(val, depth + 1);
+      }
+      return;
+    }
+  };
+  walk(obj, 0);
+  return hits.length ? hits.join("｜") : "";
+}
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
     for (const account of $.userList) {
         await new Task(account).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("发发藏宝洞小程序签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());

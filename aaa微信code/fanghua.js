@@ -1,6 +1,28 @@
 #!/usr/bin/env node
 /**
- * 芳华未来 v3 - 签到 + 日常任务 + 分享健康 + 课程学习刷分 + 短视频领币
+ * 芳华未来 v8 - 签到 + 全量抽奖 + 分享健康 + 短视频领币 + 课程学习刷分 + 直播挂机
+ * (登录: token缓存 + 短信验证码; WCS 微信登录已于 v8 移除 —— 公众号未授权 48001, 该通道永不成功)
+ *
+ * v7 变更 (2026-09-17):
+ *   1. 【阶段顺序修复】短视频(type1浏览商品+type2浏览视频, 共约+400)提前到课程阶段之前。
+ *      原顺序"课程->短视频"下, 命中长视频课程(1700~3000s, 如《张汉臣小儿推拿》)时
+ *      课程阶段按真实节奏观看耗尽 maxRuntime, 短视频阶段被跳过, 单号日入账从 ~630 掉到 ~230。
+ *   2. 【课程限时】课程阶段独立限时 = 剩余时间 - (FHWL_LIVE_MIN+5)min, 超时自动让位给直播,
+ *      直播阶段恢复完整剩余时间。
+ *
+ * v6 变更 (2026-09-17): 新增直播挂机阶段 (WS + 10s 流量上报, 仅真实直播 status=1 入账)
+ *
+ * v5 变更 (2026-09-07):
+ *   1. 【WCS 登录】新增微信通道: WCS 出 code -> /app/wx/loginByMp?appId=wx7a3715e6f0d22c56
+ *      逆向确认 App 内 H5 登录用的是【公众号】appId 网页授权, 不是小程序 appId。
+ *      配置了 FH_OPENID/wx_opinion 就优先走 WCS, 失败自动回退密码登录/token 缓存。
+ *   2. 【转盘抽奖补全】sendTurntableReward 补上抓包 payload {source:3, appId:...},
+ *      并先查 /app/invited/getReward 剩余次数, 循环抽到没有机会为止。
+ *   3. 【签到转盘修正】仅当 /app/integral/sign 返回非空 data 才调 claimSignReward
+ *      (否则服务端报"非法操作")。
+ *   4. 【活动签到】新增 getUserActiveWindow -> userActiveLogSign, isOpen=false 时跳过。
+ *   5. 【邀请码】新增 FH_INVITE_CODE -> bindInvForUser, 换 1 次抽奖机会。
+ *   6. 【福袋路径修正】/app/luckyBag/receiveLuckyBag -> /course_auto/app/luckyBag/receiveLuckyBag。
  *
  * v3 变更 (移植自 fhb_每日2000币.py, 基于 App v1.8.1 真实抓包):
  *   1. 【课程刷分修正】领分接口改为 /app/course/getIntegral (原误用 /app/integral/addIntegral),
@@ -23,7 +45,7 @@
  *   FHWL_COURSE_MAX_SEC  跳过时长超过 N 秒的小节, 默认 0=不限 (测试时可设小值)
  *   FHWL_SHARE_MAX    分享健康次数, 默认 100
  *   FHWL_SHORT_MAX    短视频个数上限, 默认 100, 0=不限(启用防刷保护)
- *   PLUSPLUS_TOKEN    PushPlus 推送
+ *   推送: 经 std_report 走钉钉美化模板 (DINGTALK_ 环境变量由 std_report 读取)
  */
 
 const fs = require("fs");
@@ -56,7 +78,9 @@ const TARGET_CHECK_EVERY = 2;                          // 每 N 次成功领币�
 const ENABLE_COURSE = envBool("FHWL_COURSE", true);
 const ENABLE_COURSE_BUY = envBool("FHWL_COURSE_BUY", true);
 const COURSE_MAX_BUY = envInt("FHWL_MAX_BUY", 50);     // 只兑换价 < 50 的课程
-const COURSE_MAX_SEC = envInt("FHWL_COURSE_MAX_SEC", 0); // 跳过超长小节, 0=不限
+// 默认跳过 >10 分钟的小节: 看一节要真实等待相同时长(+50/节), 长视频性价比极低,
+// 会把整个课程窗口吃光导致后面的短小节领不到 (2026-09-20 实测)
+const COURSE_MAX_SEC = envInt("FHWL_COURSE_MAX_SEC", 600);
 const COURSE_INTEGRAL_PER_SECTION = 50;                // 服务端固定每小节 +50
 const COURSE_PROGRESS_RATIO = 0.9;                     // 领分门槛: 看满总时长 90%
 const COURSE_WATCH_BUFFER = 6;                         // 90% 之上多看的秒数
@@ -75,6 +99,18 @@ const INTEGRAL_RETRY_TYPES = [1, 2];  // 1=浏览奖励 2=视频奖励 (日限�
 const INTEGRAL_RETRY_MAX = 3;
 const INTEGRAL_BUSY_BACKOFF = [8, 15];
 const TYPE_LABELS = { 0: "直播?", 1: "浏览", 2: "视频", 3: "直播?", 4: "直播?" };
+
+// 直播挂机阶段 (api.fhhx.runtzh.com, 独立鉴权: AppToken头 = liveToken 值, 无 apiSecurity)
+// 链路 (逆向 pages_live/living.vue + liveVideo.vue):
+//   WS: wss://im.fhhx.runtzh.com/ws/app/webSocket?userId=&liveId=&userType=0&timestamp=&signature=
+//       signature = HMAC-SHA256(liveId+liveUserId+userType+timestamp, key=String(timestamp)).hex
+//   每10s POST /app/live/liveTrafficLog/getLiveInternetTraffic {userId, liveId, uuId:YYYYMMDD+rand, internetTraffic}
+//   remaining-time: 完成奖励倒计时 (看完直播 hasReceived=true 自动入账)
+const ENABLE_LIVE = envBool("FHWL_LIVE", true);
+const LIVE_MIN_MINUTES = envInt("FHWL_LIVE_MIN", 12);   // 每个直播间挂机分钟数
+const LIVE_BITRATE = 1600;                              // app 内 calculateBitrate() 直播码率 (kbps)
+let ws = null;
+try { ws = require("ws"); } catch (e) { /* 容器未装 ws 模块时降级: 只做 HTTP 流量上报 */ }
 
 // 反检测 UA 池
 const UA_POOL = [
@@ -96,7 +132,7 @@ console.log = function (...args) {
 function printBanner() {
   console.log("");
   console.log("  ╔═══════════════════════════════════════╗");
-  console.log("  ║  🌸 芳华未来 v3  签到·课程+50·短视频  ║");
+    console.log("  ║  🌸 芳华未来 v8  签到·全抽奖·短视频·课程·直播 ║");
   console.log("  ╚═══════════════════════════════════════╝");
   console.log("");
 }
@@ -199,7 +235,26 @@ async function doLogin(phone, pwd) {
   };
 }
 
+// ── 登录 (v8: 仅 token缓存 + 密码(服务端已关闭) + 短信验证码) ──────────────
+// WCS 微信登录已移除: 公众号 wx7a3715e6f0d22c56 未开通网页授权接口权限(48001),
+// 该通道 100% 失败。token 失效时用 fanghua/sms.js(发码) + sms2.js(验证码登录写缓存) 续命。
+
+// 登录错误分类: 瞬时故障(可重试) vs 永久失败(不可重试)
+const LOGIN_RETRY = 4;
+const LOGIN_RETRY_MIN = 2000;
+const LOGIN_RETRY_MAX = 12000;
+function isRetryableLoginError(msg) {
+  // "暂不支持密码登录" 是服务器永久关闭密码通道, 不属于瞬时故障, 不应重试
+  if (/暂不支持密码登录/.test(msg)) return false;
+  // 其余为瞬时故障, 可重试
+  return /频繁|稍后|锁定|验证码|风控|图形验证|访问过于|网络|超时|连接/.test(msg);
+}
+function isPermanentLoginError(msg) {
+  return /暂不支持密码登录|密码错误|账号不存在|账号已注销|永久/.test(msg);
+}
+
 async function getToken(phone, pwd, cache) {
+  // 1. 缓存 token 复用
   if (cache[phone] && cache[phone].token) {
     const { token, liveToken } = cache[phone];
     try {
@@ -214,10 +269,31 @@ async function getToken(phone, pwd, cache) {
       }
     } catch (e) {}
   }
-  const r = await doLogin(phone, pwd);
-  cache[phone] = { token: r.token, liveToken: r.liveToken, userId: r.userId, nickName: r.nickName, integral: r.integral };
-  saveCache(cache);
-  return r;
+
+  let lastMsg = "";
+  for (let attempt = 1; attempt <= LOGIN_RETRY; attempt++) {
+    try {
+      const r = await doLogin(phone, pwd);
+      cache[phone] = { token: r.token, liveToken: r.liveToken, userId: r.userId, nickName: r.nickName, integral: r.integral };
+      saveCache(cache);
+      return r;
+    } catch (err) {
+      lastMsg = err.message;
+      // 永久失败直接抛出, 不重试
+      if (isPermanentLoginError(lastMsg)) {
+        logError(phone, `登录通道已关闭: ${lastMsg}`);
+        throw err;
+      }
+      // 非瞬时错误(密码错等)直接失败
+      if (!isRetryableLoginError(lastMsg)) throw err;
+      const backoff = attempt < LOGIN_RETRY
+        ? LOGIN_RETRY_MIN + attempt * (LOGIN_RETRY_MAX - LOGIN_RETRY_MIN) / LOGIN_RETRY + randInt(-1500, 1500)
+        : 0;
+      logWarn(phone, `登录失败"${lastMsg}", ${backoff > 0 ? "等待 " + (backoff / 1000).toFixed(1) + "s" : ""} 重试 (${attempt}/${LOGIN_RETRY})`);
+      if (backoff > 0) await sleep(backoff);
+    }
+  }
+  throw new Error(`登录失败(重试${LOGIN_RETRY}次耗尽): ${lastMsg}`);
 }
 
 // ── 余额 ──────────────────────────────────────
@@ -249,12 +325,35 @@ async function claimSignReward(token, liveToken) {
   const resp = await request({ method: "POST", url: `${BASE}/app/integral/claimSignReward`, headers: { AppToken: token, liveToken }, body: { source: 3, appId: "wx703c4bd07bbd1695" } });
   return resp.data;
 }
-async function sendTurntableReward(token, liveToken) {
-  const resp = await request({ method: "POST", url: `${BASE}/app/newUser/sendTurntableReward`, headers: { AppToken: token, liveToken }, body: {} });
+async function sendTurntableReward(token, liveToken, extra) {
+  // 抓包 payload: {source:3, appId:"wx703c4bd07bbd1695"}
+  //  lotteryType=2(填邀请码) 追加 inviterUserId; =4(新App用户) 追加 isNewAppUser:1
+  const body = Object.assign({ source: 3, appId: "wx703c4bd07bbd1695" }, extra || {});
+  const resp = await request({ method: "POST", url: `${BASE}/app/newUser/sendTurntableReward`, headers: { AppToken: token, liveToken }, body });
+  return resp.data;
+}
+/** 查询剩余抽奖机会 + 奖品池: GET/POST /app/invited/getReward */
+async function getLotteryInfo(token, liveToken) {
+  const resp = await request({ method: "POST", url: `${BASE}/app/invited/getReward`, headers: { AppToken: token, liveToken }, body: {} });
+  return resp.data;
+}
+/** 活动窗口签到: getUserActiveWindow -> userActiveLogSign */
+async function getActiveWindow(token, liveToken) {
+  const resp = await request({ method: "GET", url: `${BASE}/app/integral/getUserActiveWindow`, headers: { AppToken: token, liveToken } });
+  return resp.data;
+}
+async function activeLogSign(token, liveToken) {
+  const resp = await request({ method: "POST", url: `${BASE}/app/integral/userActiveLogSign`, headers: { AppToken: token, liveToken }, body: {} });
+  return resp.data;
+}
+/** 填邀请码换 1 次抽奖机会: /app/userInvited/bindInvForUser */
+async function bindInviteCode(token, liveToken, userId, code) {
+  const resp = await request({ method: "POST", url: `${BASE}/app/userInvited/bindInvForUser`, headers: { AppToken: token, liveToken }, body: { fsUserId: userId, invitationCode: code } });
   return resp.data;
 }
 async function receiveLuckyBag(token, liveToken) {
-  const resp = await request({ method: "POST", url: `${BASE}/app/luckyBag/receiveLuckyBag`, headers: { AppToken: token, liveToken }, body: {} });
+  // 正确路径在 H5 域 course_auto 下, 且需要 IM 消息里的 recordId; 无条件时跳过
+  const resp = await request({ method: "POST", url: `${BASE}/course_auto/app/luckyBag/receiveLuckyBag`, headers: { AppToken: token, liveToken }, body: {} });
   return resp.data;
 }
 async function invitedVideoReward(token, liveToken) {
@@ -384,8 +483,13 @@ async function studyOneCourseVideo(st, courseId, video) {
   // 1) 未拥有先兑换解锁
   if (ENABLE_COURSE_BUY && video.isBuy !== 1) {
     const [ok, msg] = await buyCourseVideo(token, liveToken, courseId, videoId);
-    if (!ok) { logInfo(phone, `🔒 《${title}》兑换失败(${msg}), 跳过`); return C_FAIL; }
-    logSuccess(phone, `🛒 已兑换《${title}》`);
+    if (!ok) {
+      // 服务端返回"该小节已兑换" = 该小节其实已拥有, 应继续走看课/领分链路, 不能跳过
+      if (/已兑换|已购买|已拥有|已购/.test(msg)) logInfo(phone, `🛒 《${title}》${msg}, 视为已拥有, 继续`);
+      else { logInfo(phone, `🔒 《${title}》兑换失败(${msg}), 跳过`); return C_FAIL; }
+    } else {
+      logSuccess(phone, `🛒 已兑换《${title}》`);
+    }
   }
 
   // 2) 注册学习会话 (用断点做初始 duration)
@@ -461,9 +565,11 @@ async function studyCourses(st) {
           continue;
         }
       }
-      const videos = await getCourseVideoList(token, liveToken, courseId);
+      let videos = await getCourseVideoList(token, liveToken, courseId);
       if (!videos.length) continue;
-      logInfo(phone, `📗 课程《${courseName}》(${videos.length} 小节)`);
+      // 短小节优先: 单位时间收益最高, 且能在课程窗口耗尽前多领几个
+      videos = videos.slice().sort((a, b) => parseInt(a.seconds || 0, 10) - parseInt(b.seconds || 0, 10));
+      logInfo(phone, `📗 课程《${courseName}》(${videos.length} 小节, 按时长升序)`);
 
       for (const video of videos) {
         if (Date.now() > st.deadline) return { claimed, limit: false };
@@ -582,9 +688,141 @@ async function watchShortVideo(st, video) {
   return await claimIntegralWithRetry(st, vid);
 }
 
+// ══════════════ 直播挂机 (api.fhhx.runtzh.com) ══════════════
+// 直播 host 请求: 明文 JSON, 无 apiSecurity; 鉴权头 AppToken = liveToken 值
+function liveRequest(method, url, body) {
+  const h = { "User-Agent": pickUA(), AppToken: st_liveToken, liveToken: st_liveToken };
+  const init = { method, headers: h };
+  if (method === "POST") { h["Content-Type"] = "application/json;charset=UTF-8"; init.body = JSON.stringify(body || {}); }
+  return fetch(BASE_LIVE + url, init).then(r => r.json()).catch(() => null);
+}
+
+let st_liveToken = "";   // 当前账号 liveToken (liveRequest 用)
+
+/** 直播侧用户ID (独立账号体系, 缓存进 token_cache) */
+async function liveGetUserId(st) {
+  if (st.liveUserId) return st.liveUserId;
+  try {
+    st_liveToken = st.liveToken;
+    const r = await liveRequest("GET", "/app/user/getUserInfo");
+    const uid = (r && r.user && r.user.userId) || (r && r.data && r.data.user && r.data.user.userId) || null;
+    if (uid) {
+      st.liveUserId = String(uid);
+      if (st.cacheRef && st.cacheRef[st.phone]) { st.cacheRef[st.phone].liveUserId = st.liveUserId; saveCache(st.cacheRef); }
+    }
+    return st.liveUserId || null;
+  } catch (e) { return null; }
+}
+
+/** 直播间列表: 优先正在直播 (status=1), 其次回放 */
+async function liveGetRooms(st) {
+  try {
+    st_liveToken = st.liveToken;
+    const r = await liveRequest("GET", "/app/live/liveList?pageNum=1&pageSize=20");
+    const list = (r && r.data && (r.data.list || r.data.records)) || [];
+    return list.filter(x => x && (x.liveId || x.id));
+  } catch (e) { return []; }
+}
+
+/** 完成奖励倒计时: {remainingTime, watchDuration, videoDuration, hasReceived} */
+async function liveRemaining(st, liveId) {
+  try {
+    st_liveToken = st.liveToken;
+    const r = await liveRequest("GET", `/app/live/completion/remaining-time?liveId=${liveId}`);
+    return (r && r.code === 200) ? r.data : null;
+  } catch (e) { return null; }
+}
+
+/** 直播侧芳华币余额 */
+async function liveIntegral(st) {
+  try {
+    st_liveToken = st.liveToken;
+    const r = await liveRequest("GET", "/app/live/liveData/getUserIntegralInfo");
+    return (r && r.code === 200 && r.data) ? (r.data.integral ?? 0) : null;
+  } catch (e) { return null; }
+}
+
+/** 10秒流量上报 ("每次浏览10秒可获取1次芳华币" 的服务端入账依据) */
+async function liveReportTraffic(st, liveId, liveUserId, uuId, bytes) {
+  try {
+    st_liveToken = st.liveToken;
+    const r = await liveRequest("POST", "/app/live/liveTrafficLog/getLiveInternetTraffic",
+      { userId: liveUserId, liveId: String(liveId), uuId, internetTraffic: bytes });
+    return r && r.code === 200;
+  } catch (e) { return false; }
+}
+
+/** WS 挂机连接 (im.fhhx.runtzh.com, HMAC-SHA256 签名, 15s 心跳) */
+function liveWSConnect(st, liveId, liveUserId, onMsg) {
+  if (!ws) return null;
+  try {
+    const userType = "0", ts = Date.now();
+    const sig = require("crypto").createHmac("sha256", String(ts))
+      .update(`${liveId}${liveUserId}${userType}${ts}`).digest("hex");
+    const sock = new ws(`wss://im.fhhx.runtzh.com/ws/app/webSocket?userId=${liveUserId}&liveId=${liveId}&userType=${userType}&timestamp=${ts}&signature=${sig}`,
+      { headers: { "User-Agent": pickUA() } });
+    let alive = false;
+    sock.on("open", () => { alive = true; try { sock.send(JSON.stringify({ cmd: "heartbeat" })); } catch (e) {} });
+    sock.on("message", (d) => { try { onMsg && onMsg(JSON.parse(d.toString())); } catch (e) {} });
+    sock.on("error", () => { alive = false; });
+    sock.on("close", () => { alive = false; });
+    const hb = setInterval(() => { if (alive) { try { sock.send(JSON.stringify({ cmd: "heartbeat" })); } catch (e) {} } }, 15000);
+    return { sock, stop() { clearInterval(hb); try { sock.close(); } catch (e) {} }, isAlive: () => alive };
+  } catch (e) { return null; }
+}
+
+/** 直播挂机主流程: WS 在线 + 每10s流量上报 + 完成奖励倒计时 */
+async function watchLive(st) {
+  const phone = st.phone;
+  if (!ENABLE_LIVE) return { watched: false, reason: "已禁用(FHWL_LIVE=0)" };
+  if (!st.liveToken) return { watched: false, reason: "无 liveToken (短信登录未下发, 需 App 端登录获取)" };
+  st_liveToken = st.liveToken;
+  const liveUserId = await liveGetUserId(st);
+  if (!liveUserId) return { watched: false, reason: "获取直播侧 userId 失败" };
+  const rooms = await liveGetRooms(st);
+  if (rooms.length === 0) return { watched: false, reason: "直播间列表为空" };
+  // 排序: 正在直播(status=1)优先
+  rooms.sort((a, b) => (b.status === 1 ? 1 : 0) - (a.status === 1 ? 1 : 0));
+  const room = rooms[0];
+  const liveId = String(room.liveId || room.id);
+  const isLive = room.status === 1;
+  logInfo(phone, `📺 直播间 ${liveId} "${String(room.liveName || room.title || "").slice(0, 24)}" (status=${room.status}${isLive ? " 直播中" : " 回放/未开播"})`);
+
+  const balanceBefore = await liveIntegral(st);
+  const uuId = new Date().toISOString().slice(0, 10).replace(/-/g, "") + Math.random().toString(36).slice(2, 10);
+  let bytes = 0, reported = 0;
+  const conn = liveWSConnect(st, liveId, liveUserId, (m) => {
+    if (m && m.data && m.data.cmd === "entry_batch") { /* 在线人数播报, 忽略 */ }
+  });
+  if (conn) logInfo(phone, "🔌 直播 WS 已连接 (在线挂机)");
+  else logWarn(phone, "WS 不可用 (缺 ws 模块), 仅 HTTP 流量上报");
+
+  const deadline = Date.now() + LIVE_MIN_MINUTES * 60 * 1000;
+  let received = false;
+  while (Date.now() < deadline) {
+    bytes += LIVE_BITRATE * 10 / 8;   // app 每10s上报一次累计流量
+    if (await liveReportTraffic(st, liveId, liveUserId, uuId, Math.round(bytes))) reported++;
+    await sleep(jitter(10000));
+    // 每 60s 查一次完成奖励状态
+    if (reported % 6 === 0) {
+      const rm = await liveRemaining(st, liveId);
+      if (rm) {
+        if (rm.hasReceived) { received = true; logInfo(phone, "直播完成奖励已领取过, 提前结束"); break; }
+        if (rm.remainingTime <= 0 && !rm.hasReceived) { logInfo(phone, `完成奖励倒计时结束 (videoDuration=${rm.videoDuration}s), 等待服务端入账`); received = true; break; }
+        logInfo(phone, `⏱ 完成奖励剩余 ${Math.ceil(rm.remainingTime / 60)}min | watchDuration=${rm.watchDuration}s`);
+      }
+      if (Date.now() > st.deadline) { logWarn(phone, "到达最大运行时间, 直播挂机提前结束"); break; }
+    }
+  }
+  if (conn) conn.stop();
+  const balanceAfter = await liveIntegral(st);
+  const delta = (balanceAfter != null && balanceBefore != null) ? balanceAfter - balanceBefore : "?";
+  logInfo(phone, `直播挂机: 上报${reported}次 (${LIVE_MIN_MINUTES}min) | 直播侧芳华币 ${balanceBefore} → ${balanceAfter} (${delta})`);
+  return { watched: true, reported, liveId, delta };
+}
+
 // ══════════════ 主流程 (processAccount + main) ══════════════
 // 任务顺序 (沿用现有 fanghua.js 结构, 课程/短视频逻辑替换为 Python 修正版):
-//   登录 -> 签到 -> 日常任务 -> 分享健康(循环) -> 课程学习刷分 -> 短视频领币 -> 最终余额 -> 汇总 -> PushPlus
 
 async function processAccount(phone, pwd, cache) {
   log(phone, "开始执行");
@@ -601,6 +839,7 @@ async function processAccount(phone, pwd, cache) {
     // 会话状态: 课程/短视频阶段共享 上限type记忆 + 领币节流时间戳 + 最长运行时间
     const st = {
       phone, token, liveToken, userId, nickName,
+      cacheRef: cache,
       deadline: Date.now() + MAX_HOURS * 3600 * 1000,
       lastClaimTs: 0,
       exhaustedTypes: new Set(),
@@ -608,30 +847,91 @@ async function processAccount(phone, pwd, cache) {
 
     // 1. 签到
     logInfo(phone, "--- 签到 ---");
+    let signOk = false;
+    let signRaw = null;
     try {
       const sr = await sign(token, liveToken);
+      signRaw = sr;
+      signOk = !!(sr && sr.code === 200);
       logInfo(phone, (sr && sr.msg) || JSON.stringify(sr));
     } catch (e) { logWarn(phone, `签到失败: ${e.message}`); }
     await sleep(jitter(2000));
 
-    // 1.5 其他日常任务
-    logInfo(phone, "--- 日常任务 ---");
+    // 1.5 抽奖/转盘/福袋/滚动奖励等日常任务
+    logInfo(phone, "--- 抽奖 & 日常任务 ---");
+    const lotteryLogs = [];
+    const runOne = async (name, fn) => {
+      try {
+        const r = await fn();
+        const msg = (r && r.msg) || "";
+        if (r && r.code === 200) {
+          logSuccess(phone, `🎁 ${name}: ${msg || "成功"}`);
+          lotteryLogs.push(`${name}: ${msg || "成功"}`);
+          return { ok: true, msg };
+        }
+        if (r && r.code === 500 && !/非法|异常/.test(msg)) logInfo(phone, `${name}: ${msg}`);
+        return { ok: false, msg };
+      } catch (e) { return { ok: false, msg: e.message }; }
+    };
+
+    // 1.5.1 签到转盘: 仅当 /app/integral/sign 返回非空 data 时才可领, 否则服务端报"非法操作"
+    const signData = (signRaw && Array.isArray(signRaw.data)) ? signRaw.data : [];
+    if (signOk && signData.length > 0) {
+      logInfo(phone, `签到返回 ${signData.length} 个转盘奖品, 领取中…`);
+      await runOne("签到转盘", () => claimSignReward(token, liveToken));
+      await sleep(jitter(randInt(2000, 4000)));
+    } else if (signOk) {
+      logInfo(phone, "签到无转盘奖品, 跳过 claimSignReward (避免非法操作)");
+    }
+
+    // 1.5.2 邀请码 -> 换 1 次抽奖机会 (FH_INVITE_CODE, 可选)
+    const INVITE_CODE = (process.env.FH_INVITE_CODE || "").trim();
+    if (INVITE_CODE) {
+      await runOne("填写邀请码", () => bindInviteCode(token, liveToken, userId, INVITE_CODE));
+      await sleep(jitter(randInt(2000, 4000)));
+    }
+
+    // 1.5.3 转盘抽奖: 先查剩余次数, 再循环抽到没有机会为止 (上限保护)
+    let lotteryLeft = null;
+    try {
+      const li = await getLotteryInfo(token, liveToken);
+      if (li && li.code === 200 && li.data) {
+        lotteryLeft = li.data.remainingLotteryCount;
+        if (lotteryLeft != null) logInfo(phone, `剩余抽奖机会: ${lotteryLeft}`);
+      }
+    } catch (e) {}
+    const LOTTERY_MAX = envInt("FHWL_LOTTERY_MAX", 10);
+    for (let i = 0; i < LOTTERY_MAX; i++) {
+      const r = await runOne(`转盘抽奖 #${i + 1}`, () => sendTurntableReward(token, liveToken));
+      if (!r.ok && /没有抽奖机会|机会.*用完|暂无|上限|已达/.test(r.msg || "")) {
+        logInfo(phone, `转盘抽奖结束: ${r.msg}`);
+        break;
+      }
+      if (!r.ok && /非法|异常|失败/.test(r.msg || "")) break;
+      await sleep(jitter(randInt(3000, 6000)));
+    }
+
+    // 1.5.4 其余日常任务
     const dailyTasks = [
-      { name: "签到奖励", fn: () => claimSignReward(token, liveToken) },
-      { name: "新人转盘", fn: () => sendTurntableReward(token, liveToken) },
       { name: "领取福袋", fn: () => receiveLuckyBag(token, liveToken) },
       { name: "邀请视频奖励", fn: () => invitedVideoReward(token, liveToken) },
       { name: "滚动奖励", fn: () => scrollRewards(token, liveToken) },
     ];
     for (const t of dailyTasks) {
-      try {
-        const r = await t.fn();
-        const msg = (r && r.msg) || "";
-        if (r && r.code === 200) logSuccess(phone, `🎁 ${t.name}: ${msg || "成功"}`);
-        // 失败/未达成(新人转盘已参加过等)静默, 不刷屏
-      } catch (e) { /* 任务报错静默 */ }
+      await runOne(t.name, t.fn);
       await sleep(jitter(randInt(2000, 4000)));
     }
+
+    // 1.5.5 活动窗口签到 (isOpen=true 时才签到, 否则服务端报"活动未开启")
+    try {
+      const aw = await getActiveWindow(token, liveToken);
+      if (aw && aw.code === 200 && aw.isOpen) {
+        await sleep(jitter(2000));
+        await runOne("活动签到", () => activeLogSign(token, liveToken));
+      } else {
+        logInfo(phone, "活动窗口未开启, 跳过活动签到");
+      }
+    } catch (e) {}
 
     // 1.6 分享健康 (固定100次, 间隔5秒; FHWL_SHARE_MAX 可覆盖)
     logInfo(phone, "--- 分享健康 ---");
@@ -655,21 +955,9 @@ async function processAccount(phone, pwd, cache) {
     logInfo(phone, "分享健康完成 " + shareCount + " 次");
     await sleep(jitter(2000));
 
-    // 2. 课程学习刷分 (修正: /app/course/getIntegral 每小节 +50, 遍历全量小节, 支持兑换+断点续看)
-    logInfo(phone, "--- 课程学习刷分 ---");
-    let courseCount = 0;
-    if (ENABLE_COURSE) {
-      try {
-        const r = await studyCourses(st);
-        courseCount = r.claimed;
-        logInfo(phone, `课程阶段: 领 ${courseCount} 小节 (+${courseCount * COURSE_INTEGRAL_PER_SECTION})`);
-      } catch (e) { logWarn(phone, `课程阶段出错: ${e.message}`); }
-    } else {
-      logInfo(phone, "课程阶段已禁用 (FHWL_COURSE=0)");
-    }
-    await sleep(jitter(3000));
-
-    // 3. 短视频领币 (修正: addIntegral 必须带 videoId, 多 type 重试, 最短间隔节流)
+    // 2. 短视频领币 (修正: addIntegral 必须带 videoId, 多 type 重试, 最短间隔节流)
+    // [v7 顺序修复] 短视频(type1浏览商品+type2浏览视频, 约+400)放课程之前:
+    // 课程长视频(1700~3000s)按真实节奏看会耗尽 maxRuntime, 之前导致短视频阶段被跳过
     logInfo(phone, "--- 刷短视频 ---");
     const SHORT_MAX = envInt("FHWL_SHORT_MAX", 100); // 默认100; >0 纯按次数跑(忽略防刷停止)
     let shortCount = 0, shortCoins = 0, shortStop = "";
@@ -704,36 +992,127 @@ async function processAccount(phone, pwd, cache) {
     }
     if (!shortStop) shortStop = "全部完成";
     logInfo(phone, `短视频: ${shortCount} 个, 领币${shortCoins}次 | ${shortStop}`);
+    await sleep(jitter(3000));
+
+    // 3. 课程学习刷分 (修正: /app/course/getIntegral 每小节 +50, 遍历全量小节, 支持兑换+断点续看)
+    // [v7 限时] 课程阶段独立限时: 预留直播挂机时间, 防止长视频吃满 maxRuntime 挤掉直播
+    logInfo(phone, "--- 课程学习刷分 ---");
+    let courseCount = 0;
+    if (ENABLE_COURSE) {
+      const mainDeadline = st.deadline;
+      const courseReserveMs = (LIVE_MIN_MINUTES + 5) * 60 * 1000;
+      // 课程窗口 = 总剩余时间 - 直播预留(而非固定 reserve 分钟)。低于 1min 时至少给 1min,
+      // 保证总有时间把未领的小节推进起来。
+      st.deadline = Math.max(Date.now() + 60 * 1000, mainDeadline - courseReserveMs);
+      logInfo(phone, `课程阶段可用时长: ${Math.round((st.deadline - Date.now()) / 60000)}min`);
+      try {
+        const r = await studyCourses(st);
+        courseCount = r.claimed;
+        logInfo(phone, `课程阶段: 领 ${courseCount} 小节 (+${courseCount * COURSE_INTEGRAL_PER_SECTION})`);
+      } catch (e) { logWarn(phone, `课程阶段出错: ${e.message}`); }
+      st.deadline = mainDeadline;   // 恢复, 直播阶段仍可用完整剩余时间
+    } else {
+      logInfo(phone, "课程阶段已禁用 (FHWL_COURSE=0)");
+    }
+    await sleep(jitter(3000));
+
+    // 3.5 直播挂机 (WS在线 + 10s流量上报 + 完成奖励, 仅 liveToken 存在时可用)
+    let liveResult = { watched: false, reason: "" };
+    logInfo(phone, "--- 直播挂机 ---");
+    try {
+      liveResult = await watchLive(st);
+      if (!liveResult.watched) logInfo(phone, "直播跳过: " + liveResult.reason);
+    } catch (e) { logWarn(phone, `直播挂机出错: ${e.message}`); }
 
     // 4. 最终积分
     logInfo(phone, "--- 最终积分 ---");
     const balanceAfter = await getBalance(token);
     const delta = (balanceAfter != null && balanceBefore != null) ? balanceAfter - balanceBefore : "?";
     log(phone, `余额: ${balanceBefore} → ${balanceAfter} (变化 ${delta})`);
-    log(phone, `🏁 完成: 分享${shareCount} 课程${courseCount} 短视频${shortCount}(${shortCoins}领币)`);
-    return { phone, nickName, shareCount, courseCount, shortCount, shortCoins };
+    log(phone, `🏁 完成: 分享${shareCount} 课程${courseCount} 短视频${shortCount}(${shortCoins}领币) 直播${liveResult.watched ? "✓" : "✗"}`);
+    return { phone, nickName, signOk, balanceBefore, balanceAfter, shareCount, courseCount, shortCount, shortCoins, signRaw, lotteryLogs, liveResult };
   } catch (err) {
     logError(phone, `执行失败: ${err.message}`);
     return { phone, error: err.message };
   }
 }
 
-// ── 推送 ──────────────────────────────────────
-async function sendToPushPlus(title, content) {
-  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
-  if (!token || !content.trim()) return;
-  if (content.length > 6000) content = content.slice(-6000);
-  try {
-    await fetch("https://www.pushplus.plus/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, title, content, template: "txt" }),
-    });
-    _origLog("✅ PushPlus推送成功");
-  } catch (e) { _origLog("❌ PushPlus推送失败: " + (e.message || e)); }
-}
-
 // ── 入口 ──────────────────────────────────────
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '芳华';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k];
+        const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc);
+        else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj;
+    return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k];
+    if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v);
+    if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 async function main() {
   const fhwl = process.env.FHWL || "";
   if (!fhwl) {
@@ -742,7 +1121,7 @@ async function main() {
     process.exit(1);
   }
   printBanner();
-  const accounts = fhwl.split("&").map(p => {
+  const accounts = fhwl.split("&").map((p) => {
     const t = p.trim();
     if (!t.includes("@")) return null;
     const [phone, pwd] = t.split("@").map(s => s.trim());
@@ -756,7 +1135,16 @@ async function main() {
   console.log(`   开始并发执行...\n`);
 
   const cache = loadCache();
-  const results = await Promise.all(accounts.map(acc => processAccount(acc.phone, acc.pwd, cache)));
+  const results = [];
+  // 账号串行执行 + 错峰延迟，避免并发同时登录触发服务端反欺诈("暂不支持密码登录")
+  for (let i = 0; i < accounts.length; i++) {
+    if (i > 0) {
+      const gap = randInt(3000, 6000);
+      console.log(`   账号 ${i + 1}/${accounts.length} 前错峰等待 ${gap / 1000}s (规避并发登录风控)`);
+      await sleep(gap);
+    }
+    results.push(await processAccount(accounts[i].phone, accounts[i].pwd, cache));
+  }
 
   console.log("");
   console.log("  ╔═══════════════════════════════════╗");
@@ -780,7 +1168,31 @@ async function main() {
   console.log(`  🎬 短视频: ${totalShort} 个 (领币 ${totalCoins} 次)`);
   console.log("  ╚═══════════════════════════════════╝");
   console.log("");
-  await sendToPushPlus("芳华未来", notifyLines.join("\n"));
+
+  // 构建钉钉美化推送 row（今日获得 / 总积分 / 任务）
+  _rpApp = "芳华未来小程序任务";
+  results.forEach((r, i) => {
+    const idx = i + 1;
+    if (r.error) {
+      _setName(idx, r.phone);
+      _setSign(idx, "执行失败", null, null);
+      _addTask(idx, "错误", r.error);
+      return;
+    }
+    const before = r.balanceBefore, after = r.balanceAfter;
+    const earned = (typeof after === "number" && typeof before === "number" && (after - before) > 0)
+      ? `今日+${after - before}芳华币` : null;
+    const total = (typeof after === "number") ? String(after) : null;
+    _setName(idx, r.nickName || r.phone);
+    _setSign(idx, r.signOk ? "签到成功" : "签到完成", earned, total);
+    const _st = extractPoints(r.signRaw);
+    if (_st && _st.streak != null) _rpGet(idx).streak = String(_st.streak);
+    if (r.lotteryLogs && r.lotteryLogs.length) _setLottery(idx, r.lotteryLogs.join("｜"));
+    _addTask(idx, "分享健康", `完成${r.shareCount}次`);
+    _addTask(idx, "课程学习", `领${r.courseCount}小节`);
+    _addTask(idx, "短视频领币", `领币${r.shortCoins}次`);
+  });
+  await flushLogPoints(_rpApp);
 }
 
 main().catch(err => { console.error("Fatal:", err); process.exit(1); });

@@ -9,7 +9,6 @@
  *   wx_server_url   WCS 地址
  *   wx_auth         WCS 认证 key
  *   NICK_MAP        可选 昵称映射 openid:昵称&openid:昵称
- *   PUSH_PLUS_TOKEN PushPlus 推送(可选)
  *   ARUSU_REVIEW    可选 自定义评论文案, 用 | 分隔多条(默认内置鼓励语库)
  *   ARUSU_NO_REVIEW 可选 设为 1 关闭自动评论
  *
@@ -22,6 +21,7 @@ const http = require("http");
 const { URL } = require("url");
 const fs = require("fs");
 const path = require("path");
+const { report } = require("./std_report");
 
 // ============ 配置 ============
 const APP_NAME = "阿如玊+";
@@ -29,7 +29,6 @@ const APPID = "wx6c6fefac45365d53";
 const HOST = "https://arusu.cn/api/wx";
 const WCS = process.env.wx_server_url || "http://host.docker.internal:18788";
 const WCS_AUTH = process.env.wx_auth || "";
-const PUSH_TOKEN = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
 const ACCOUNTS = (process.env.wx_opinion || "").split("&").map((s) => s.trim()).filter(Boolean);
 const CACHE_FILE = path.join(__dirname, "arusu_token_cache.json");
 
@@ -537,28 +536,17 @@ async function showTotal(token, summary) {
     if (d && d.total != null) {
       log(`💰 总积分: ${d.total}`);
       summary.push(`积分: ${d.total}`);
+      return Number(d.total);
     }
   } catch (e) {
     if (e instanceof TokenExpired) throw e;
     log(`⚠️ 积分查询失败: ${e.message}`);
   }
+  return null;
 }
 
 // ============ 推送 ============
-async function push(title, content) {
-  if (!PUSH_TOKEN) return;
-  try {
-    const r = await request("https://www.pushplus.plus/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: { token: PUSH_TOKEN, title, content, template: "txt" },
-    });
-    const ok = r.data && (r.data.code === 200 || r.data.code === "200");
-    console.log(ok ? "📢 推送成功" : `📢 推送失败: ${JSON.stringify(r.data).slice(0, 120)}`);
-  } catch (e) {
-    console.log(`📢 推送异常: ${e.message}`);
-  }
-}
+// 推送统一由 std_report.report 处理(钉钉加签), 见主流程内 report(APP_NAME, results)
 
 // ============ 单账号流程 ============
 async function runOne(openid, idx, cache) {
@@ -566,16 +554,19 @@ async function runOne(openid, idx, cache) {
   log(`\n========== 账号[${idx + 1}] ${nick} ==========`);
 
   const summary = [];
+  let totalPoints = null;
+  let sign = "今日任务完成";
+
   let auth;
   try {
     auth = await ensureToken(openid, cache);
   } catch (e) {
     log(`❌ 登录异常: ${e.message}`);
-    return `${nick}: 登录异常(${e.message})`;
+    return { idx, name: nick, sign: "登录异常", earned: null, total: null, tasks: null, lottery: null };
   }
   if (!auth) {
     log("❌ 登录失败, 跳过");
-    return `${nick}: 登录失败`;
+    return { idx, name: nick, sign: "登录失败", earned: null, total: null, tasks: null, lottery: null };
   }
   const inf = auth.info || {};
   // 资料完善判定: 有地区且昵称不是系统默认的"用户XXXX"
@@ -596,7 +587,8 @@ async function runOne(openid, idx, cache) {
     await sleep(jitter(1500, 400));
     await doTasks(token, summary);
     await sleep(jitter(1200, 300));
-    await showTotal(token, summary);
+    const tot = await showTotal(token, summary);
+    if (typeof tot === "number") totalPoints = tot;
   };
 
   try {
@@ -607,18 +599,38 @@ async function runOne(openid, idx, cache) {
       log("ℹ️ 运行中登录态失效, 重新登录后重试");
       delete cache[openid];
       const again = await ensureToken(openid, cache);
-      if (!again) return `${nick}: 重登失败`;
+      if (!again) {
+        return { idx, name: nick, sign: "重登失败", earned: null, total: totalPoints, tasks: null, lottery: null };
+      }
       try {
         await flow(again.token);
       } catch (e2) {
         log(`❌ 重试仍失败: ${e2.message}`);
-        return `${nick}: ${summary.join(" | ") || "失败"}`;
+        sign = "执行异常";
       }
     } else {
       log(`❌ 执行异常: ${e.message}`);
+      sign = "执行异常";
     }
   }
-  return `${nick}: ${summary.join(" | ") || "无结果"}`;
+
+  // 今日获得积分: 汇总 领分/点赞/评论 的 +N
+  let earned = 0;
+  for (const s of summary) {
+    const m = s.match(/^(?:领分|点赞|评论): \+(\d+)/);
+    if (m) earned += Number(m[1]);
+  }
+  const taskLine = summary.find((s) => s.startsWith("任务:")) || null;
+
+  return {
+    idx,
+    name: nick,
+    sign,
+    earned: earned > 0 ? `+${earned}分` : null,
+    total: totalPoints,
+    tasks: taskLine,
+    lottery: null,
+  };
 }
 
 // ============ 主流程 ============
@@ -645,10 +657,12 @@ async function runOne(openid, idx, cache) {
   saveCache(cache);
 
   log(`\n📊 汇总:`);
-  results.forEach((r) => log(`  ${r}`));
+  results.forEach((r) =>
+    log(`  ${r.name}: ${r.sign}${r.earned ? " " + r.earned : ""}${r.total != null ? " | 总积分:" + r.total : ""}${r.tasks ? " | " + r.tasks : ""}`)
+  );
   log(`🔔 ${APP_NAME},结束`);
 
-  await push(APP_NAME, LOGS.join("\n"));
+  report(APP_NAME, results);
 })().catch((e) => {
   console.log(`❌ 脚本异常: ${e && e.stack ? e.stack : e}`);
   process.exit(1);

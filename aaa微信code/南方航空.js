@@ -15,8 +15,8 @@ const path = require('path');
 const CSAIR_APPID = 'wx729238547ac7a14c';
 // wechatserver 接口配置(见 接口文档.txt)
 // POST /wx/code  body: {openid, appid}  header: auth  返回 data.code
-const WX_SERVER_URL = (process.env.wx_server_url || '').replace(/\/$/, '');
-const WX_AUTH = process.env.wx_auth || '';
+const wx_server_url = (process.env.wx_server_url || '').replace(/\/$/, '');
+const wx_auth = process.env.wx_auth || '';
 const CSAIR_MINI_BASE = 'https://wxapi.csair.com';
 const CSAIR_MINI_VERSION = '459';
 const CACHE_FILE = resolveCacheFile();
@@ -299,10 +299,10 @@ async function loadMemberByAuth(auth) {
 }
 
 async function getWxCodeFromServer(openid, index) {
-  if (!WX_SERVER_URL || !WX_AUTH) throw new Error('未配置 wx_server_url 或 wx_auth 环境变量');
-  const { body } = await httpRequest(`${WX_SERVER_URL}/wx/code`, {
+  if (!wx_server_url || !wx_auth) throw new Error('未配置 wx_server_url 或 wx_auth 环境变量');
+  const { body } = await httpRequest(`${wx_server_url}/wx/code`, {
     method: 'POST',
-    headers: { auth: WX_AUTH, 'Content-Type': 'application/json' },
+    headers: { auth: wx_auth, 'Content-Type': 'application/json' },
     json: { openid, appid: CSAIR_APPID },
     timeout: 20000,
   });
@@ -787,6 +787,46 @@ async function checkAndClaimAwards(h5Client, index, miniClient = null) {
  * @example
  * await main();
  */
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '南航签到';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function _setName(idx, name) { if (name != null && name !== "") _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null && sign !== "") r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, streak) { if (streak != null && streak !== "") _rpGet(idx).streak = String(streak); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 async function main() {
   if (ACCOUNT_LIST.length === 0) {
     console.log(`❌ 请先设置环境变量 ${ENV_NAME}`);
@@ -945,6 +985,17 @@ function showResult(data, index) {
       '',
     ].join('\n'),
   );
+  // 上报 std_report 双引擎（钉钉 markdown）
+  const _info = (data && data.data) || {};
+  const _already = isMiniAlreadySigned(data);
+  _setName(index, "账号" + index);
+  _setSign(index, _already ? "今日已签到" : (success ? "签到成功" : "签到失败"));
+  if (_info.signInNum != null && _info.signInNum !== "") _setStreak(index, String(_info.signInNum));
+  if (_info.score != null && _info.score !== "") _rpGet(index).total = String(_info.score);
+  const _award = [];
+  if (_info.result != null && _info.result !== "") _award.push(String(_info.result));
+  if (_info.award_num != null && _info.award_num !== "") _award.push("奖励x" + _info.award_num);
+  if (_award.length) _rpGet(index).earned = _award.join(" ");
   return success;
 }
 
@@ -986,8 +1037,7 @@ function Env(name) {
      */
     async sendNotify() {
       if (this.notifyMsgs.length > 0) {
-        const { push } = require('./_push_helper');
-        await push(this.name, this.notifyMsgs.join('\n'));
+        await flushLogPoints(_rpApp);
       }
     }
   })(name);

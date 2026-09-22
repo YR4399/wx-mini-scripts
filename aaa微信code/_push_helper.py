@@ -1,72 +1,26 @@
-# ========== 推送通知模块 (Python) ==========
-import sys, os, json, urllib.request, ssl, builtins
-
-CTX = ssl.create_default_context()
-CTX.check_hostname = False
-CTX.verify_mode = ssl.CERT_NONE
-
-PLUSPLUS_TOKEN = os.getenv('PLUSPLUS_TOKEN', '') or os.getenv('PUSH_PLUS_TOKEN', '')
-
-_log_lines = []
-_orig_print = builtins.print
-
-def _log_print(*args, **kwargs):
-    text = ' '.join(str(a) for a in args)
-    _log_lines.append(text)
-    _orig_print(*args, **kwargs)
-
-# Monkey-patch print to capture output
-builtins.print = _log_print
+# ============================================================
+# 统一走 std_report.py 的钉钉机器人(markdown 加签)。保留旧 API 兼容：
+#   send_push(title, content) / send_push_notify(title, content)
+# ============================================================
+import os, sys
 
 
-def push_notify(title, content=""):
-    """发送推送通知 (兼容旧版)"""
-    _do_push(title, content)
-
-
-def send_push_notify(title, content=""):
-    """发送推送通知 (新版)
-    自动提取最近日志作为内容
-    """
-    if not content:
-        keys = []
-        for line in _log_lines[-40:]:
-            s = str(line).strip()
-            if s and len(s) > 3 and not s.startswith('===') and not s.startswith('---'):
-                keys.append(s[-150:])
-        content = '\n'.join(keys[-20:]) if keys else f'{title}执行完成'
-    _do_push(title, content)
-
-
-def _do_push(title, content):
+def send_push(title, content):
+    """推送消息到钉钉（经 std_report 引擎）。"""
     try:
-        from notify import send as _send_notify
-        _send_notify(title, content)
-        _orig_print(f'✅ 推送成功: {title}')
-        return True
-    except ImportError:
-        pass
+        from std_report import send_push as _ding_send
+        return _ding_send(title, content)
     except Exception as e:
-        _orig_print(f'⚠️ notify 推送失败: {e}')
-
-    if PLUSPLUS_TOKEN:
-        try:
-            body = json.dumps({
-                'token': PLUSPLUS_TOKEN, 'title': title,
-                'content': content, 'template': 'txt'
-            }).encode()
-            req = urllib.request.Request('http://www.pushplus.plus/send', data=body, method='POST')
-            req.add_header('Content-Type', 'application/json')
-            resp = urllib.request.urlopen(req, timeout=15, context=CTX)
-            result = json.loads(resp.read())
-            if result.get('code') == 200:
-                _orig_print(f'✅ PushPlus推送成功: {title}')
-                return True
-            _orig_print(f'❌ PushPlus推送失败: {result.get("msg", "未知")}')
-        except Exception as e:
-            _orig_print(f'❌ PushPlus推送异常: {e}')
+        print(f'[push] 钉钉推送失败: {e}')
         return False
 
-    _orig_print('⚠️ 未配置推送，跳过')
-    return False
-# ========== 推送通知模块结束 ==========
+
+def send_push_notify(title, content):
+    """兼容别名：部分脚本仍按旧名导入，转发到 send_push。"""
+    return send_push(title, content)
+
+
+if __name__ == '__main__':
+    title = sys.argv[1] if len(sys.argv) > 1 else '脚本执行'
+    content = sys.argv[2] if len(sys.argv) > 2 else '执行完成'
+    send_push(title, content)

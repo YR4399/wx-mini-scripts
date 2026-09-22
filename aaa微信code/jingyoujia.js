@@ -1,29 +1,28 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
+------------------------------------------
+@Author: sm
+@Date: 2026.05.31
 @Description: 劲友家小程序签到
 cron: 30 8 * * *
+------------------------------------------
+变量名：jingyoujia
+变量值：wx_server 里的 openid/账号标识，多账号用 & 或换行
+------------------------------------------
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("劲友家小程序签到");
 const axios = require("axios");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx10bc773e0851aedd";
 const API_BASE = "https://jjw.jingjiu.com/app-jingyoujia";
@@ -32,7 +31,7 @@ const PAGE_VERSION = "1052";
 const AES_KEY = "Z0J7M480h6kppf67";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "jingyoujia";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -53,7 +52,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e );
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -74,7 +73,10 @@ function aesEncrypt(text) {
 class Task {
     constructor(account) {
         this.index = $.userIdx++;
-        this.account = String(account || "").trim();
+        const _acc = String(account || "").trim();
+        const _parts = _acc.split("#");
+        this.account = _parts[0];
+        this.remark = _parts[1] ? _parts[1].trim() : "";
         this.token = "";
         this.userInfo = {};
         this.points = "";
@@ -83,13 +85,14 @@ class Task {
     }
 
     async run() {
+        if (this.remark) _setName(this.index, this.remark);
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            L.info("账号[" + this.index + "] 使用缓存token");
+            $.log(`账号[${this.index}] 使用缓存token`);
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
             }
         }
 
@@ -154,7 +157,7 @@ class Task {
         const upperMethod = method.toUpperCase();
         const options = {
             method: upperMethod,
-            url: API_BASE + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
+            url: `${API_BASE}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
             headers: this.getHeaders(notAuth ? { Authorization: "none" } : {}),
             timeout: 20000,
             validateStatus: () => true,
@@ -162,28 +165,12 @@ class Task {
         if (upperMethod === "GET") options.params = params;
         else options.data = data;
 
-        // 网络退避重试：超时/连接/ECONNRESET 错误重试 3 次
-        let lastErr = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-                const { data: result, status } = await axios.request(options);
-                if (status !== 200) throw new Error("HTTP " + status + ": " + JSON.stringify(result));
-                if (!result || (Number(result.code) !== 200 && String(result.code) !== 200)) {
-                    throw new Error(result?.msg || result?.message || JSON.stringify(result));
-                }
-                return result.data;
-            } catch (e) {
-                const emsg = String(e?.message || e);
-                const isNet = /timeout|ECONN|ETIMEDOUT|ENETUNREACH|socket|network/i.test(emsg);
-                if (!isNet || attempt >= 3) {
-                    lastErr = e;
-                    break;
-                }
-                console.log(`  [retry] request 网络异常(${emsg.slice(0, 60)}), ${attempt}s 后重试 ${attempt}/3`);
-                await new Promise((r) => setTimeout(r, attempt * 1000));
-            }
+        const { data: result, status } = await axios.request(options);
+        if (status !== 200) throw new Error(`HTTP ${status}: ${JSON.stringify(result)}`);
+        if (!result || (Number(result.code) !== 200 && String(result.code) !== "200")) {
+            throw new Error(result?.msg || result?.message || JSON.stringify(result));
         }
-        throw lastErr;
+        return result.data;
     }
 
     async getLoginCode() {
@@ -205,9 +192,9 @@ class Task {
             this.token = data?.accessToken || "";
             if (!this.token) throw new Error(`登录响应未返回 accessToken: ${JSON.stringify(data)}`);
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] 登录成功");
+            $.log(`账号[${this.index}] 登录成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
+            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
         }
     }
 
@@ -225,9 +212,9 @@ class Task {
             const data = await this.request({ apiPath: "/app/jingyoujia/customer/detail" });
             this.userInfo = data || {};
             this.saveCachedToken();
-            L.info("账号[" + this.index + "] 会员: " + data?.nickName || data?.nickname || "未知" + " " + maskPhone(data?.mobile || "") );
+            $.log(`账号[${this.index}] 会员: ${data?.nickName || data?.nickname || "未知"} ${maskPhone(data?.mobile || "")}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询会员失败: " + e.message || e );
+            $.log(`账号[${this.index}] 查询会员失败: ${e.message || e}`);
             if (isTokenError(e.message || e)) this.removeCachedToken();
         }
     }
@@ -235,10 +222,16 @@ class Task {
     async getIntegral() {
         try {
             const data = await this.request({ apiPath: "/app/jingyoujia/customer/queryCustIntegral" });
-            this.points = data?.usableIntegral ?? data?.integral ?? data?.custIntegral ?? data?.points ?? "";
-            L.info("账号[" + this.index + "] 当前积分: " + this.points === "" ? JSON.stringify(data) : this.points );
+            // 兼容裸数字响应（接口直接返回 310 这类数字，而非 {usableIntegral:310} 对象）
+            const _raw = (typeof data === "number" || (typeof data === "string" && data !== "")) ? data
+                : (data?.usableIntegral ?? data?.integral ?? data?.custIntegral ?? data?.points ?? "");
+            this.points = _raw;
+            $.log(`账号[${this.index}] 当前积分: ${this.points === "" ? JSON.stringify(data) : this.points}`);
+            if (this.points !== "" && this.points !== "null" && !isNaN(Number(this.points))) {
+                _setSign(this.index, null, null, String(this.points));
+            }
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询积分失败: " + e.message || e );
+            $.log(`账号[${this.index}] 查询积分失败: ${e.message || e}`);
         }
     }
 
@@ -246,15 +239,15 @@ class Task {
         try {
             const data = await this.request({ apiPath: "/app/jingyoujia/taskContinuousRecord/findCheckTask" });
             if (!data || !data.id) {
-                L.info("账号[" + this.index + "] 当前无签到活动");
+                $.log(`账号[${this.index}] 当前无签到活动`);
                 return;
             }
             this.task = data;
             const start = String(data.startTime || "").slice(0, 10);
             const end = String(data.endTime || "").slice(0, 10);
-            L.info("账号[" + this.index + "] 签到活动: taskId=" + data.id + (start || end ? " " + start + "-" + end : "") + ")");
+            $.log(`账号[${this.index}] 签到活动: taskId=${data.id}${start || end ? ` ${start}-${end}` : ""}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 获取签到活动失败: " + e.message || e );
+            $.log(`账号[${this.index}] 获取签到活动失败: ${e.message || e}`);
         }
     }
 
@@ -266,16 +259,18 @@ class Task {
                 params: { taskId: this.task.id },
             });
             this.record = data || {};
-            L.info("账号[" + this.index + "] 签到状态: 连续" + data?.continuousNum ?? 0 + "天 今日=" + data?.todayFinish ? "已签" : "未签" );
+            $.log(`账号[${this.index}] 签到状态: 连续${data?.continuousNum ?? 0}天 今日=${data?.todayFinish ? "已签" : "未签"}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询签到状态失败: " + e.message || e );
+            $.log(`账号[${this.index}] 查询签到状态失败: ${e.message || e}`);
         }
     }
 
     async signIn() {
         if (!this.task?.id) return;
         if (this.record?.todayFinish) {
-            L.info("账号[" + this.index + "] 今日已签到");
+            $.log(`账号[${this.index}] 今日已签`);
+            _setSign(this.index, "今日已签", null, this.points !== "" ? String(this.points) : null);
+            if (this.record?.continuousNum != null) _rpGet(this.index).streak = String(this.record.continuousNum);
             return;
         }
         try {
@@ -287,19 +282,26 @@ class Task {
                 },
             });
             const integral = data?.currentSignIntegral ?? data?.integral ?? "";
-            L.ok("账号[" + this.index + "] 签到成功" + (integral !== "" ? ": +" + integral + "积分" : "") + ")");
+            $.log(`账号[${this.index}] 签到成功${integral !== "" ? `: +${integral}积分` : ""}`);
+            const _ep = extractPoints(data) || {};
+            const _streak = this.record?.continuousNum != null ? this.record.continuousNum : _ep.streak;
+            const _earned = integral !== "" ? "+" + integral + "积分" : null;
+            const _total = _ep.total != null ? String(_ep.total) : (this.points !== "" ? String(this.points) : null);
+            _setSign(this.index, "签到成功", _earned, _total);
+            if (_streak != null) _rpGet(this.index).streak = String(_streak);
+            _setLottery(this.index, _digLottery(data));
             await this.finishTask();
         } catch (e) {
             const message = String(e.message || e);
             if (/已签到|重复|todayFinish/.test(message)) {
-                L.info("账号[" + this.index + "] 今日已签到");
+                $.log(`账号[${this.index}] 今日已签到`);
                 return;
             }
             if (/20230529|captcha|验证码|滑块/.test(message)) {
-                L.info("账号[" + this.index + "] 签到需要验证码，已跳过");
+                $.log(`账号[${this.index}] 签到需要验证码，已跳过`);
                 return;
             }
-            L.fail("账号[" + this.index + "] 签到失败: " + message );
+            $.log(`账号[${this.index}] 签到失败: ${message}`);
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -316,30 +318,89 @@ class Task {
                 },
             });
         } catch (e) {
-            L.fail("账号[" + this.index + "] 完成任务上报失败: " + e.message || e );
+            $.log(`账号[${this.index}] 完成任务上报失败: ${e.message || e}`);
         }
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+let _rpRows = [];
+let _rpApp = '劲友家';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
 !(async () => {
-  sectionLine("劲友家", "");
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
-    for (const account of $.userList) {
-        await new Task(account).run();
+    const results = [];
+for (const account of $.userList) {
+      const r = await new Task(account).run();
+      results.push(r || { status: "FAIL", name: "账号", detail: "unknown" });
     }
 })()
     .catch((e) => $.log(e.message || e))
     .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("劲友家小程序签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+      await flushLogPoints("劲友家小程序签到");
+    });

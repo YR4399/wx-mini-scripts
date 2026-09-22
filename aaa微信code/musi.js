@@ -1,3 +1,10 @@
+// ========== 环境配置 ==========
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 
 
 /*
@@ -27,9 +34,6 @@ const {
 } = require("../tools/env")
 const $ = new Env("慕斯小程序签到");
 const WeChatServer = require("./wcs.js");
-const TokenCache = require("./_token_cache");
-const path = require("path");
-const tokenCache = new TokenCache(path.join(__dirname, "musi_token_cache.json"));
 let ckName = `musi`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -48,19 +52,21 @@ class Task {
         this.user = env.split(strSplitor);
         this.activedAuthToken = null
         this.wcsid = this.user[0]
+        this.remark = this.user[1] ? this.user[1].trim() : "";
         this.openId = null
     }
 
     async run() {
-        const cached = tokenCache.read(this.wcsid);
-        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
-       
+        if (this.remark) _setName(this.index, this.remark);
+        //随机延迟5-30s 模拟人工操作
+       await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)
         }
         if (!this.activedAuthToken) {
             $.log(`账号[${this.index}] 获取用户Token失败❌`)
+            _setSign(this.index, "登录失败");
             return
         }
 
@@ -68,6 +74,8 @@ class Task {
         await this.getJob()
         if (!this.isSigned) {
             await this.doSign()
+        } else {
+            _setSign(this.index, "今日已签到")
         }
     }
     async getUserToken(code) {
@@ -101,7 +109,7 @@ class Task {
 
         if (result?.code == '0') {
             this.openId = result.data.openId
-            this.activedAuthToken = result.data.token; tokenCache.save(this.wcsid, result.data.token)
+            this.activedAuthToken = result.data.token
             $.log(`🌸账号[${this.index}] 获取用户Token成功:${this.activedAuthToken}`)
         } else {
             $.log(`🌸账号[${this.index}] 获取用户Token-失败:${result.msg}❌`)
@@ -139,7 +147,9 @@ class Task {
             if (result?.msg === "success") {
                 this.valid = true;
                 this.customId = result?.data.resMemberInfo.memberId;
-                $.log(`账号[${this.index}] 查询个人信息成功，积分：${result?.data?.memberInfo?.pointInfo?.point}`)
+                const _pt = result?.data?.memberInfo?.pointInfo?.point;
+                $.log(`账号[${this.index}] 查询个人信息成功，积分：${_pt}`)
+                if (_pt != null && _pt !== "" && !isNaN(Number(_pt))) _rpGet(this.index).total = String(_pt);
             } else {
                 $.log(`账号[${this.index}] 查询个人信息失败：${result?.msg || JSON.stringify(result)}`)
                 this.valid = false
@@ -203,15 +213,24 @@ class Task {
                 data: { "appId": "wx03527497c5369a2c", "appType": "WECHAT_MINI_PROGRAM", "osType": "windows", "model": "microsoft", "browser": "微信小程序", "platform": "1", "sourceType": "5", "sourceChannel": "会员小程序", "siteId": "", "visitorId": "", "deviceId": "", "spotId": "", "campaignId": "", "deviceType": "", "eventLabel": "", "eventValue": "", "eventAttr2": `${eventAttr2}`, "eventAttr3": "", "eventAttr4": "", "eventAttr5": "", "eventAttr6": "", "googleCampaignName": "", "googleCampaignSource": "", "googleCampaignMedium": "", "googleCampaignContent": "", "memberType": "DeRUCCI", "customId": `${this.customId}`, "locationUrl": "/pages/user/signIn", "url": "/pages/user/signIn", "pageTitle": "每日签到", "logType": "event", "behaviorIds": [1, 3], "eventCategory": "用户签到", "eventAction": "签到", "eventAttr1": 2, "openId": `${this.openId}` }
             }
             let { data: result } = await axios.request(options)
+            const _rp = _rpGet(this.index);
 
             if (result?.msg === "success") {
-                $.log(`账号[${this.index}] 签到成功，获得积分：${result?.data?.point}`)
+                const earned = result?.data?.point;
+                $.log(`账号[${this.index}] 签到成功，获得积分：${earned}`)
+                _setSign(this.index, "签到成功");
+                if (earned != null && earned !== "" && !isNaN(Number(earned))) _rp.earned = "今日+" + earned + "积分";
+                const ep = extractPoints(result);
+                if (ep.total != null) _rp.total = String(ep.total);
+                _setLottery(this.index, _digLottery(result));
             } else {
                 $.log(`账号[${this.index}] 签到失败：${result?.msg || JSON.stringify(result)}`)
+                _setSign(this.index, "签到失败: " + String(result?.msg || "").slice(0, 40));
             }
 
         } catch (e) {
             console.log(e)
+            _setSign(this.index, "签到异常");
         }
     }
 
@@ -224,9 +243,78 @@ class Task {
 
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+let _rpRows = [];
+let _rpApp = '慕斯';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
     await getNotice()
-$.userIdx = 0;
     $.checkEnv(ckName);
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
@@ -240,7 +328,7 @@ $.userIdx = 0;
 
 })()
     .catch((e) => console.log(e))
-    .finally(() => { $.sendMsg = async () => {}; $.done(); process.exit(0); });
+    .finally(() => $.done());
 
 async function getNotice() {
     try {
@@ -259,18 +347,3 @@ async function getNotice() {
     } catch (e) { }
 
 }
-
-// ========== PushPlus 推送 ==========
-try {
-    const _token = process.env.PLUSPLUS_TOKEN || process.env.PUSHPLUS_TOKEN;
-    if (_token) {
-        const _axios = require("axios");
-        _axios.post("http://www.pushplus.plus/send", {
-            token: _token, title: "慕斯", content: "慕斯执行完成", template: "txt"
-        }, { timeout: 15000 }).then(_r => {
-            if (_r.data?.code === 200) console.log("PushPlus 推送成功");
-            else console.log("PushPlus 推送失败:", _r.data?.msg);
-        }).catch(_e => console.log("推送异常:", _e.message));
-    }
-} catch(_e) { console.log("推送异常:", _e.message); }
-// ========== PushPlus 推送结束 ==========

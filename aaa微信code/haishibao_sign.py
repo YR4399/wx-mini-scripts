@@ -1,4 +1,7 @@
 # ========== SSL和代理修复 ==========
+
+
+# ==================== 推送 ====================
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -51,6 +54,42 @@ except ImportError:
         print(f'⚠️ 推送模块未加载')
         return False
 # ========== 推送通知结束 ==========
+try:
+    from std_report import report as _std_report, extract_points
+except ImportError:
+    _std_report = None
+    extract_points = None
+_rows = []
+
+
+def _dig_lottery(obj):
+    """通用抽奖/奖励字段扫描：从响应体提取 lottery/draw/prize/转盘/福袋 等字段。"""
+    if not obj:
+        return ""
+    flat = {}
+
+    def _f(o, pre):
+        if isinstance(o, list):
+            for i, v in enumerate(o):
+                _f(v, f"{pre}.{i}" if pre else str(i))
+        elif isinstance(o, dict):
+            for k, v in o.items():
+                nk = f"{pre}.{k}" if pre else k
+                if isinstance(v, (dict, list)):
+                    _f(v, nk)
+                else:
+                    flat[nk.lower()] = v
+        elif pre:
+            flat[pre] = o
+
+    _f(obj, "")
+    import re
+    pat = re.compile(r"lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift")
+    out = []
+    for k, v in flat.items():
+        if pat.search(k) and v not in (None, "", {}, []):
+            out.append(str(v))
+    return "｜".join(out)
 
 
 # ====== 自动安装依赖 ======
@@ -247,10 +286,11 @@ class WCSClient:
 class YouzanClient:
     """有赞零售平台 API 客户端"""
 
-    def __init__(self, access_token, openid='', session_id=''):
+    def __init__(self, access_token, openid='', session_id='', user_id=''):
         self.access_token = access_token
         self.openid = openid
         self.session_id = session_id
+        self.user_id = user_id
 
     def _make_headers(self):
         devices = [
@@ -317,6 +357,30 @@ class YouzanClient:
     def get_monthly_record(self, year, month):
         return self._get('/wscump/checkin/find_checkin_info_by_month.json',
                          {'checkin_id': CHECKIN_ID, 'year': year, 'month': month})
+
+    def get_user_points(self):
+        """通过 membercenter/stats.json 获取用户真实积分（需要 store_id=userId）"""
+        if not self.user_id:
+            return None
+        params = {
+            'app_id': APPID,
+            'kdt_id': KDT_ID,
+            'access_token': self.access_token,
+            'store_id': self.user_id,
+            'currentKdtId': KDT_ID,
+            'version': YZ_VERSION,
+            'needConsumptionAboveCoupon': '1',
+        }
+        try:
+            resp = _req_retry(requests.get, f'{API_BASE}/wscuser/membercenter/stats.json',
+                              params=params, headers=self._make_headers(), timeout=15)
+            d = resp.json()
+            if d.get('code') == 0:
+                stats = d.get('data', {}).get('stats', {}) or {}
+                return stats.get('points', None)
+        except Exception as e:
+            log.warning(f'[有赞] 查询积分异常: {e}')
+        return None
 
 
 # ====== 登录流程 ======
@@ -402,9 +466,10 @@ def login_via_wcs(openid, user_key=None):
             login_data = data['data']
             token = login_data.get('accessToken', '')
             session_id = login_data.get('sessionId', '')
+            user_id = login_data.get('userId', '') or login_data.get('buyerId', '')
             if token:
-                log.info(f'[有赞] 获取到 accessToken: {token[:10]}..., sessionId: {session_id[:20]}...')
-                return {'access_token': token, 'session_id': session_id}
+                log.info(f'[有赞] 获取到 accessToken: {token[:10]}..., sessionId: {session_id[:20]}..., userId: {user_id}')
+                return {'access_token': token, 'session_id': session_id, 'user_id': user_id}
 
     except Exception as e:
         log.error(f'[有赞] 登录请求异常: {e}')
@@ -438,13 +503,41 @@ def parse_manual_accounts():
 
 
 # ====== 签到逻辑 ======
-def run_checkin(client, remark=''):
+
+# ---------- 本地累计积分（接口无总积分字段，本机向前累计每日签到获得积分）----------
+_POINTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "haishibao_points_cache.json")
+def _read_points():
+    try:
+        if not os.path.exists(_POINTS_FILE): return {}
+        with open(_POINTS_FILE, encoding="utf-8") as f: return json.load(f) or {}
+    except Exception: return {}
+def _write_points(c):
+    try:
+        with open(_POINTS_FILE, "w", encoding="utf-8") as f: json.dump(c, f, ensure_ascii=False, indent=2)
+    except Exception as e: print(f"写入积分缓存失败: {e}")
+def _today():
+    import datetime; return datetime.date.today().isoformat()
+def _roll_day(openid, cache):
+    rec = cache.setdefault(openid, {"hist": 0, "gain": 0, "date": _today()})
+    if rec.get("date") != _today():
+        rec["hist"] = (rec.get("hist") or 0) + (rec.get("gain") or 0); rec["gain"] = 0; rec["date"] = _today()
+    return rec
+def _add_gain(openid, pts, cache):
+    rec = _roll_day(openid, cache)
+    rec["gain"] = (rec.get("gain") or 0) + (pts or 0)
+def _cur_total(openid, cache):
+    rec = cache.get(openid) or {"hist": 0, "gain": 0}
+    return (rec.get("hist") or 0) + (rec.get("gain") or 0)
+
+def run_checkin(client, remark='', row=None):
     prefix = f'[{remark}] ' if remark else ''
 
     log.info(f'{prefix}查询签到状态...')
     status = client.get_checkin_status()
     if status.get('code') != 0:
         log.error(f'{prefix}查询签到状态失败: {status.get("msg")}')
+        if row is not None:
+            row['sign'] = f"查询签到状态失败: {status.get('msg')}"
         return False
 
     status_data = status.get('data', {})
@@ -453,9 +546,28 @@ def run_checkin(client, remark=''):
     cycle_times = status_data.get('cycleTimes', 0)
 
     log.info(f'{prefix}连续签到: {continues_day} 天, 周期: {cycle_times} 天, 今日已签: {is_checkin}')
+    # 查询真实总积分（从 membercenter/stats.json 获取）
+    _total_from_server = None
+    if row is not None:
+        try:
+            _total_from_server = client.get_user_points()
+            if _total_from_server is not None:
+                row['total'] = str(_total_from_server)
+                row['totalLabel'] = '总积分'
+                log.info(f'{prefix}总积分: {_total_from_server}')
+        except Exception as e:
+            log.warning(f'{prefix}查询总积分异常: {e}')
+    if row is not None:
+        if continues_day:
+            row['streak'] = continues_day
+        _ep = (extract_points(status) if extract_points else None) or {}
+        if _ep.get('total') is not None and _total_from_server is None:
+            row['total'] = str(_ep['total'])
 
     if is_checkin:
         log.info(f'{prefix}今日已签到，跳过')
+        if row is not None:
+            row['sign'] = f'今日已签到, 连续{continues_day}天'
         return True
 
     log.info(f'{prefix}执行签到...')
@@ -464,6 +576,8 @@ def run_checkin(client, remark=''):
     result = client.do_checkin()
     if result.get('code') != 0:
         log.error(f'{prefix}签到失败: {result.get("msg")}')
+        if row is not None:
+            row['sign'] = f"签到失败: {result.get('msg')}"
         return False
 
     checkin_data = result.get('data', {})
@@ -477,6 +591,25 @@ def run_checkin(client, remark=''):
             for r in rewards
         ])
         log.info(f"{prefix}签到成功! {desc} - 获得: {reward_str}")
+        import re as _re
+        _m = _re.search(r'(\d+)\s*积分', reward_str)
+        _pc = _read_points(); _roll_day(client.openid, _pc)
+        if _m: _add_gain(client.openid, int(_m.group(1)), _pc)
+        _lt = _cur_total(client.openid, _pc); _write_points(_pc)
+        if row is not None:
+            row['sign'] = f'签到成功{(" - " + desc) if desc else ""}'
+            if reward_str:
+                row['earned'] = reward_str
+            # 优先用服务端积分，其次用本地累计
+            if _total_from_server is not None:
+                row['total'] = str(_total_from_server)
+                row['totalLabel'] = '总积分'
+            else:
+                row['total'] = str(_lt)
+                row['totalLabel'] = '累计积分'
+            _lot = _dig_lottery(checkin_data)
+            if _lot:
+                row['lottery'] = _lot
         # 连签里程碑推送
         try:
             info = client.do_get("/wscump/checkin/show_checkin_page_v2.json", {})
@@ -487,12 +620,14 @@ def run_checkin(client, remark=''):
         return True
     else:
         log.warning(f'{prefix}签到未成功: {desc}')
+        if row is not None:
+            row['sign'] = f'签到未成功: {desc}'
         return False
 
 
-def run_one_account(access_token, remark='', openid='', session_id=''):
-    client = YouzanClient(access_token, openid, session_id)
-    return run_checkin(client, remark)
+def run_one_account(access_token, remark='', openid='', session_id='', user_id='', row=None):
+    client = YouzanClient(access_token, openid, session_id, user_id)
+    return run_checkin(client, remark, row)
 
 
 # ====== 主函数 ======
@@ -509,7 +644,9 @@ def main():
                 log.warning(f'[{remark}] token 为空，跳过')
                 continue
 
-            if run_one_account(token, remark):
+            _row = {'idx': i + 1, 'name': remark, 'sign': '', 'earned': '', 'total': '', 'streak': '', 'lottery': ''}
+            _rows.append(_row)
+            if run_one_account(token, remark, row=_row):
                 success_count += 1
 
             if i < len(manual_accounts) - 1:
@@ -543,15 +680,19 @@ def main():
             user_key = acc.get('userKey', openid)
             display_name = acc.get('displayName', openid[:8])
 
+            _row = {'idx': i + 1, 'name': display_name, 'sign': '', 'earned': '', 'total': '', 'streak': '', 'lottery': ''}
+            _rows.append(_row)
             login_info = login_via_wcs(openid, user_key)
             if not login_info:
                 log.error(f'[{display_name}] 登录失败，跳过')
+                _row['sign'] = '登录失败'
                 continue
 
             access_token = login_info['access_token']
             session_id = login_info.get('session_id', '')
+            user_id = str(login_info.get('user_id', '') or '')
 
-            if run_one_account(access_token, display_name, openid, session_id):
+            if run_one_account(access_token, display_name, openid, session_id, user_id, row=_row):
                 success_count += 1
 
             if i < len(active) - 1:
@@ -584,6 +725,12 @@ access_token 从抓包数据中获取:
         ''')
         sys.exit(1)
 
+    if _std_report and _rows:
+        try:
+            _std_report('孩视宝签到', _rows)
+        except Exception as _e:
+            print(f'[push] 异常: {_e}')
+
 
 if __name__ == '__main__':
     import io
@@ -604,10 +751,4 @@ if __name__ == '__main__':
         _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
-        try:
-            push_notify('haishibao_sign 签到结果', _logs[-2000:])
-        except:
-            pass
-
-
 

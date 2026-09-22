@@ -1,4 +1,6 @@
 # ========== 倍轻松·轻松灵田 ==========
+
+
 # 独立脚本：签到 + 领奖 + 收获 + 种植 + 浇水
 # 环境变量：wx_opinion (openid，多账号&分隔)
 #           wx_server_url, wx_auth (WCS配置)
@@ -24,17 +26,11 @@ from pathlib import Path
 
 # ========== 推送 ==========
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify, send_push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
 
 # ========== 基础配置 ==========
 MINI_APP_ID = "wx61457400e4212cec"
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+wx_auth = os.getenv("wx_auth", "")
 BREO_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF"
 
 # 灵田游戏配置
@@ -64,7 +60,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # ========== WCS / BREO 登录 ==========
 def wx_headers():
-    return {"auth": WX_AUTH, "User-Agent": BREO_UA, "Content-Type": "application/json"}
+    return {"auth": wx_auth, "User-Agent": BREO_UA, "Content-Type": "application/json"}
 
 def app_headers():
     return {
@@ -74,7 +70,7 @@ def app_headers():
     }
 
 def get_wx_code(account_id):
-    resp = session.post(f"{WX_SERVER_URL}/wx/code",
+    resp = session.post(f"{wx_server_url}/wx/code",
                         json={"appid": MINI_APP_ID, "openid": account_id},
                         headers=wx_headers(), timeout=30)
     resp.raise_for_status()
@@ -197,20 +193,85 @@ def _fetch_farm_token(account_id):
         return None
 
 
+try:
+    from std_report import report as _std_report, extract_points
+except ImportError:
+    _std_report = None
+    extract_points = None
+
+
+def _dig_lottery(obj):
+    """从签到/抽奖接口返回体里扫描 lottery/draw/prize/转盘 等字段，拼接详情。"""
+    if not isinstance(obj, dict):
+        return ""
+    hits = []
+
+    def walk(o, d):
+        if d > 5 or not isinstance(o, dict) or len(hits) > 6:
+            return
+        for k, v in o.items():
+            lk = str(k).lower()
+            if any(s in lk for s in ("lottery", "draw", "prize", "转盘", "raffle", "turntable")):
+                if v is None or v == "":
+                    continue
+                if isinstance(v, dict):
+                    t = " ".join(str(x) for x in (v.get("title"), v.get("name"),
+                                                  v.get("desc"), v.get("prizeName"), v.get("prize"))
+                                if x not in (None, ""))
+                    if t:
+                        hits.append(t)
+                else:
+                    hits.append(str(v))
+            elif isinstance(v, dict):
+                walk(v, d + 1)
+            elif isinstance(v, list):
+                for it in v:
+                    if isinstance(it, dict):
+                        walk(it, d + 1)
+
+    walk(obj, 0)
+    return " ｜ ".join(hits)
+
 # ========== 灵田任务 ==========
-def farm_sign_in(token):
+def farm_sign_in(token, row=None):
     info = lt_get(token, "/game/farm/task/signInInfo")
-    if (info.get("data") or {}).get("todaySigned"):
+    info_data = info.get("data") or {}
+    if extract_points:
+        _ep_i = extract_points(info_data) or {}
+        if _ep_i.get("total") is not None and row is not None:
+            row["total"] = str(_ep_i["total"])
+        if _ep_i.get("streak") is not None and row is not None:
+            row["streak"] = _ep_i["streak"]
+    if info_data.get("todaySigned"):
         print("✅ 灵田今日已签到")
+        if row is not None:
+            row['sign'] = '今日已签到'
         return
     r = lt_get(token, "/game/farm/task/signIn")
     if r.get("code") == 200:
         rw = r.get("data") or []
+        item_names = "、".join(str(x.get("name", x.get("num", ""))) for x in rw
+                              if isinstance(x, dict) and (x.get("name") or x.get("num")))
         print(f"✅ 灵田签到成功 (奖励{len(rw)}项)")
+        if row is not None:
+            row['sign'] = f'签到成功(奖励{len(rw)}项)'
+            if rw:
+                row['earned'] = ("奖励%d项" % len(rw)) + ((": " + item_names) if item_names else "")
+        if extract_points:
+            _ep = extract_points(r.get("data") or r) or {}
+            if _ep.get("total") is not None and row is not None:
+                row["total"] = str(_ep["total"])
+            if _ep.get("streak") is not None and row is not None:
+                row["streak"] = _ep["streak"]
+        _lot = _dig_lottery(r.get("data") or r)
+        if _lot and row is not None:
+            row["lottery"] = _lot
     else:
         print(f"❌ 灵田签到失败: {r.get('msg')}")
+        if row is not None:
+            row['sign'] = f"签到失败: {r.get('msg')}"
 
-def farm_do_tasks(token):
+def farm_do_tasks(token, row=None):
     r = lt_get(token, "/game/farm/task/userTasklist", {"scene": "2", "page": "1", "pageSize": "30"})
     tasks = (r.get("data") or {}).get("list") or []
     done = 0
@@ -221,8 +282,12 @@ def farm_do_tasks(token):
         if r2.get("code") == 200:
             done += 1
             print(f"✅ 灵田任务领奖: {t.get('name')}")
+            if row is not None:
+                row.setdefault('tasks', []).append({'name': str(t.get('name')), 'status': '领奖成功'})
         else:
             print(f"⚠️ 灵田任务[{t.get('name')}]领奖: {r2.get('msg')}")
+            if row is not None:
+                row.setdefault('tasks', []).append({'name': str(t.get('name')), 'status': f"领奖失败: {r2.get('msg')}"})
     if done == 0:
         print("📋 灵田暂无可领任务奖励")
 
@@ -318,7 +383,11 @@ def farm_run(token):
 
 # ========== 主入口 ==========
 if __name__ == "__main__":
-    accounts = [item.strip() for item in os.getenv("wx_opinion", "").replace("&", "\n").splitlines() if item.strip()]
+    _raw_accounts = [item.strip() for item in os.getenv("wx_opinion", "").replace("&", "\n").splitlines() if item.strip()]
+    accounts = []
+    for _ra in _raw_accounts:
+        _parts = _ra.split("#")
+        accounts.append({"openid": _parts[0].strip(), "remark": (_parts[1].strip() if len(_parts) > 1 else "")})
     if not accounts:
         print("❌ 未检测到 wx_opinion 账号信息，退出。")
         sys.exit(1)
@@ -327,34 +396,45 @@ if __name__ == "__main__":
     print("  倍轻松 · 轻松灵田")
     print("=" * 40)
 
-    for i, account in enumerate(accounts, 1):
-        print(f"\n--- 账号 {i} ({account[:12]}...) ---")
+    _rows = []
+    for i, acc in enumerate(accounts, 1):
+        _rows.append({'idx': i, 'name': acc["remark"] or acc["openid"][:12], 'sign': '', 'earned': '', 'total': '', 'tasks': []})
+        _row = _rows[-1]
+        print(f"\n--- 账号 {i} ({acc['openid'][:12]}...) ---")
         try:
-            tok = get_farm_token(account)
+            tok = get_farm_token(acc["openid"])
         except Exception as e:
             print(f"❌ 账号{i} 登录失败: {e}")
+            _row['sign'] = '登录失败'
             continue
 
         if not tok:
             print("❌ 账号{i} 无灵田token，跳过")
+            _row['sign'] = '无灵田token，跳过'
             continue
 
         try:
             print("\n📝 签到...")
-            farm_sign_in(tok)
+            farm_sign_in(tok, _row)
             print("\n📋 领奖...")
-            farm_do_tasks(tok)
+            farm_do_tasks(tok, _row)
             print("\n🌱 种地...")
             farm_run(tok)
+            _row.setdefault('tasks', []).append({'name': '灵田种地', 'status': '完成'})
         except Exception as e:
             print(f"❌ 执行异常: {e}")
+            if not _row['sign']:
+                _row['sign'] = f'执行异常: {e}' 
 
-    # 推送
-    try:
-        send_push_notify()
-    except Exception:
-        pass
+    # 推送 (标准格式)
+    if _std_report:
+        try:
+            _std_report('倍轻松轻松灵田', _rows)
+        except Exception as _e:
+            print(f'[push] 异常: {_e}')
 
     print("\n" + "=" * 40)
     print("  灵田任务完成")
     print("=" * 40)
+
+pass  # 旧推送已移除(改用 std_report)

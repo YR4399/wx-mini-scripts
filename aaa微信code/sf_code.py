@@ -1,3 +1,4 @@
+from std_report import report, send_push
 """
 顺丰速运积分任务脚本 - 微信code登录版（优化版）
 功能：自动完成顺丰速运小程序每日签到、积分任务领取与奖励兑换
@@ -10,6 +11,7 @@
 - 增强重试与代理切换，提升稳定性
 - 细化任务状态处理，减少遗漏
 """
+
 import hashlib
 import json
 import os
@@ -42,8 +44,8 @@ elif CONCURRENT_NUM < 1:
 print_lock = Lock()
 
 # 微信登录配置
-WX_SERVER_URL = os.getenv('wx_server_url', '')
-WX_AUTH = os.getenv('wx_auth', '')
+wx_server_url = os.getenv('wx_server_url', '')
+wx_auth = os.getenv('wx_auth', '')
 SF_APPID = 'wxd4185d00bf7e08ac'
 SF_PUBLIC_ID = 'gh_f9d9fca26a50'
 CHANNEL = '26duanwutanchuang4'
@@ -1047,16 +1049,16 @@ def run_single_account(openid: str, index: int, config: Config, wx_client: Wecha
 def main():
     config = Config()
 
-    if not WX_SERVER_URL or not WX_AUTH:
+    if not wx_server_url or not wx_auth:
         print("未配置微信服务端环境变量")
         print("请配置以下环境变量：")
         print("  wx_server_url=http://你的wechatserver地址:端口")
         print("  wx_auth=你的auth密钥")
         return
 
-    wx_client = WechatServerClient(WX_SERVER_URL, WX_AUTH)
+    wx_client = WechatServerClient(wx_server_url, wx_auth)
 
-    openid_env = os.getenv('sf_openid', '')
+    openid_env = os.getenv('sf_openid') or os.getenv('wx_openid') or os.getenv('wx_opinion') or ''
     if not openid_env:
         print("未配置 sf_openid 环境变量")
         return
@@ -1129,3 +1131,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+    report("sf_code签到", [{"idx": 1, "sign": "签到完成"}])

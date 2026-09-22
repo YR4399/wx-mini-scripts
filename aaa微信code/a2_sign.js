@@ -28,7 +28,7 @@
  *   wx_auth       : WCS 认证 (新 smallcat-client 优先 /api/client/login, 失败回退此值)
  *   wx_opinion    : 账号 openid, 多账号用 & 分隔
  *   NICK_MAP      : 可选, openid->昵称, 支持 JSON 或 `openid:昵称&openid:昵称` 两种格式
- *   PLUSPLUS_TOKEN: 可选, _push Plus 推送签到结果
+ *   推送: 已迁移至 std_report 双引擎 (钉钉机器人)
  *   A2_APPID      : 可选, 默认 wxabb3b309f0093ec2
  */
 
@@ -41,7 +41,6 @@ const APPID = process.env.A2_APPID || "wxabb3b309f0093ec2";
 const WCS_URL = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/+$/, "");
 const WCS_AUTH = process.env.wx_auth || "";
 const WX_OPINION = process.env.wx_opinion || "";
-const PUSH_TOKEN = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN || "";
 // NICK_MAP 兼容两种格式:
 //   1) JSON:      {"openid":"昵称", ...}
 //   2) 面板惯用:  openid:昵称&openid:昵称   (呆呆面板现有格式)
@@ -305,16 +304,50 @@ function selfTestSignature() {
 }
 
 // ===================== 推送 =====================
-async function pushPlus(title, content) {
-  if (!PUSH_TOKEN) return;
-  try {
-    await fetch("http://www.pushplus.plus/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: PUSH_TOKEN, title, content, template: "txt" }),
-    });
-  } catch {}
+
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = 'A2乳品营养品签到';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 // ===================== 主流程 =====================
 async function main() {
@@ -344,7 +377,26 @@ async function main() {
     const bind = r.isBinding ? "" : " (未绑手机)";
     return `${r.nick}: ${state}${pt}${bind}`;
   }).join("\n");
-  await pushPlus("A2 签到结果", content);
+  console.log(content);
+
+  // 经 std_report 双引擎推送 (钉钉)，字段对齐谷雨模板
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const idx = i + 1;
+    _setName(idx, r.nick);
+    const rp = _rpGet(idx);
+    if (!r.success) {
+      rp.sign = "失败";
+    } else {
+      rp.sign = r.alreadySigned ? "今日已签到" : (r.verified ? "签到成功" : "签到未登记");
+    }
+    if (r.points != null) rp.total = String(r.points);
+    rp.streak = "";
+    rp.tasks = "";
+    rp.lottery = "";
+    rp.taskEarned = "";
+  }
+  await flushLogPoints("A2乳品营养品签到");
 }
 
 main().catch((e) => { console.error("Fatal:", e.message); process.exit(1); });

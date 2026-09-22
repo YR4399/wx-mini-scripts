@@ -24,6 +24,7 @@
  *     GET  /client/user/signHome -> data.{integral,amount,configs:[{id,logId,dayNum,integral,signStatus,signDate}]}
  *     取 signDate==今天 且 signStatus==0 的档位; 已签(signStatus==1)跳过。
  *     POST /client/user/sign {logId} -> data:"签到成功！..."(字符串)
+    if (typeof logPoints === 'function') logPoints(integral != null ? String(integral) : null, null, "yctjob", 1);
  *  4) 任务:
  *     GET  /client/user/taskHome -> data.{integral,amount,todayTask[],experienceTask[]}
  *     每个任务 {id, name, functionType, integral, num, completeCount, second}
@@ -39,7 +40,6 @@
  *  YCTJOB_SMS_CODES  : 可选, 对应手机号的短信验证码(& 分隔) —— 仅首次登录用, 之后 token 缓存复用
  *  YCTJOB_TOKENS     : 可选, 直接注入有效 JWT(& 分隔, 跳过登录)
  *  YCTJOB_SKIP_SIGN  : 可选, 这些 openid(末4位或完整)仅做任务不签到
- *  PUSH_PLUS_TOKEN   : PushPlus 推送
  *
  * 登录优先级(每账号): YCTJOB_TOKENS[i] > (MOBILES[i]+SMS_CODES[i] 短信) > WCS 微信一键登录
  * cron: 38 8,18 * * *
@@ -65,7 +65,6 @@ const MOBILES  = (process.env.YCTJOB_MOBILES  || "").split(/[&\n]/).map(s => s.t
 const SMSCODES = (process.env.YCTJOB_SMS_CODES || "").split(/[&\n]/).map(s => s.trim());
 const TOKENS   = (process.env.YCTJOB_TOKENS   || "").split(/[&\n]/).map(s => s.trim());
 const SKIP_SIGN = new Set((process.env.YCTJOB_SKIP_SIGN || "").split(/[&\n]/).map(s => s.trim()).filter(Boolean));
-const PUSH_TOKEN = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
 const CACHE_FILE = "yctjob_token_cache.json";
 
 // ============ 工具 ============
@@ -107,6 +106,13 @@ async function reqRetry(method, url, headers, body, retries = 3) {
     catch (e) { lastErr = e; await sleep(1500 * (i + 1)); }
   }
   throw lastErr;
+}
+
+// token/会话类错误判定 —— 命中即触发"清缓存 + 重新登录 + 只重试一次"
+// 注意: 必须包含 yctjob 服务端的 401 文案"认证失败，无法访问系统资源"
+function isTokenError(e) {
+  const s = String(e && e.message || e);
+  return /401|认证失败|无法访问系统资源|认证.*无法访问|未登录|登录(失效|已失效|过期|已过期)|token(失效|过期|不存在|无效|invalid)|会话(失效|过期)|NEED_LOGIN/i.test(s);
 }
 
 // WCS 请求 (smallcat-client 标准返回 {status, message, data}, 统一解包一层)
@@ -209,11 +215,13 @@ async function smsLogin(mobile, code) {
   throw new Error("phoneLogin 失败: " + JSON.stringify(r.data).slice(0, 220));
 }
 
-async function login(openid, idx, cached) {
-  // 1) 直接注入 token
-  if (TOKENS[idx]) { console.log(`  🔑 使用 YCTJOB_TOKENS[${idx}]`); return TOKENS[idx]; }
-  // 2) 缓存
+async function login(openid, idx, cached, opts = {}) {
+  // 1) 缓存优先: 缓存每次运行都会被刷新, 是唯一"会自己更新"的 token 来源;
+  //    YCTJOB_TOKENS 是静态注入的环境变量, 服务端会话一失效就永久 401(无 exp 字段, 无法本地预判),
+  //    放前面会导致每次运行都先失败一次才走自愈, 所以只作为冷启动种子。
   if (cached) { console.log(`  🔑 使用缓存 token`); return cached; }
+  // 2) 静态注入 token (opts.skipTokens=true 时跳过 —— 重登路径上它是坏的那个)
+  if (!opts.skipTokens && TOKENS[idx]) { console.log(`  🔑 使用 YCTJOB_TOKENS[${idx}] (静态注入)`); return TOKENS[idx]; }
   // 3) 优先尝试 WCS 微信一键登录(按需求), 失败且有短信凭据时自动兜底短信登录
   try {
     return await wcsLogin(openid, idx);
@@ -226,6 +234,24 @@ async function login(openid, idx, cached) {
   }
 }
 
+// token 自愈: 业务调用报 token/会话类错误时, 清缓存 -> 重新登录 -> 只重试一次。
+// holder.token 指向当前使用的 token, 重登成功后原地更新, 调用方无需再同步。
+// 重试路径 skipTokens=true, 确保不再绕回那个静态过期 token。
+async function withTokenRetry(openid, idx, cache, holder, run, L) {
+  try {
+    return await run(holder.token);
+  } catch (e) {
+    if (!isTokenError(e)) throw e;
+    L(`  ⚠️ token 失效(${String(e.message).slice(0, 70)}) → 清缓存并重新登录`);
+    delete cache[openid]; saveCache(cache);
+    const nt = await login(openid, idx, undefined, { skipTokens: true });
+    holder.token = nt;
+    cache[openid] = nt; saveCache(cache);
+    L(`  🔑 重新登录成功, 重试业务`);
+    return await run(nt);
+  }
+}
+
 // ============ 签到 ============
 async function doSign(token) {
   const home = await api("GET", "/client/user/signHome", token);
@@ -235,8 +261,8 @@ async function doSign(token) {
   const configs = d.configs || [];
   const today = cnDate();
   const cfg = configs.find(c => c.signDate === today);
-  if (!cfg) { console.log(`  ℹ️ 今天(${today})无签到档位`); return { signed: false, integral, amount, reason: "no-config" }; }
-  if (cfg.signStatus === 1) { console.log(`  ✅ 今天已签到, 积分 ${integral} / ¥${amount}`); return { signed: false, integral, amount, reason: "already" }; }
+  if (!cfg) { console.log(`  ℹ️ 今天(${today})无签到档位`); return { signed: false, beforeIntegral: integral, integral, amount, reason: "no-config", dayNum: null }; }
+  if (cfg.signStatus === 1) { console.log(`  ✅ 今天已签到, 积分 ${integral} / ¥${amount}`); return { signed: false, beforeIntegral: integral, integral, amount, reason: "already", dayNum: cfg.dayNum }; }
 
   console.log(`  📅 签到 (logId=${cfg.logId}, +${cfg.integral}积分${cfg.amount ? "，奖" + cfg.amount + "元" : ""})`);
   const r = await api("POST", "/client/user/sign", token, { logId: cfg.logId });
@@ -244,7 +270,7 @@ async function doSign(token) {
   const msg = (r.data && (r.data.msg || (typeof r.data.data === "string" ? r.data.data : ""))) || "";
   if (!ok) {
     console.log(`  ❌ 签到失败: ${JSON.stringify(r.data).slice(0,160)}`);
-    return { signed: false, integral, amount, reason: "fail:" + msg };
+    return { signed: false, beforeIntegral: integral, integral, amount, reason: "fail:" + msg, dayNum: cfg.dayNum };
   }
   // 防假阳性: 复查确认 signStatus==1
   await sleep(1200);
@@ -253,7 +279,8 @@ async function doSign(token) {
   const verified = reCfg && reCfg.signStatus === 1;
   console.log(`  ${verified ? "✅" : "⚠️"} 签到结果: ${msg || "成功"}${verified ? " (已复查确认)" : " (复查未确认)"}`);
   const afterHome = re.data && re.data.data ? re.data.data : d;
-  return { signed: true, integral: afterHome.integral, amount: afterHome.amount, reason: "ok", verified };
+  const earned = (afterHome.integral != null && integral != null) ? (afterHome.integral - integral) : 0;
+  return { signed: true, beforeIntegral: integral, integral: afterHome.integral, amount: afterHome.amount, reason: "ok", verified, dayNum: cfg.dayNum, earned };
 }
 
 // ============ 做任务 ============
@@ -264,7 +291,7 @@ async function doTasks(token) {
   const today = d.todayTask || [];
   const exp = d.experienceTask || [];
   const all = [...today, ...exp];
-  let newly = 0, preDone = 0, skipInvite = 0, fail = 0;
+  let newly = 0, preDone = 0, skipInvite = 0, fail = 0, earnedSum = 0;
   for (const t of all) {
     if (t.functionType === 8) { console.log(`  ⏭️ 跳过[${t.name}] (邀请工友, 需真实邀请)`); skipInvite++; continue; }
     // 部分任务需浏览N秒(second字段); 纯 API 提交即可计入, 这里加短延时拟人
@@ -280,49 +307,112 @@ async function doTasks(token) {
       else { console.log(`    ❌ ${r.data?.msg}`); break; }
       await sleep(800);
     }
-    if (okN >= left) { console.log(`    ✅ 完成 (提交${okN}次)`); newly += okN; preDone++; }
-    else if (okN > 0) { console.log(`    ⚠️ 部分完成 (提交${okN}/${left}次)`); newly += okN; fail++; }
+    if (okN >= left) { console.log(`    ✅ 完成 (提交${okN}次)`); newly += okN; earnedSum += okN * (t.integral || 0); preDone++; }
+    else if (okN > 0) { console.log(`    ⚠️ 部分完成 (提交${okN}/${left}次)`); newly += okN; earnedSum += okN * (t.integral || 0); fail++; }
     else fail++;
   }
   const complete = preDone; // 本账号任务完成数(含之前已完成)
-  return { newly, preDone, complete, skipInvite, fail, total: all.length, integral: d.integral, amount: d.amount };
+  return { newly, preDone, complete, skipInvite, fail, total: all.length, integral: d.integral, amount: d.amount, earnedSum };
 }
 
 // ============ 单账号主流程 ============
 async function runAccount(openid, cache, idx) {
   console.log(`\n========== 账号[${openid.slice(0, 12)}] ==========`);
+  _setName(idx, openid.slice(0, 12));
   let token;
   try { token = await login(openid, idx, cache[openid]); }
   catch (e) {
     console.log(`  ❌ 登录失败: ${e.message}`);
+    _setSign(idx, "登录失败: " + e.message);
     return { ok: false, error: e.message };
   }
   cache[openid] = token; saveCache(cache);
 
   const skipSign = SKIP_SIGN.has(openid) || SKIP_SIGN.has(openid.slice(-4));
-  let sign = null, tasks = null;
+  const L = m => console.log(m);
+  const holder = { token };  // 自愈时由 withTokenRetry 原地更新
   try {
-    if (skipSign) console.log("  ⏭️ 本账号配置为仅做任务(跳过签到)");
-    else sign = await doSign(token);
-    tasks = await doTasks(token);
-    return { ok: true, sign, tasks };
+    const res = await withTokenRetry(openid, idx, cache, holder, async tk => {
+      let sign = null;
+      if (skipSign) L("  ⏭️ 本账号配置为仅做任务(跳过签到)");
+      else sign = await doSign(tk);
+      const tasks = await doTasks(tk);
+      return { sign, tasks };
+    }, L);
+    const s = res.sign || {};
+    const t = res.tasks || {};
+    let signText;
+    if (res.sign) {
+      if (s.signed) signText = s.verified ? "签到成功(已确认)" : "签到成功";
+      else if (s.reason === "already") signText = "今日已签到";
+      else if (s.reason === "no-config") signText = "今日无签到档位";
+      else if (String(s.reason).startsWith("fail")) signText = "签到失败";
+      else signText = "签到状态未知";
+    } else signText = "仅做任务(跳过签到)";
+    _setSign(idx, signText);
+    if (s.integral != null) _rpGet(idx).total = String(s.integral);
+    if (s.earned != null && s.earned > 0) _rpGet(idx).earned = "今日+" + s.earned + "积分";
+    if (s.dayNum != null && s.dayNum !== "") _setStreak(idx, s.dayNum);
+    if (t.earnedSum != null && t.earnedSum > 0) _setTaskEarned(idx, "做任务+" + t.earnedSum + "积分");
+    else if (t.total) _addTask(idx, "今日任务", (t.complete || 0) + "/" + t.total + "完成(新做" + (t.newly || 0) + ",跳过邀请" + (t.skipInvite || 0) + ")");
+    return { ok: true, sign: res.sign, tasks: res.tasks };
   } catch (e) {
-    if (/401|认证|登录|token/i.test(e.message)) { delete cache[openid]; saveCache(cache); }
+    // 只在"确认是 token 类错误"时清缓存, 避免把刚刷新的有效 token 误删
+    if (isTokenError(e)) { delete cache[openid]; saveCache(cache); }
+    _setSign(idx, "执行失败: " + e.message);
     return { ok: false, error: e.message };
   }
 }
 
-// ============ 推送 ============
-async function push(title, content) {
-  if (!PUSH_TOKEN) return;
-  try {
-    await reqRetry("POST", "http://www.pushplus.plus/send",
-      { "Content-Type": "application/json" },
-      { token: PUSH_TOKEN, title, content, template: "txt" });
-  } catch (e) { console.log("  ⚠️ 推送失败:", e.message); }
-}
+// ============ 推送(统一走 std_report 双引擎, 钉钉 markdown) ============
 
 // ============ 入口 ============
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "衣城通招聘签到";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, n) { if (n != null && n !== "") _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
 async function main() {
   console.log("=== 衣城通招聘(yctjob) 签到+任务 ===");
   console.log(`AppID: ${APPID}  WCS: ${WCS}`);
@@ -352,7 +442,7 @@ async function main() {
   }
   const summary = `完成: 成功 ${okN}, 失败 ${failN}\n` + lines.join("\n");
   console.log(`\n=== ${summary} ===`);
-  await push("衣城通签到", summary);
+  await flushLogPoints(_rpApp);
 }
 
 main().catch(e => { console.error("Fatal:", e); process.exit(1); });

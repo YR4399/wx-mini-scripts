@@ -115,6 +115,7 @@ async function runAccount(a) {
     const today = new Date().toISOString().slice(0,10);
     if (record.signInRecords && record.signInRecords.includes(today)) {
       L.info('今日已签到，连签 ' + keepDays + ' 天');
+    if (typeof logPoints === 'function') logPoints(null, info.pointValue, "sjy", 1, "签到成功");
       signed = true;
     } else {
       const last = record.lastSignInDate ? new Date(parseInt(record.lastSignInDate)).toISOString().slice(0,10) : '无';
@@ -177,14 +178,45 @@ function buildTable(summaries) {
 }
 
 async function push(title, content) {
-  const t = process.env.PLUSPLUS_TOKEN || process.env.PUSHPLUS_TOKEN || '';
-  if (!t) { L.info('推送内容:'); L.info(content); return; }
   try {
-    const r = await axios.post('https://www.pushplus.plus/send', { token: t, title: title, content: content, template: 'txt' }, { timeout: 10000, httpsAgent: new https.Agent({ rejectUnauthorized: false }) });
-    if (r.data.code === 200) L.ok('PushPlus推送成功');
-    else L.fail('推送失败: ' + r.data.msg);
-  } catch(e) { L.fail('推送异常: ' + e.message); }
+    const { sendPush } = require("./std_report");
+    return await sendPush(title, content);
+  } catch (e) { console.warn("[push] 失败(忽略):", e.message); }
 }
+
+
+// ===== 统一积分日志/推送 (自动注入 v2: 仅打印, 脚本自带末次汇总推送) =====
+let _lpApp = '';
+function digPoints(obj) {
+  if (obj == null) return null;
+  const keys = ['point','points','score','scores','integral','growth','coin','beans','bean','balance','addScore','getScore','addPoint','todayScore','signScore','awardScore','awardAmount','awardVipcoinTotal','vipGrow','VipGrow','currentIntegral','changeIntegeral','totalPoint','totalPoints','credit','credits','exp','growthValue','keepScore','signScore'];
+  let found = null;
+  const walk = (o, depth) => {
+    if (found != null || depth > 4 || !o || typeof o !== 'object') return;
+    for (const k of Object.keys(o)) {
+      const lk = k.toLowerCase();
+      if (keys.includes(lk) && (typeof o[k] === 'number' || (typeof o[k] === 'string' && o[k] !== '' && !isNaN(Number(o[k]))))) { found = Number(o[k]); return; }
+      if (typeof o[k] === 'object') walk(o[k], depth + 1);
+      if (found != null) return;
+    }
+  };
+  walk(obj, 0);
+  return found;
+}
+async function doPush(title, content) {
+  try {
+    await require('./std_report').sendPush(title, content);
+  } catch (e) {}
+}
+function logPoints(todayPoints, totalPoints, app, idx) {
+  const tp = Number(todayPoints) || 0;
+  const tot = Number(totalPoints) || 0;
+  const tpStr = tp > 0 ? '今日+' + tp + '积分' : '签到完成';
+  const totStr = tot > 0 ? '累计' + tot + '积分' : '';
+  const line = tpStr + (totStr ? ' | ' + totStr : '');
+  console.log('📊 账号[' + idx + '] ' + app + ': ' + line);
+}
+
 
 async function main() {
   sectionLine('甘肃烟草/白加黑 签到脚本', '');

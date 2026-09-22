@@ -17,7 +17,6 @@ os.environ['https_proxy'] = ''
   通过本地登录服务获取Code，再调用奈雪登录接口换 token 后执行签到。
 
 环境变量：
-  PLUSPLUS_TOKEN    PushPlus token，可选
   PROXY_API         品赞代理提取链接，可选
   PROXY_TYPE        代理类型：http / socks5，默认 http
 
@@ -46,11 +45,9 @@ import requests
 APPID = "wxab7430e6e8b9a4ab"
 
 # WCS 配置
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+wx_auth = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
-
-PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 
 PROXY_API = os.getenv("PROXY_API", "")
 PROXY_TYPE = os.getenv("PROXY_TYPE", "http").lower()
@@ -276,29 +273,13 @@ def get_valid_proxy(account_name: str) -> dict | None:
     return None
 
 
-# ===================== PushPlus =====================
 
-def send_pushplus(title: str, content: str) -> None:
-    if not PLUSPLUS_TOKEN:
-        return
-
+def send_notify(title: str, content: str) -> None:
+    from std_report import send_push as _dd_push
     try:
-        requests.post(
-            "https://www.pushplus.plus/send",
-            json={
-                "token": PLUSPLUS_TOKEN,
-                "title": title,
-                "content": content,
-                "template": "txt",
-            },
-            timeout=10,
-        verify=False)
-        print("PushPlus 推送成功")
+        _dd_push(title, content)
     except Exception as exc:
-        print(f"PushPlus 推送失败：{exc}")
-
-
-# ===================== 请求封装 =====================
+        print(f"推送失败：{exc}")
 
 def request_with_proxy(method: str, url: str, *, proxies: dict | None = None, server: str = "", **kwargs):
     kwargs.setdefault("timeout", 30)
@@ -320,9 +301,9 @@ def get_code(openid: str) -> str | None:
     print(f"[{openid[:10]}] 通过WCS获取code")
     try:
         res = requests.post(
-            f"{WX_SERVER_URL}/wx/code",
+            f"{wx_server_url}/wx/code",
             json={"appid": APPID, "openid": openid},
-            headers={"auth": WX_AUTH},
+            headers={"auth": wx_auth},
             timeout=60,
             proxies={"http": None, "https": None},
         verify=False)
@@ -335,7 +316,7 @@ def get_code(openid: str) -> str | None:
     except Exception as exc:
         print(f"[{openid[:10]}] 获取 code 异常：{exc}")
     return None
-    url = f"{WX_SERVER_URL}/wx/code"
+    url = f"{wx_server_url}/wx/code"
     print(f"[{openid[:10]}] 请求本地登录服务：{url}")
 
     try:
@@ -613,7 +594,7 @@ def run_account(openid: str, global_proxy: dict | None = None) -> dict:
 
 
 def main() -> None:
-    print("===== 奈雪点单动态code签到（双端口+品赞代理+PushPlus）=====\n")
+    print("===== 奈雪点单动态code签到（双端口+品赞代理+钉钉）=====\n")
 
     global_proxy = None
     if not ENABLE_PER_ACCOUNT_PROXY:
@@ -651,7 +632,7 @@ def main() -> None:
             notify += f"""- 失败原因：{res["error"]}
 """
 
-    send_pushplus("奈雪点单双账号任务完成", notify)
+    send_notify("奈雪点单双账号任务完成", notify)
 
     print("\n===== 所有账号执行完成 =====")
 

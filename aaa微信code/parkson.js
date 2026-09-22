@@ -1,28 +1,44 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+// ========== 环境配置 ==========
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
+------------------------------------------
+@Author: sm
+@Date: 2026.05.31
 @Description: parkson 呼啦圈小程序签到
 cron: 35 8 * * *
+------------------------------------------
+变量名：parkson
+变量值：wx_server 里的 openid/账号标识，多账号用 & 或换行
+------------------------------------------
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("呼啦圈小程序签到");
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx89a714fb03b61b99";
 const APP_VERSION = "2.30.3";
@@ -31,7 +47,7 @@ const API_BASE = "https://smp-api.iyouke.com/dtapi";
 const TOKEN_CACHE_FILE = path.join(__dirname, "parkson_token_cache.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "parkson";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -52,7 +68,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e + "");
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -64,22 +80,25 @@ function formatDate(date = new Date(), separator = "-") {
 }
 
 class Task {
-    constructor(openid) {
+    constructor(raw) {
         this.index = $.userIdx++;
-        this.openid = String(openid || "").trim();
+        const _p = String(raw || "").trim().split("#");
+        this.openid = _p[0];
+        this.remark = _p[1] ? _p[1].trim() : "";
         this.accessToken = "";
         this.authorization = "";
         this.userInfo = {};
     }
 
     async run() {
+        if (this.remark) _setName(this.index, this.remark);
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            L.info("账号[" + this.index + "] 使用缓存token");
+            $.log(`账号[${this.index}] 使用缓存token`);
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
             }
         }
 
@@ -186,9 +205,9 @@ class Task {
             });
             this.applyToken(data);
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] 登录成功: userId=" + data.userId || "" + "");
+            $.log(`账号[${this.index}] 登录成功: userId=${data.userId || ""}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
+            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
         }
     }
 
@@ -211,7 +230,7 @@ class Task {
             ...data,
         };
         this.saveCachedToken();
-        if (log) L.info("账号[" + this.index + "] 用户: " + data.nickName || "" + " " + data.memberName || "" + "");
+        if (log) $.log(`账号[${this.index}] 用户: ${data.nickName || ""} ${data.memberName || ""}`);
         return data;
     }
 
@@ -221,10 +240,12 @@ class Task {
                 method: "GET",
                 apiPath: "/pointsSign/user/pointsInfo/query",
             });
-            L.info("账号[" + this.index + "] 积分: " + data?.pointsNums ?? "未知" + " 连签=" + data?.seriesDays ?? 0 + " 今日=" + data?.signTodayResult ? "已签" : "未签" + "");
+            $.log(`账号[${this.index}] 积分: ${data?.pointsNums ?? "未知"} 连签=${data?.seriesDays ?? 0} 今日=${data?.signTodayResult ? "已签" : "未签"}`);
+            if (data?.pointsNums != null && data.pointsNums !== "") _setSign(this.index, "", "", String(data.pointsNums));
+            if (data?.seriesDays != null && data.seriesDays !== "") _rpGet(this.index).streak = String(data.seriesDays);
             return data;
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询积分失败: " + e.message || e + "");
+            $.log(`账号[${this.index}] 查询积分失败: ${e.message || e}`);
             if (/token|登录|授权|401/i.test(String(e.message || e))) this.removeCachedToken();
         }
     }
@@ -240,16 +261,17 @@ class Task {
             const todayItem = Array.isArray(data) ? data.find((item) => item?.isToday || item?.dateStr === today) : null;
             this.todayDate = todayItem?.dateStr || today;
             this.isTodaySign = Number(todayItem?.daySignStatus) === 2;
-            L.info("账号[" + this.index + "] 签到状态: " + this.todayDate + " " + this.isTodaySign ? "已签" : "未签" + "");
+            $.log(`账号[${this.index}] 签到状态: ${this.todayDate} ${this.isTodaySign ? "已签" : "未签"}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询签到状态失败: " + e.message || e + "");
+            $.log(`账号[${this.index}] 查询签到状态失败: ${e.message || e}`);
             if (/token|登录|授权|401/i.test(String(e.message || e))) this.removeCachedToken();
         }
     }
 
     async doSign() {
         if (this.isTodaySign) {
-            L.info("账号[" + this.index + "] 今日已签到");
+            $.log(`账号[${this.index}] 今日已签到`);
+            _setSign(this.index, "今日已签到", "", "");
             return;
         }
         try {
@@ -259,38 +281,100 @@ class Task {
                 apiPath: "/pointsSign/user/sign",
                 params: { date },
             });
-            L.ok("账号[" + this.index + "] 签到成功: +" + data?.signReward ?? "未知" + "积分");
+            const reward = data?.signReward;
+            const earned = (reward !== undefined && reward !== null) ? `今日+${reward}积分` : "";
+            $.log(`账号[${this.index}] 签到成功: +${reward ?? "未知"}积分`);
+            _setSign(this.index, "签到成功", earned, "");
+            _setLottery(this.index, _digLottery(data));
         } catch (e) {
             const message = String(e.message || e);
             if (/已签|重复|今日.*签/i.test(message)) {
-                L.info("账号[" + this.index + "] 今日已签到");
+                $.log(`账号[${this.index}] 今日已签到`);
+                _setSign(this.index, "今日已签到", "", "");
                 return;
             }
-            L.fail("账号[" + this.index + "] 签到失败: " + message + "");
+            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            _setSign(this.index, "签到失败");
             if (/token|登录|授权|401/i.test(message)) this.removeCachedToken();
         }
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+let _rpRows = [];
+let _rpApp = '呼啦圈';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-  sectionLine("呼啦圈", "");
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("呼啦圈小程序签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());

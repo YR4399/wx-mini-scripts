@@ -21,10 +21,55 @@ qqpcmgr_computer    默认 smallfawn
 qqpcmgr_lid         默认 Lottery2
 qqpcmgr_lotteries   抽奖模块列表，用 & 分隔，如 Lottery2&LevelLottery1
 qqpcmgr_tasks       是否执行任务，默认 true
+qqpcmgr_max_comments 每天评论软件条数，默认 10（每条 +20 成长值；但服务端有「评论成长值总上限 +2000」，
+                     到顶后 getTasks 会把「评论1款软件」置为 can_click=false、status_text="已达总上限+2000"，
+                     脚本检测到即跳过评论环节，不再浪费请求）
+qqpcmgr_comment_always 评论任务已完成时是否继续评论赚成长值，默认 true（受上面的总上限约束）
+qqpcmgr_auto_take   是否自动领取「待领取」奖品，默认 true
+qqpcmgr_max_take    单次最多领取几个奖品，默认 6（服务端另有每日兑换上限）
+qqpcmgr_take_qq     领奖目标QQ（可空）：
+                      · 单个值 = 所有账号的奖品都领到这个QQ，如 485293174
+                      · 多个值(用 & 或换行分隔) = 按账号顺序一一对应，某位留空 = 该账号不领
+                      · 留空 = **不领取**（安全默认：绝不领到账号绑定的QQ）
+                      · 只有显式写 currentLogin / self / 自己 时，该账号才用自己的绑定QQ
+                    注：绑定的QQ往往是陌生号，误领过去就找不回来了，所以默认一律不领。
+------------------------------------------
+奖品的口径（抓包确认，sdi 中台 taker 接口）：
+  · 我的奖品列表 GET https://sdi.m.qq.com/private/taker/queryDrawlogList
+  · 领取奖品     POST https://sdi.m.qq.com/private/taker/giveout {drawLogId, take:{qq:"..."}}
+    state: 0 已失效 / 1 待领取 / 2 领取中 / 3 已领取 / 4 领取失败
+    Q币、QQSVIP 等虚拟奖品用 take={qq:"目标QQ号"} 直领；该 QQ 可以是任意号码，
+    不限于登录账号绑定的QQ（抓包确认：App 领奖表单就是让用户手输 QQ/微信号）。
+    ⚠ 每日兑换上限（2026-09-17 实测确认，两轮跨天验证）：
+      口径 = 「奖品(bonusId) × 收奖QQ × 每天 1 次」，次日自动重置。
+      证据：同一个 drawLogId(bonusId=2631) 头天领 485293174 报「已达上限」，
+            第二天同一奖品再领 485293174 成功；同日换收奖QQ也能再领一次。
+      ⇒ 多个账号领到同一个 QQ 时，并不是共用 1 个总额度，而是每个「奖品」各有 1 次/天；
+        同一奖品（如「天天惊喜-1Q币」当月同 bonusId）当天只能过一个到该 QQ，剩余次日继续。
+      ⇒ 脚本撞到上限只跳过该奖品、继续试其它奖品，不会整轮退出。
+    ⚠ 已过 takeTimeEnd 的奖品**服务端仍可能受理**（实测把 8/31 截止的 1Q币 成功领出），
+      所以脚本对「已过截止」项也会试领一次，服务端说失效才记入失效。
+    实物(ship)需要收货信息，脚本不代领。
 ------------------------------------------
 */
 
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const fs = require("fs");
 const path = require("path");
 
@@ -72,12 +117,26 @@ const LOTTERIES = process.env.qqpcmgr_lotteries
     : ["Lottery2"];
 const FORCE_LOTTERY = process.env.qqpcmgr_force_lottery === "true";
 const ENABLE_COMMENTS = process.env.qqpcmgr_comments !== "false";
-const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 3;
+// 每天评论条数：默认 10 条（每日评论加成长值上限即 10 条，每条 +20 成长值）
+const MAX_COMMENTS = parseInt(process.env.qqpcmgr_max_comments) || 10;
+// 评论任务已完成时是否继续评论（新软件每条都加成长值，所以默认继续）
+const COMMENT_ALWAYS = process.env.qqpcmgr_comment_always !== "false";
+// 奖品中心：自动领取「待领取」奖品 / 单次领取上限
+const AUTO_TAKE = process.env.qqpcmgr_auto_take !== "false";
+const MAX_TAKE = parseInt(process.env.qqpcmgr_max_take) || 6;
+// 领奖目标QQ：留空=账号自身绑定QQ；单值=全部共用；多值(&或换行)=按账号顺序对应
+const TAKE_QQ_LIST = (process.env.qqpcmgr_take_qq || "").trim()
+    ? splitAccounts(process.env.qqpcmgr_take_qq)
+    : [];
+const TAKE_TYPES = ["qqcoin", "pcm_direct_proivde", "mp_qqmusic_common", "mp_qq_member", "yxlb", "common_mp"];
+const BONUS_STATE = ["已失效", "待领取", "领取中", "已领取", "领取失败"];
 const COMMENT_CONTENTS = ["好用","非常实用","功能强大","推荐使用","很好用","速度很快","操作简单","体验不错","非常满意","值得推荐","简单易用","功能齐全","运行流畅","很喜欢","方便快捷"];
 // 抓包确认: 真实 App 只评论 softId=57289 (/softwareDetail/57289 发布评论返回 code=0)
 const COMMENT_SOFTID = parseInt(process.env.qqpcmgr_comment_softid) || 57289;
 const COMMENT_MIN_DELAY = parseInt(process.env.qqpcmgr_comment_min_delay) || 8000;
 const COMMENT_MAX_DELAY = parseInt(process.env.qqpcmgr_comment_max_delay) || 12000;
+// 软件池与已评论记录（修复：固定评论同一款软件永远不加成长值，改为轮换评论新软件）
+const SOFT_POOL_FILE = path.join(CACHE_DIR, "qqpcmgr_soft_pool.json");
 const QQPCMGR_CLIENT_VER = "18.2.30648.204";
 
 function splitAccounts(raw = "") {
@@ -391,6 +450,214 @@ async function doLottery(sessionKey, cookie, lotteryId = LOTTERY_ID, sdiaidHeade
     return { status, data };
 }
 
+// ====== 奖品中心：我的奖品 / 待领取（抓包确认 sdi 中台 taker 接口）======
+
+// 同名奖品合并计数："1Q币×4、2Q币"
+function countBy(items) {
+    const m = new Map();
+    for (const it of items || []) {
+        const k = it && it.name ? it.name : "奖品";
+        m.set(k, (m.get(k) || 0) + 1);
+    }
+    return [...m.entries()].map(([k, v]) => (v > 1 ? `${k}×${v}` : k)).join("、");
+}
+
+function fmtDay(v) {
+    if (!v) return "";
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    const p = (n) => String(n).padStart(2, "0");
+    const s = new Date(d.getTime() + 8 * 3600 * 1000);
+    return `${s.getUTCFullYear()}-${p(s.getUTCMonth() + 1)}-${p(s.getUTCDate())}`;
+}
+
+// 计算某账号的领奖目标QQ（index 为 1 起的账号序号）
+// ⚠ 安全策略（2026-09-17）：**绝不默认领到账号绑定的QQ**（那些号用户不认识，领过去等于丢）。
+//   · 未配置 qqpcmgr_take_qq / 该账号位为空 → 返回 ""（本次不领取）
+//   · 只有显式写 currentLogin / self / 自己 才允许用该账号的绑定QQ
+//   · 变量里写的必须是纯数字QQ，解析不出数字也返回 ""（不领取）
+function resolveTakeQq(profile, index) {
+    const self = String(profile.account || "").trim();
+    if (!TAKE_QQ_LIST.length) return "";
+    const slot = TAKE_QQ_LIST.length === 1
+        ? TAKE_QQ_LIST[0]
+        : (TAKE_QQ_LIST[Math.min(Math.max((index || 1) - 1, 0), TAKE_QQ_LIST.length - 1)] || "");
+    const v = String(slot || "").trim();
+    if (!v) return "";
+    if (/^(currentlogin|self|自己|绑定|本账号)$/i.test(v)) return self;
+    const digits = v.replace(/[^0-9]/g, "");
+    return digits;
+}
+
+// 我的奖品列表（不传 drawPoolId 即全部奖池）
+async function getDrawlogList(sessionKey, cookie, sdiaidHeader, drawPoolId) {
+    const q = drawPoolId ? `?drawPoolId=${encodeURIComponent(drawPoolId)}` : "";
+    const { data, status } = await axios.request({
+        method: "GET",
+        url: `https://sdi.m.qq.com/private/taker/queryDrawlogList${q}`,
+        headers: {
+            "User-Agent": USER_AGENT,
+            "sec-ch-ua": '"Chromium";v="109"',
+            sessionkey: sessionKey,
+            sdiaid: sdiaidHeader || SDIAID,
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            Origin: "https://sdi.3g.qq.com",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            Referer: "https://sdi.3g.qq.com/",
+            Accept: "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            Cookie: cookie,
+        },
+        timeout: 20000,
+        validateStatus: () => true,
+    });
+    return { status, data };
+}
+
+// 领取奖品：Q币/QQSVIP 等虚拟奖品传 take={qq: 目标QQ号}（目标QQ由 qqpcmgr_take_qq 指定，绝不是绑定QQ）
+async function takeBonus(sessionKey, cookie, drawLogId, take, sdiaidHeader) {
+    const { data, status } = await axios.request({
+        method: "POST",
+        url: "https://sdi.m.qq.com/private/taker/giveout",
+        headers: {
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            "sec-ch-ua": '"Chromium";v="109"',
+            sessionkey: sessionKey,
+            sdiaid: sdiaidHeader || SDIAID,
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            Origin: "https://sdi.3g.qq.com",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            Referer: "https://sdi.3g.qq.com/",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            Cookie: cookie,
+        },
+        data: { drawLogId, take },
+        timeout: 20000,
+        validateStatus: () => true,
+    });
+    return { status, data };
+}
+
+// 拉取奖品清单 + 自动领取待领取奖品
+async function runBonusCenter(profile, cookie, sessionKey, index, displayName) {
+    // pending=未过期待领取；stale=takeTimeEnd 已过但服务端仍为「待领取」（实测仍可能领到，故也尝试）
+    const out = { total: 0, pending: [], stale: [], claimed: [], expired: [], failed: [], note: "" };
+    let sk = sessionKey;
+    try {
+        const pa = await createAuth(profile, cookie, SDIAID);
+        sk = pa?.data?.data?.userInfo?.sessionKey || sessionKey;
+    } catch (e) { /* 沿用原 sessionKey */ }
+
+    let resp;
+    try {
+        resp = await getDrawlogList(sk, cookie, SDIAID);
+    } catch (e) {
+        out.note = `奖品列表请求异常: ${e.message}`;
+        $.log(`[账号${index}] [${displayName}] 🎁 ${out.note}`);
+        return out;
+    }
+    if (resp.status !== 200 || resp.data?.code !== 0) {
+        out.note = `奖品列表获取失败 HTTP ${resp.status} ${cleanMessage(resp.data?.message) || ""}`.trim();
+        $.log(`[账号${index}] [${displayName}] 🎁 ${out.note}`);
+        return out;
+    }
+
+    const list = resp.data?.data?.drawlogList || [];
+    out.total = list.length;
+    const now = Date.now();
+    for (const p of list) {
+        if (p.state !== 1) continue; // 仅待领取
+        const expired = p.takeTimeEnd ? new Date(p.takeTimeEnd).getTime() < now : false;
+        const item = { id: p.drawLogId, bonusId: String(p.bonusId || ""), name: p.comment || `奖品#${p.bonusId}`, pool: p.subcomment || p.drawPoolId || "", type: p.type || "", end: p.takeTimeEnd || "" };
+        if (expired) out.stale.push(item); else out.pending.push(item);
+    }
+
+    $.log(`[账号${index}] [${displayName}] 🎁 我的奖品共 ${list.length} 条，待领取 ${out.pending.length + out.stale.length}（可领 ${out.pending.length} / 已过截止 ${out.stale.length}）`);
+    for (const it of out.pending) $.log(`[账号${index}] [${displayName}]   ⏳ 待领取: ${it.name}（${it.pool}）${it.end ? "截止 " + fmtDay(it.end) : ""}`);
+    for (const it of out.stale) $.log(`[账号${index}] [${displayName}]   ⌛ 已过截止: ${it.name}（${it.pool}）${it.end ? "截止 " + fmtDay(it.end) : ""}（仍会试领一次）`);
+
+    if (!AUTO_TAKE) { out.note = "自动领取已关闭(qqpcmgr_auto_take=false)"; return out; }
+
+    const qq = resolveTakeQq(profile, index);
+    const selfQq = String(profile.account || "");
+    if (qq && qq !== selfQq) {
+        $.log(`[账号${index}] [${displayName}] 🎯 领奖目标QQ: ${qq}（账号绑定QQ ${selfQq || "未知"} 不参与领取）`);
+    } else if (qq && qq === selfQq) {
+        $.log(`[账号${index}] [${displayName}] 🎯 领奖目标QQ: ${qq}（变量显式指定用绑定QQ）`);
+    } else {
+        $.log(`[账号${index}] [${displayName}] ⛔ 未指定领奖目标QQ（qqpcmgr_take_qq 为空或该账号位留空）→ 本次不领取任何奖品，避免领到不认识的绑定QQ`);
+    }
+    let done = 0;
+    // 实测：每日兑换上限按「奖品(bonusId) × 收奖QQ」计数，所以撞上限只跳过该奖品，其它奖品继续試
+    const cappedBonus = new Set();
+    const cappedLogged = new Set();
+    const queue = [...out.pending, ...out.stale];
+    if (out.stale.length) $.log(`[账号${index}] [${displayName}] 🔎 有 ${out.stale.length} 个已过截止的奖品，仍会尝试领取（服务端可能仍受理）`);
+    for (const it of queue) {
+        if (done >= MAX_TAKE) { out.note = `本次领取上限 ${MAX_TAKE} 个，剩余留到明天`; break; }
+        if (it.bonusId && cappedBonus.has(it.bonusId)) {
+            if (!cappedLogged.has(it.bonusId)) {
+                cappedLogged.add(it.bonusId);
+                $.log(`[账号${index}] [${displayName}]   ⏭️ 跳过同类奖品「${it.name}」：该奖品今日在 QQ ${qq} 已达上限（次日自动继续）`);
+            }
+            continue;
+        }
+        if (!TAKE_TYPES.includes(it.type)) {
+            const reason = it.type === "ship" ? "实物奖品需收货信息，脚本不代领" : `暂不支持的类型 ${it.type || "未知"}`;
+            out.failed.push({ ...it, reason });
+            continue;
+        }
+        if (!qq) { out.failed.push({ ...it, reason: "未指定领奖目标QQ（qqpcmgr_take_qq 为空），为防误领到绑定QQ，本次不领取" }); continue; }
+        let r;
+        try {
+            r = await takeBonus(sk, cookie, it.id, { qq });
+        } catch (e) {
+            out.failed.push({ ...it, reason: `请求异常: ${e.message}` });
+            continue;
+        }
+        const code = r.data?.code;
+        if (code === 0) {
+            done++;
+            out.claimed.push(it);
+            $.log(`[账号${index}] [${displayName}]   ✅ 已领取: ${it.name}（${it.pool}）`);
+        } else {
+            const msg = cleanMessage(r.data?.message) || `HTTP ${r.status}`;
+            out.failed.push({ ...it, reason: msg });
+            $.log(`[账号${index}] [${displayName}]   ❌ 领取失败: ${it.name} :: ${msg}`);
+            if (msg.includes("已达上限")) {
+                if (it.bonusId) cappedBonus.add(it.bonusId);
+                out.note = "部分奖品今日兑换已达上限（上限按 奖品×收奖QQ 计），其余奖品继续、剩余的明天自动再来";
+                continue; // 关键：不整轮退出，其它奖品仍可能领到
+            }
+            if (msg.includes("过期") || msg.includes("失效")) { out.expired.push(it); }
+        }
+        await sleep(900 + Math.random() * 900);
+    }
+    // 复查一次，以服务端状态为准重新归类（这轮领到了没、哪些还挂着，一并以服务端为准）
+    if (queue.length) {
+        try {
+            const again = await getDrawlogList(sk, cookie, SDIAID);
+            const rows = again.data?.data?.drawlogList || [];
+            const nw = Date.now();
+            out.pending = []; out.stale = [];
+            for (const p of rows) {
+                if (p.state !== 1) continue;
+                const item = { id: p.drawLogId, bonusId: String(p.bonusId || ""), name: p.comment || `奖品#${p.bonusId}`, pool: p.subcomment || p.drawPoolId || "", type: p.type || "", end: p.takeTimeEnd || "" };
+                if (p.takeTimeEnd && new Date(p.takeTimeEnd).getTime() < nw) out.stale.push(item); else out.pending.push(item);
+            }
+        } catch (e) { /* 复查失败就保留本地判断 */ }
+    }
+    $.log(`[账号${index}] [${displayName}] 🎁 奖品处理完成: 本次领取 ${out.claimed.length} 项，仍待领取 ${out.pending.length + out.stale.length} 项（可领 ${out.pending.length} / 已过截止 ${out.stale.length}）${out.note ? "（" + out.note + "）" : ""}`);
+    return out;
+}
+
 async function getTasks(profile, cookie) {
     const { data, status } = await axios.request({
         method: "POST",
@@ -440,24 +707,46 @@ async function postComment(cookie, profile, softId, content, score) {
   } catch(e) { return { code: -1, message: e.message }; }
 }
 
-async function runSoftwareComments(cookie, profile, index, displayName) {
-  if (!ENABLE_COMMENTS) { $.log("Comment disabled"); return 0; }
+// ====== 评论轮换：每款软件只加一次成长值，固定评论同一款永远不加分 ======
+function loadSoftPool() {
+  try {
+    if (fs.existsSync(SOFT_POOL_FILE)) {
+      const arr = JSON.parse(fs.readFileSync(SOFT_POOL_FILE, "utf8"));
+      if (Array.isArray(arr) && arr.length) return arr;
+    }
+  } catch (e) { $.log(`读取软件池失败: ${e.message}`); }
+  return null;
+}
 
-  // 防止账号后续环节(抽奖等)异常触发整段重试时，重复评论快速耗尽账号评论配额
-  globalThis._commentedAccounts = globalThis._commentedAccounts || new Set();
-  if (globalThis._commentedAccounts.has(index)) {
-    $.log(`[账号${index}] [${displayName}] 本进程已评论过，跳过（避免重试重复评论）`);
-    return 0;
-  }
+function getCommentedFilePath(account) {
+  return path.join(CACHE_DIR, `qqpcmgr_commented_${String(account || "default").replace(/[^a-zA-Z0-9]/g, "_")}.json`);
+}
 
-  // 仅当评论类任务仍处于待完成时才评论；任务已完成/不存在则跳过，节省配额
-  const pending = globalThis._commentTaskPending ? globalThis._commentTaskPending[index] : undefined;
-  if (pending === false) {
-    $.log(`[账号${index}] [${displayName}] 评论任务已完成/不存在，跳过评论`);
-    return 0;
-  }
+function loadCommentedSet(account) {
+  try {
+    const f = getCommentedFilePath(account);
+    if (fs.existsSync(f)) return new Set(JSON.parse(fs.readFileSync(f, "utf8")));
+  } catch (e) { $.log(`读取评论记录失败: ${e.message}`); }
+  return new Set();
+}
 
-  // 抓包确认: 真实 App 固定评论 softId=COMMENT_SOFTID (57289), 不停遍历会导致 3020
+function saveCommentedSet(account, set) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(getCommentedFilePath(account), JSON.stringify([...set]));
+  } catch (e) { $.log(`保存评论记录失败: ${e.message}`); }
+}
+
+async function getGrowthValue(profile, cookie) {
+  try {
+    const r = await getTasks(profile, cookie);
+    if (r.status === 200 && r.data?.data?.resp) return Number(r.data.data.resp.total_growth_value);
+  } catch (e) {}
+  return null;
+}
+
+// 兜底：无软件池时维持原固定评论逻辑
+async function _commentFallback(cookie, profile, index, displayName) {
   const sid = COMMENT_SOFTID;
   let ok = 0, fail = 0;
   $.log(`[账号${index}] [${displayName}] Commenting on softId=${sid} (max ${MAX_COMMENTS}, 慢速)`);
@@ -475,14 +764,108 @@ async function runSoftwareComments(cookie, profile, index, displayName) {
       if (ec === 3020) { $.log(`[账号${index}] [${displayName}]   ⚠️ softId=${sid} 不支持/已达评论上限，停止`); break; }
       if (fail >= 3) { $.log(`[账号${index}] [${displayName}]   ⚠️ 连续失败过多，停止`); break; }
     }
-    // 每条都慢速间隔, 避免风控 (用户要求慢一点)
     const d = COMMENT_MIN_DELAY + Math.random() * (COMMENT_MAX_DELAY - COMMENT_MIN_DELAY);
     $.log(`[账号${index}] [${displayName}]   ⏳ 等待 ${Math.round(d/1000)}s`);
     await sleep(d);
   }
   $.log(`[账号${index}] [${displayName}] 评论完成: ${ok}/${MAX_COMMENTS}`);
   if (ok > 0) globalThis._commentedAccounts.add(index);
-  return ok;
+  return { ok, delta: 0 };
+}
+
+async function runSoftwareComments(cookie, profile, index, displayName) {
+  if (!ENABLE_COMMENTS) { $.log("Comment disabled"); return { ok: 0, delta: 0 }; }
+
+  // 防止账号后续环节(抽奖等)异常触发整段重试时，重复评论快速耗尽账号评论配额
+  globalThis._commentedAccounts = globalThis._commentedAccounts || new Set();
+  if (globalThis._commentedAccounts.has(index)) {
+    $.log(`[账号${index}] [${displayName}] 本进程已评论过，跳过（避免重试重复评论）`);
+    return { ok: 0, delta: 0 };
+  }
+
+  // 评论成长值已达服务端总上限（+2000）：再评论只留评论、不再加成长值 → 直接跳过，省掉 10 次请求与两分钟
+  if (globalThis._commentCapReached && globalThis._commentCapReached[index]) {
+    $.log(`[账号${index}] [${displayName}] ⚠️ 评论成长值已达总上限(+2000)，评论不再加分，跳过评论环节`);
+    return { ok: 0, delta: 0, capped: true };
+  }
+
+  // 评论任务已完成时：默认仍继续评论（每评论一款新软件都有成长值），设 qqpcmgr_comment_always=false 可恢复只在任务待完成时评论
+  const pending = globalThis._commentTaskPending ? globalThis._commentTaskPending[index] : undefined;
+  if (pending === false && !COMMENT_ALWAYS) {
+    $.log(`[账号${index}] [${displayName}] 评论任务已完成/不存在，且未开启持续评论，跳过`);
+    return { ok: 0, delta: 0 };
+  }
+  if (pending === false) {
+    $.log(`[账号${index}] [${displayName}] 评论任务已完成，继续评论赚成长值（今日目标 ${MAX_COMMENTS} 条）`);
+  }
+
+  const pool = loadSoftPool();
+  if (!pool) {
+    $.log(`[账号${index}] [${displayName}] ⚠️ 未找到软件池(.cache/qqpcmgr_soft_pool.json)，回退固定评论 softId=${COMMENT_SOFTID}`);
+    return await _commentFallback(cookie, profile, index, displayName);
+  }
+
+  // 该账号已评论过的软件集合（每款只加一次成长值）
+  const accKey = profile.openid || profile.account || String(index);
+  const commented = loadCommentedSet(accKey);
+  const candidates = pool.filter(s => !commented.has(String(s.id)));
+  if (candidates.length === 0) {
+    $.log(`[账号${index}] [${displayName}] ⚠️ 可评论的新软件已用尽(已评论 ${commented.size} 款)，评论不再加成长值`);
+    return { ok: 0, delta: 0 };
+  }
+
+  // 打乱后取前 MAX_COMMENTS 款未评论过的新软件
+  const chosen = [...candidates].sort(() => Math.random() - 0.5).slice(0, MAX_COMMENTS);
+
+  const preGrowth = await getGrowthValue(profile, cookie);
+  $.log(`[账号${index}] [${displayName}] 评论前成长值: ${preGrowth}`);
+
+  let ok = 0, fail = 0;
+  const newlyCommented = [];
+  for (const soft of chosen) {
+    const sid = Number(soft.id);
+    const txt = COMMENT_CONTENTS[Math.floor(Math.random()*COMMENT_CONTENTS.length)];
+    const scr = Math.floor(Math.random()*2)+4;
+    $.log(`[账号${index}] [${displayName}]   💬 评论新软件: ${soft.name} (SoftID=${sid})`);
+    const r = await postComment(cookie, profile, sid, txt, scr);
+    const ec = r && r.code;
+    if (ec === 0) {
+      ok++;
+      newlyCommented.push(String(sid));
+      $.log(`[账号${index}] [${displayName}]   ✅ OK: sid=${sid}, score=${scr} "${txt}"`);
+    } else {
+      fail++;
+      $.log(`[账号${index}] [${displayName}]   ❌ FAIL: sid=${sid} code=${ec ?? "?"} ${r && r.message ? "| " + r.message : ""}`);
+      if (ec === 3020) $.log(`[账号${index}] [${displayName}]   ⚠️ sid=${sid} 不支持评论/已达上限，不记录`);
+    }
+    const d = COMMENT_MIN_DELAY + Math.random() * (COMMENT_MAX_DELAY - COMMENT_MIN_DELAY);
+    $.log(`[账号${index}] [${displayName}]   ⏳ 等待 ${Math.round(d/1000)}s`);
+    await sleep(d);
+  }
+
+  // 仅记录评论成功的软件，下次不再重复
+  if (newlyCommented.length) {
+    for (const sid of newlyCommented) commented.add(sid);
+    saveCommentedSet(accKey, commented);
+  }
+
+  // 回查成长值，确认加分是否到账
+  let delta = 0;
+  if (ok > 0) {
+    const postGrowth = await getGrowthValue(profile, cookie);
+    if (postGrowth != null && preGrowth != null) {
+      delta = postGrowth - preGrowth;
+      if (delta > 0) {
+        $.log(`[账号${index}] [${displayName}] 📈 评论成长值 +${delta} (${preGrowth} → ${postGrowth})`);
+      } else {
+        $.log(`[账号${index}] [${displayName}] ⚠️ 评论后成长值未变化(${preGrowth} → ${postGrowth})，本批软件可能此前已评论过`);
+      }
+    }
+  }
+
+  $.log(`[账号${index}] [${displayName}] 评论完成: 新软件 ${ok}/${chosen.length} 款`);
+  if (ok > 0) globalThis._commentedAccounts.add(index);
+  return { ok, delta };
 }
 
 async function doTaskReport(profile, cookie, taskId, taskName) {
@@ -645,9 +1028,15 @@ async function doActivityTask(taskId, taskName, profile, cookie, sessionKey, ind
             timeout: 20000,
             validateStatus: () => true,
         });
-        if (status === 200) {
+        // 注意：HTTP 200 不代表任务真的完成 —— 服务端在 body 里给 resp.result(0=成功) / ret
+        const ret = data && data.ret;
+        const resultCode = data && data.data && data.data.resp && data.data.resp.result;
+        if (status === 200 && ret === 0 && resultCode === 0) {
             $.log(`[账号${index}] [${displayName}]   ✅ 活动任务 [${taskName}] 通过 jprx 完成`);
             return true;
+        }
+        if (status === 200) {
+            $.log(`[账号${index}] [${displayName}]   ℹ️ 活动任务 [${taskName}] 服务端未认可(ret=${ret}, result=${resultCode})，需真机客户端操作`);
         }
     } catch (e) {}
 
@@ -740,6 +1129,23 @@ async function getHomeConfig(cookie) {
     return { status, data };
 }
 
+// 实测(2026-09-17)：sdi 的 sessionKey 是「单会话」——同账号在别处重新登录后，
+// 旧 sessionKey 立即失效，但 Cookie 仍然有效（validateCookie 会通过），
+// 之后所有接口静默返回 result:2 / code:4002，日志看起来一切正常其实全废。
+// 所以这里加一道 sessionKey 校验，失效就重新登录，避免整天白跑。
+async function validateSessionKey(profile, cookie) {
+    if (!profile || !profile.account || !profile.loginKey) return true;
+    try {
+        const r = await getTasks(profile, cookie);
+        const resp = r && r.data && r.data.data && r.data.data.resp;
+        if (resp && Number(resp.result) !== 0) return false;
+        return true;
+    } catch (e) {
+        $.log(`[验证] sessionKey 校验异常(按有效处理): ${e.message}`);
+        return true;
+    }
+}
+
 async function runAccount(account, index, remark = "") {
     const guid = process.env[`${CK_NAME}_guid_${index}`] || generateGuid(account);
     const displayName = remark || account || "authCode";
@@ -763,6 +1169,12 @@ async function runAccount(account, index, remark = "") {
         if (!validateResult) {
             $.log(`  🔄 Cookie已失效，重新登录`);
             needRelogin = true;
+        } else {
+            const sessionOk = await validateSessionKey(profile, cookie);
+            if (!sessionOk) {
+                $.log(`  🔄 sessionKey 已失效（Cookie 仍有效），重新登录`);
+                needRelogin = true;
+            }
         }
     } else {
         needRelogin = true;
@@ -807,7 +1219,7 @@ async function runAccount(account, index, remark = "") {
         growthValue = taskResult?.growthValue || 0;
     }
 
-    await runSoftwareComments(cookie, profile, index, displayName);
+    const commentResult = await runSoftwareComments(cookie, profile, index, displayName);
 
     // 执行活动任务
     await runActivityTasks(sessionKey, cookie, profile, index, displayName);
@@ -815,12 +1227,47 @@ async function runAccount(account, index, remark = "") {
     await runHomeConfig(cookie, index, displayName);
     const userLevel = globalThis.lubanConfig?.[index]?.userLevel || 0;
     const lotteries = await runLotteries(sessionKey, cookie, index, displayName, profile);
-    
+    // 抽奖后处理奖品中心：列出全部奖品 + 自动领取「待领取」项
+    const bonus = await runBonusCenter(profile, cookie, sessionKey, index, displayName);
+
+    // 写入面板标准报告行（std_report 钉钉 markdown），奖品信息直接可见
+    _setName(index, profile.nickname || displayName);
+    _setSign(index, "任务完成");
+    if (parseInt(commentResult?.ok || 0) > 0) {
+        _setSign(index, null, `评论 ${commentResult.ok} 款软件 +${commentResult.delta || 0} 成长值`, null);
+    }
+    if (commentResult?.capped) {
+        _addTask(index, "评论成长值", "已达总上限(+2000)，不再加分(已跳过评论)");
+    }
+    const winList = (lotteries || []).filter((x) => x && x.prize);
+    const prizeBrief = [];
+    if (winList.length) prizeBrief.push(`本次中奖 ${winList.map((x) => x.prize).join("/")}`);
+    if (bonus.claimed.length) prizeBrief.push(`今日已领 ${countBy(bonus.claimed)}`);
+    if (bonus.pending.length) prizeBrief.push(`待领取 ${countBy(bonus.pending)}`);
+    if (bonus.stale.length) prizeBrief.push(`已过截止待试领 ${countBy(bonus.stale)}`);
+    if (!bonus.pending.length && !bonus.stale.length && !bonus.claimed.length && bonus.total) prizeBrief.push(`奖品已全部领取(${bonus.total} 条)`);
+    if (prizeBrief.length) _setLottery(index, prizeBrief.join(" ｜ "));
+    else if (bonus.note) _setLottery(index, bonus.note);
+    for (const p of bonus.pending.slice(0, 4)) {
+        _addTask(index, "待领取", `${p.name}${p.pool ? "（" + p.pool + "）" : ""}${p.end ? " 截止 " + fmtDay(p.end) : ""}`);
+    }
+    for (const p of bonus.stale.slice(0, 2)) {
+        _addTask(index, "已过截止", `${p.name}${p.pool ? "（" + p.pool + "）" : ""}${p.end ? " 截止 " + fmtDay(p.end) : ""}（次日仍会试领）`);
+    }
+    for (const p of bonus.claimed.slice(0, 3)) {
+        _addTask(index, "已领取", `${p.name}${p.pool ? "（" + p.pool + "）" : ""}`);
+    }
+    if (bonus.expired.length) _addTask(index, "已失效", `${bonus.expired.length} 项（服务端判定过期/失效）`);
+    if (bonus.note) _addTask(index, "提示", bonus.note);
+
     return {
         nickname: profile.nickname,
         level: userLevel,
         growthValue,
-        lotteries
+        commentOk: commentResult?.ok || 0,
+        commentGrowth: commentResult?.delta || 0,
+        lotteries,
+        bonus
     };
 }
 
@@ -849,7 +1296,12 @@ async function runTasks(sessionKey, cookie, profile, index, displayName = "") {
         (t.task_desc || "").includes("评论") &&
         t.can_click === true &&
         !(t.status_text || "").includes("已完成"));
-    $.log(`[账号${index}] [${displayName}] 获取到 ${tasks.length} 个任务 (评论任务待完成: ${globalThis._commentTaskPending[index]})`);
+    // 评论成长值有「总上限」：评满后服务端把该任务置为 can_click=false 且 status_text 带「已达总上限+2000」
+    // （实测 2026-09-21：每条 +20、上限 2000 = 100 条；到顶后评论仍返回 code=0 但成长值不再变化 → 没必要再评）
+    globalThis._commentCapReached = globalThis._commentCapReached || {};
+    globalThis._commentCapReached[index] = tasks.some(t =>
+        (t.task_desc || "").includes("评论") && /已达总上限|已达上限/.test(t.status_text || ""));
+    $.log(`[账号${index}] [${displayName}] 获取到 ${tasks.length} 个任务 (评论任务待完成: ${globalThis._commentTaskPending[index]}${globalThis._commentCapReached[index] ? "，评论成长值已达总上限" : ""})`);
     
     let completedCount = 0;
     let availableCount = 0;
@@ -954,11 +1406,11 @@ async function runSingleLottery(sessionKey, cookie, lotteryId, lotteryName, lott
             $.log(`[账号${index}] [${displayName}]   ${text}`);
             return { name: lotteryName, type: lotteryType, status: 200, data: { code: 0, data: {} }, resultText: text, prize: "" };
         };
-        // winLimitDays=400 的等级池属于"长周期限中1次"，中过就再也不会中，这里如实区分提示
-        if (sd.drawLimited && !FORCE_LOTTERY) return skip2(`⏭️ 今日抽奖次数已用完，明天再抽`);
+        // 等级池: winLimitDays=400 属于"长周期限中1次"(中过就再也不会中)，与每日池(天天惊喜)严格区分
+        if (sd.drawLimited && !FORCE_LOTTERY) return skip2(`⏭️ 等级池今日次数已用完，明天再抽`);
         if (sd.winLimited && !FORCE_LOTTERY) {
             const days = Number(sd.winLimitDays) || 1;
-            return skip2(days > 1 ? `⏭️ 已中过奖（${days}天内限中${sd.winLimitTimes || 1}次）` : `⏭️ 今日已中过奖，明天再抽`);
+            return skip2(days > 1 ? `⏭️ 等级池已中过奖（${days}天内限中${sd.winLimitTimes || 1}次）` : `⏭️ 等级池今日已中过奖，明天再抽`);
         }
         if (!sd.canReceive && !FORCE_LOTTERY) return skip2(`⏭️ 暂不可抽奖${cleanMessage(sd.message) ? `（${cleanMessage(sd.message)}）` : ""}`);
         const lottery2 = await doLottery(lk, cookie, "Lottery2", sdiAid || SDIAID);
@@ -1075,31 +1527,7 @@ function sleep(ms) {
 }
 
 let PUSHED = false;
-
-async function pushPlus(title, content) {
-    const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
-    if (!token) {
-        $.log(`[推送] 未配置 PLUSPLUS_TOKEN，跳过 PushPlus`);
-        return false;
-    }
-    try {
-        const { data } = await axios.post(
-            "http://www.pushplus.plus/send",
-            { token, title, content, template: "txt" },
-            { timeout: 15000 }
-        );
-        if (data && String(data.code) === "200") {
-            $.log(`[推送] PushPlus 已发送: ${title}`);
-            PUSHED = true;
-            return true;
-        }
-        $.log(`[推送] PushPlus 返回异常: ${JSON.stringify(data).slice(0, 160)}`);
-        return false;
-    } catch (e) {
-        $.log(`[推送] PushPlus 发送失败: ${e.message}`);
-        return false;
-    }
-}
+let FAIL_DETAIL = "";
 
 // 面板托管的 sendNotify 需要 DAIDAI_NOTIFY_URL/TOKEN + 面板已配置通知渠道，
 // 缺任一项都会抛错。原实现把这类错误统一显示成"未找到模块"，极具误导性，这里如实输出原因并自动降级。
@@ -1117,11 +1545,11 @@ async function sendNotify(title, content) {
             PUSHED = true;
             return true;
         } catch (e) {
-            $.log(`[推送] 面板通道不可用(${(e && e.message) || e})，降级 PushPlus`);
+            $.log(`[推送] 面板通道不可用(${(e && e.message) || e})，降级 std_report`);
             break;
         }
     }
-    return await pushPlus(title, content);
+    return await _stdSendPush(title, content);
 }
 
 // 服务端 message 常带 "日志id=>uuid" 尾巴，推送里没有意义，清掉
@@ -1184,8 +1612,9 @@ function parseLotteryOutcome(result, bonusList) {
         const prize = extractPrize(data, bonusList);
         if (prize) return { text: `🎉 恭喜获得: ${prize}`, prize };
 
-        if (d.leftChance && Object.keys(d.leftChance).length === 0 && data.code === 0) {
-            return { text: "✅ 今日已抽奖", prize: "" };
+        // code=0 且无奖品 = 本次抽奖未中（中奖才会返回奖品，未中不再笼统显示"今日已抽奖"）
+        if (data.code === 0) {
+            return { text: "😅 未中奖，明日再试", prize: "" };
         }
         const msg = cleanMessage(data.message);
         if (msg && msg.includes("已达") && msg.includes("上限")) return { text: `⏭️ ${msg}`, prize: "" };
@@ -1210,6 +1639,51 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
     $.log(`[风控] 等待 ${(delay / 60).toFixed(2)} 分钟 (${ms}ms)`);
     return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+
+const { report: _stdReport, sendPush: _stdSendPush } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+  PUSHED = true; // 已走标准推送通道，避免 finally 再补一条「执行异常」
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 (async () => {
     const accounts = process.env.qqpcmgr_authCode ? [""] : splitAccounts(process.env[CK_NAME] || "");
@@ -1270,7 +1744,7 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
     const failCount = results.filter(r => !r.success).length;
     
     if (results.length > 0) {
-        // 中奖信息必须一眼可见：汇总到正文最顶部，并写进推送标题
+        // 本次中奖（来自本轮抽奖响应）
         const wins = [];
         for (const r of results) {
             for (const lo of r.lotteries || []) {
@@ -1279,16 +1753,39 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
                 }
             }
         }
+        // 奖品信息（待领取 / 本次已领 / 已过期）——直接展示，不再依赖中奖文案
+        const pendingAll = [], takenAll = [], expiredAll = [], failNotes = [];
+        for (const r of results) {
+            const who = r.remark || r.nickname || "账号";
+            const b = r.bonus || {};
+            for (const it of b.pending || []) pendingAll.push({ who, ...it });
+            for (const it of b.claimed || []) takenAll.push({ who, ...it });
+            for (const it of b.expired || []) expiredAll.push({ who, ...it });
+            for (const it of b.failed || []) if (it.reason && failNotes.indexOf(it.reason) < 0) failNotes.push(it.reason);
+            if (b.note && failNotes.indexOf(b.note) < 0) failNotes.push(b.note);
+        }
 
         let content = "";
-        if (wins.length > 0) {
-            content += `🏆 中奖 ${wins.length} 项\n`;
-            for (const w of wins) {
-                const poolNote = w.pool && w.pool !== w.prize ? `（${w.pool}）` : "";
-                content += `🎉 ${w.who}：${w.prize}${poolNote}\n`;
+        content += `🎁 奖品信息\n`;
+        if (pendingAll.length) {
+            content += `⏳ 待领取 ${pendingAll.length} 项\n`;
+            for (const p of pendingAll) {
+                content += `   ${p.who}：${p.name}${p.pool ? "（" + p.pool + "）" : ""}${p.end ? " 截止 " + fmtDay(p.end) : ""}\n`;
             }
-            content += `\n`;
+        } else {
+            content += `⏳ 待领取 0 项\n`;
         }
+        if (takenAll.length) {
+            content += `✅ 本次已领取 ${takenAll.length} 项\n`;
+            for (const p of takenAll) content += `   ${p.who}：${p.name}${p.pool ? "（" + p.pool + "）" : ""}\n`;
+        }
+        if (expiredAll.length) content += `⌛ 已过期/失效 ${expiredAll.length} 项\n`;
+        if (failNotes.length) content += `⚠️ ${failNotes.slice(0, 3).join("；")}\n`;
+        if (wins.length) {
+            content += `🏆 本次中奖 ${wins.length} 项\n`;
+            for (const w of wins) content += `   🎉 ${w.who}：${w.prize}${w.pool && w.pool !== w.prize ? "（" + w.pool + "）" : ""}\n`;
+        }
+        content += `\n`;
 
         content += `📱 腾讯管家任务执行结果\n`;
         content += `📊 统计: ${results.length} 个账号 | 成功 ${successCount} | 失败 ${failCount}\n\n`;
@@ -1304,6 +1801,19 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
                 content += `   📈 等级: Lv.${r.level || 0}\n`;
                 content += `   ⭐ 成长值: ${r.growthValue || 0}\n`;
 
+                if (r.commentOk > 0) {
+                    content += `   💬 评论新软件: ${r.commentOk} 款`;
+                    if (r.commentGrowth > 0) content += ` (+${r.commentGrowth} 成长值)`;
+                    content += `\n`;
+                }
+
+                if (r.bonus && (r.bonus.total || r.bonus.note)) {
+                    content += `   🎁 奖品: 待领取 ${(r.bonus.pending || []).length} / 本次领取 ${(r.bonus.claimed || []).length} / 已过期 ${(r.bonus.expired || []).length}\n`;
+                    for (const p of r.bonus.pending || []) content += `      ⏳ ${p.name}${p.pool ? "（" + p.pool + "）" : ""}${p.end ? " 截止 " + fmtDay(p.end) : ""}\n`;
+                    for (const p of r.bonus.claimed || []) content += `      ✅ 已领 ${p.name}\n`;
+                    if (r.bonus.note) content += `      ℹ️ ${r.bonus.note}\n`;
+                }
+
                 if (r.lotteries && r.lotteries.length > 0) {
                     content += `   🎲 抽奖结果:\n`;
                     for (const lottery of r.lotteries) {
@@ -1316,19 +1826,18 @@ function randomDelay(minSeconds = 10, maxSeconds = 20) {
 
         content += `\n───\n⏰ ${new Date().toLocaleString()}`;
 
-        const title = wins.length > 0
-            ? `腾讯管家 🎉 中奖：${[...new Set(wins.map((w) => w.prize))].join("、").slice(0, 40)}`
-            : `腾讯管家 (成功 ${successCount}/${results.length})`;
-
-        await sendNotify(title, content);
+        // 推送统一走面板标准通道(std_report 钉钉 markdown，与其余脚本一致)：
+        // 奖品信息已在报告行的「抽奖获得 / 明细」里，正文只在最后兜底时使用
+        FAIL_DETAIL = content;
+        await flushLogPoints("腾讯管家");
     }
 })()
     .catch((e) => $.log(`执行失败: ${e.message || e}`))
     .finally(async () => {
-        // 主流程已推送则不重复；只有整体异常导致没推成时才发一份末尾日志兜底
+        // 正常流程已由 flushLogPoints 推送；只有完全没推成时，才补一条兜底日志
         if (!PUSHED) {
-            const tail = NOTIFY_LOG.slice(-30).join("\n");
-            await pushPlus("腾讯管家 ⚠️ 执行异常", `脚本未正常产出结果，末尾日志：\n\n${tail || "无日志"}`);
+            const tail = NOTIFY_LOG.slice(-25).join("\n");
+            await _stdSendPush("腾讯管家 ⚠️ 执行异常", (FAIL_DETAIL || "脚本未正常产出结果，末尾日志：") + "\n\n" + (tail || "无日志"));
         }
         $.done();
     });

@@ -19,11 +19,9 @@ os.environ['https_proxy'] = ''
   1. 四端口本地服务获取微信 code
   2. 使用 code 换 token（微信登录）
   3. 每日签到
-  4. PushPlus 推送
-  5. 品赞代理，业务请求优先代理，失败直连兜底
+  4. 品赞代理，业务请求优先代理，失败直连兜底
 
 环境变量：
-  PLUSPLUS_TOKEN    PushPlus token，可选
   PROXY_API         品赞代理提取 API，可选
   PROXY_TYPE        http / socks5，默认 http
 
@@ -50,11 +48,10 @@ import requests
 APP_NAME = "优智云家品牌商城小程序"
 APPID = "wxa61f98248d20178b"
 
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+wx_auth = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 
-PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 PROXY_API = os.getenv("PROXY_API", "")
 PROXY_TYPE = os.getenv("PROXY_TYPE", "http").lower()
 
@@ -227,22 +224,14 @@ def request_with_proxy(method: str, url: str, *, proxies: Dict[str, str] | None 
     return direct_session().request(method, url, **kwargs)
 
 
-def send_pushplus(title: str, content: str) -> None:
-    if not PLUSPLUS_TOKEN:
-        print("⚠️ [PushPlus] 未配置 PLUSPLUS_TOKEN，跳过推送")
-        return
-    try:
-        requests.post("https://www.pushplus.plus/send", json={"token": PLUSPLUS_TOKEN, "title": title, "content": content, "template": "txt"}, timeout=10, verify=False)
-        print("✅ [PushPlus] 推送成功")
-    except Exception as exc:
-        print(f"❌ [PushPlus] 推送失败: {exc}")
+from std_report import report
 
 
 def get_code(openid: str) -> str | None:
-    url = f"{WX_SERVER_URL}/wx/code"
+    url = f"{wx_server_url}/wx/code"
     print(f"🔐 [授权] 通过WCS获取code: {openid[:10]}...")
     try:
-        response = direct_session().post(url, json={"appid": APPID, "openid": openid}, headers={"auth": WX_AUTH}, timeout=60)
+        response = direct_session().post(url, json={"appid": APPID, "openid": openid}, headers={"auth": wx_auth}, timeout=60)
         data = response.json()
         code = (data.get("data") or {}).get("code") or data.get("code")
         if not code:
@@ -345,8 +334,34 @@ def submit_signin(server: str, token: str, proxies: Dict[str, str] | None) -> Tu
         return False, f"签到异常: {exc}", 0
 
 
+
+# ---------- 本地累计积分（接口无总积分字段，本机向前累计每日签到获得积分）----------
+_POINTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "youzhiyunjia_points_cache.json")
+def _read_points():
+    try:
+        if not os.path.exists(_POINTS_FILE): return {}
+        with open(_POINTS_FILE, encoding="utf-8") as f: return json.load(f) or {}
+    except Exception: return {}
+def _write_points(c):
+    try:
+        with open(_POINTS_FILE, "w", encoding="utf-8") as f: json.dump(c, f, ensure_ascii=False, indent=2)
+    except Exception as e: print(f"写入积分缓存失败: {e}")
+def _today():
+    import datetime; return datetime.date.today().isoformat()
+def _roll_day(openid, cache):
+    rec = cache.setdefault(openid, {"hist": 0, "gain": 0, "date": _today()})
+    if rec.get("date") != _today():
+        rec["hist"] = (rec.get("hist") or 0) + (rec.get("gain") or 0); rec["gain"] = 0; rec["date"] = _today()
+    return rec
+def _add_gain(openid, pts, cache):
+    rec = _roll_day(openid, cache)
+    rec["gain"] = (rec.get("gain") or 0) + (pts or 0)
+def _cur_total(openid, cache):
+    rec = cache.get(openid) or {"hist": 0, "gain": 0}
+    return (rec.get("hist") or 0) + (rec.get("gain") or 0)
+
 def run_account(index: int, total: int, openid: str) -> Dict[str, Any]:
-    result = {"openid": openid[:10]+"...", "success": False, "proxyStatus": "未使用代理", "proxyIp": "-", "token": "-",
+    result = {"openid": openid[:10]+"...", "_fullOpenid": openid, "success": False, "proxyStatus": "未使用代理", "proxyIp": "-", "token": "-",
               "signMsg": "-", "earnedIntegral": "0", "error": ""}
 
     log_account_header(index, total, openid[:10]+"...")
@@ -464,7 +479,41 @@ def main() -> None:
     print(f"║ 🕒 结束时间: {now_text():<32}║")
     print("╚" + "═" * 50 + "╝")
 
-    send_pushplus("🏠 优智云家四账号任务完成", build_notify(results))
+    # 标准推送（谷雨模板：总积分 / 签到奖励 / 连签 / 抽奖 / 做任务）
+    _rows = []
+    for idx, res in enumerate(results, 1):
+        _success = res.get("success")
+        _sign = res.get("signMsg", "") or ""
+        if _success:
+            _sign = "今日已签到" if "已签到" in _sign else "签到成功"
+        else:
+            _sign = "签到失败"
+        _ei = res.get("earnedIntegral")
+        try:
+            _ei_n = int(_ei) if _ei not in (None, "", "-") else 0
+        except (ValueError, TypeError):
+            _ei_n = 0
+        _earned = (f"今日+{_ei_n}积分" if _ei_n > 0 else None)
+        _pc = _read_points(); _oid = res.get("_fullOpenid") or res.get("openid", f"账号{idx}")
+        _roll_day(_oid, _pc)
+        if _success and _ei_n > 0 and "已签到" not in _sign: _add_gain(_oid, _ei_n, _pc)
+        _lt = _cur_total(_oid, _pc); _write_points(_pc)
+        _rows.append({
+            'idx': idx,
+            'name': res.get("openid", f"账号{idx}"),
+            'sign': _sign,
+            'earned': _earned,
+            'total': str(_lt),
+            'totalLabel': '累计积分',
+            'streak': None,
+            'tasks': None,
+            'taskEarned': None,
+            'lottery': None,
+        })
+    try:
+        report('优智云家签到', _rows)
+    except Exception as _e:
+        print('report 失败:', _e)
 
 if __name__ == "__main__":
     main()

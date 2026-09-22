@@ -1,4 +1,8 @@
 # ========== SSL和代理修复 ==========
+
+
+# ==================== 标准推送 ====================
+from std_report import report, send_push
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -46,17 +50,7 @@ import json
 import logging
 from datetime import datetime
 
-# ========== 推送通知 ==========
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
+
 
 
 try:
@@ -852,6 +846,38 @@ def main():
     log.info('')
     log.info('  所有账号处理完成')
 
+    # ---- 标准推送汇总（参照谷雨模板：签到/连续签到/今日获得/抽奖获得/做任务/总积分）----
+    _accounts = []
+    for r in results:
+        _sg = r.get('sign', '?')
+        _sign = '签到成功' if _sg == 'ok' else ('签到失败' if _sg == 'fail' else ('签到异常' if _sg == 'error' else str(_sg)))
+        _reward = r.get('reward')
+        _score = r.get('score')
+        _q = r.get('question')
+        # 做任务奖励：健康问答答对得 1 健康分；其余情况保留任务状态明细
+        _task_earned = ''
+        _tasks = None
+        if _q == 'correct':
+            _task_earned = '健康问答+1健康分'
+        elif _q:
+            _q_status = {'already_done': '今日已答', 'fail': '失败', 'wrong': '答错',
+                         'revive_fail': '复活失败', 'error': '异常', 'max_retries': '重试超限'}.get(_q, str(_q))
+            _tasks = [{'name': '健康问答', 'status': _q_status}]
+        _accounts.append({
+            'idx': len(_accounts) + 1,
+            'name': r.get('remark', '未知'),
+            'sign': _sign,
+            'earned': ('健康分+' + str(_reward)) if _reward else '',
+            'total': str(_score) if _score not in (None, 'error') else '',
+            'taskEarned': _task_earned,
+            'tasks': _tasks,
+            'lottery': '',
+        })
+    try:
+        report('太平洋蓝医保签到', _accounts)
+    except Exception as e:
+        log.error(f'[report] 失败: {e}')
+
 
 if __name__ == '__main__':
     import io
@@ -872,10 +898,5 @@ if __name__ == '__main__':
         _logs = _tee_out.getvalue()
     if _logs.strip():
         print(_logs)
-        try:
-            push_notify('tpy_lyb 签到结果', _logs[-2000:])
-        except:
-            pass
-
-
+        pass
 

@@ -1,4 +1,8 @@
 import os,ssl,urllib3
+
+
+# ==================== 标准推送 ====================
+from std_report import report, send_push, extract_points
 urllib3.disable_warnings()
 ssl._create_default_https_context=ssl._create_unverified_context
 for k in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy"):os.environ.pop(k,None)
@@ -48,17 +52,7 @@ import logging
 from _log_tee import enable as _enable_tee
 
 
-# ========== 推送通知 ==========
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
+
 
 
 # ====== 自动安装依赖 ======
@@ -463,9 +457,14 @@ def parse_manual_accounts():
 
 
 # ====== 业务逻辑 ======
-def run_account(token, openid='', user_key=None):
+_ROWS = []
+
+def run_account(token, openid='', user_key=None, name=''):
     """执行单个账号的签到抽奖流程"""
     client = GlicoClient(token, openid)
+    _sign_rewards = []
+    _lot_rewards = []
+    _sign = '未签到'
 
     # 1. 查询签到状态
     log.info('--- 查询签到状态 ---')
@@ -491,10 +490,14 @@ def run_account(token, openid='', user_key=None):
         if result.get('code') == 0:
             reward = result.get('data', {}).get('reward', '')
             log.info(f'签到成功! 奖励: {reward}')
+            _sign = '签到成功'
+            if reward:
+                _sign_rewards.append(f'签到:{reward}')
         else:
             log.warning(f'签到结果: {result}')
     else:
         log.info('今日已签到，跳过')
+        _sign = '今日已签到'
 
     # 3. 签到抽奖
     log.info('--- 签到抽奖 ---')
@@ -512,6 +515,9 @@ def run_account(token, openid='', user_key=None):
                 time.sleep(random.uniform(0.5, 1.5))
                 result = client.do_lottery(LOTTERY_ID)
                 log.info(f'抽奖结果: {result}')
+                _lp = result.get('data', {}).get('reward', '') or result.get('data', {}).get('prizeName', '')
+                if _lp:
+                    _lot_rewards.append(f'抽奖:{_lp}')
             else:
                 log.info('今日抽奖次数已用完')
         else:
@@ -538,12 +544,24 @@ def run_account(token, openid='', user_key=None):
                 stick_name = stick_result.get('stick', '')
                 reward = stick_result.get('rewardReceived', '')
                 log.info(f'  抽签结果: {stick_name} | 奖励: {reward or "无"}')
+                if reward:
+                    _lot_rewards.append(f'520签:{reward}')
             else:
                 log.warning(f'  抽签失败: {result}')
                 break
     else:
         log.warning(f'获取抽签信息失败: {stick_info}')
 
+    _ep = extract_points(checkin_info) or {}
+    _ROWS.append({
+        'name': name or (openid[:16] if openid else '未知'),
+        'sign': _sign,
+        'earned': '；'.join(_sign_rewards) if _sign_rewards else None,
+        'total': _ep.get('total') if _ep.get('total') is not None else None,
+        'tasks': None,
+        'lottery': '；'.join(_lot_rewards) if _lot_rewards else None,
+        'streak': continuous_days if continuous_days else None,
+    })
     return True
 
 
@@ -569,7 +587,7 @@ def run_wcs_mode():
             log.error('登录失败，跳过')
             continue
 
-        run_account(token_data['token'], openid, user_key)
+        run_account(token_data['token'], openid, user_key, name=remark)
         time.sleep(random.uniform(3, 8))
 
 
@@ -582,7 +600,7 @@ def run_manual_mode():
 
     for acc in accounts:
         log.info(f'\n========== 账号: {acc["remark"]} ==========')
-        run_account(acc['token'], acc['openid'])
+        run_account(acc['token'], acc['openid'], name=acc['remark'])
         time.sleep(random.uniform(3, 8))
 
 
@@ -636,9 +654,7 @@ if __name__ == '__main__':
     if _logs.strip():
         print(_logs)
         try:
-            push_notify('glico_sign 签到结果', _logs[-2000:])
-        except:
-            pass
-
-
+            report('格力高签到', _ROWS)
+        except Exception as e:
+            print(f'[report] 失败: {e}')
 

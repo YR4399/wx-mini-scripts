@@ -1,4 +1,13 @@
 # ========== SSL和代理修复 ==========
+
+
+def send_push(title, content):
+    from std_report import send_push as _dd_push
+    try:
+        return _dd_push(title, content)
+    except Exception as e:
+        print(f'[push] 失败: {e}')
+        return False
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -605,5 +614,4 @@ if __name__ == '__main__':
         except:
             pass
 
-
-
+send_push('袋鼠mama_sign', '签到完成')

@@ -1,7 +1,9 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -26,23 +28,13 @@ cron: 30 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("iqoo社区");
 const axios = require("axios");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
 
-
-
-const ckName = "wx_opinion";
+const ckName = "iqoo";
 const strSplitor = "#";
 const MINI_APP_ID = "wxcf4266fbc9463132";
 const PAGE_VERSION = "253";
@@ -65,7 +57,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e + "");
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -92,6 +84,7 @@ class Task {
         this.index = $.userIdx++;
         this.user = String(env || "").trim().split(strSplitor);
         this.openid = this.user[0].trim();
+        this.remark = (this.user[1] || "").trim();
         this.token = "";
         this.refreshToken = "";
         this.userId = "";
@@ -105,10 +98,10 @@ class Task {
         const cached = this.getCachedToken();
         if (cached?.accessToken) {
             this.applyToken(cached);
-            L.info("账号[" + this.index + "] 使用缓存token: " + shortToken(this.token) + "");
+            $.log(`账号[${this.index}] 使用缓存token: ${shortToken(this.token)}`);
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
             }
         }
 
@@ -117,6 +110,8 @@ class Task {
             if (!this.token) return;
         }
 
+        if (this.remark) _setName(this.index, this.remark);
+        else if (this.userInfo?.nickname || this.userInfo?.username) _setName(this.index, this.userInfo?.nickname || this.userInfo?.username);
         await this.userInfoRequest();
         await this.getTreadList();
         if (this.threadId && this.postId) {
@@ -224,7 +219,7 @@ class Task {
     async getOperateData() {
         if (!process.env.wx_auth) throw new Error("缺少 wx_auth，无法从 wx_server 获取登录数据");
         const url = (process.env.wx_server_url || "http://192.168.31.196:8787").replace(/\/$/, "");
-        const { data } = await axios.post(`${url}/wx/code`, {
+        const { data } = await axios.post(`${url}/wx/getuserinfo`, {
             appid: MINI_APP_ID,
             openid: this.openid,
         }, {
@@ -232,11 +227,9 @@ class Task {
             timeout: 45000,
         });
         const result = data?.data || {};
-        if (!data?.status || !result.code) {
-            throw new Error(`wx_server 未返回code: ${JSON.stringify(data)}`);
+        if (!data?.status || !result.code || !result.encryptedData || !result.iv) {
+            throw new Error(`wx_server 未返回完整登录数据: ${JSON.stringify(data)}`);
         }
-        result.encryptedData = result.encryptedData || "";
-        result.iv = result.iv || "";
         return result;
     }
 
@@ -258,9 +251,9 @@ class Task {
             this.userId = data.userId || data.uid || "";
             this.userInfo = data.user || data;
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] CODE登录成功: " + maskName(this.userInfo?.nickname || this.userInfo?.username || this.userId) + "");
+            $.log(`账号[${this.index}] CODE登录成功: ${maskName(this.userInfo?.nickname || this.userInfo?.username || this.userId)}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] CODE登录失败: " + e.message || e + "");
+            $.log(`账号[${this.index}] CODE登录失败: ${e.message || e}`);
         }
     }
 
@@ -282,10 +275,10 @@ class Task {
             this.saveCachedToken();
             const name = this.userInfo?.nickname || this.userInfo?.username || this.userInfo?.userName || this.userId;
             const score = this.userInfo?.score ?? this.userInfo?.points ?? this.userInfo?.coolCoin ?? "未知";
-            L.info("账号[" + this.index + "] 用户:" + maskName(name) + " 酷币:" + score + "");
+            $.log(`账号[${this.index}] 用户:${maskName(name)} 酷币:${score}`);
         } catch (e) {
             const message = String(e.message || e);
-            L.fail("账号[" + this.index + "] 获取用户信息失败:" + message + "");
+            $.log(`账号[${this.index}] 获取用户信息失败:${message}`);
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -296,33 +289,44 @@ class Task {
             if (result?.Data?.count === 0) {
                 await this.draw();
             } else {
-                L.info("账号[" + this.index + "] 今日已抽奖");
+                $.log(`账号[${this.index}] 今日已抽奖`);
             }
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询抽奖次数失败:" + e.message || e + "");
+            $.log(`账号[${this.index}] 查询抽奖次数失败:${e.message || e}`);
         }
     }
 
     async draw() {
         try {
             const result = await this.request("v3/luck.draw", {});
-            L.ok("账号[" + this.index + "] 抽奖成功 获得" + result?.Data?.prize_name || "奖励" + "");
+            const prize = result?.Data?.prize_name || "";
+            $.log(`账号[${this.index}] 抽奖成功 获得${prize || "奖励"}`);
+            if (prize) _setLottery(this.index, prize);
+            else {
+                const _lot = _digLottery(result?.Data);
+                if (_lot) _setLottery(this.index, _lot);
+            }
         } catch (e) {
-            L.fail("账号[" + this.index + "] 抽奖失败:" + e.message || e + "");
+            $.log(`账号[${this.index}] 抽奖失败:${e.message || e}`);
         }
     }
 
     async signIn() {
         try {
             const result = await this.request("v3/sign", { from: "group" });
-            L.info("🌸账号[" + this.index + "]🕊当前已签到" + result.Data.serialDays + "天🎉 获得积分" + result.Data.score + " 当前积分" + result.Data.scoreCount + "");
+            const d = result.Data || {};
+            $.log(`🌸账号[${this.index}]🕊当前已签到${d.serialDays}天🎉 获得积分${d.score} 当前积分${d.scoreCount}`);
+            if (d.serialDays != null) _rpGet(this.index).streak = String(d.serialDays);
+            if (d.score != null && d.score !== "") _rpGet(this.index).earned = "今日+" + d.score + "积分";
+            if (d.scoreCount != null) _rpGet(this.index).total = String(d.scoreCount);
+            _setSign(this.index, "签到成功", d.score != null && d.score !== "" ? "今日+" + d.score + "积分" : null, d.scoreCount != null ? String(d.scoreCount) : null);
         } catch (e) {
             const message = String(e.message || e);
             if (/已签|重复|今日|13006/.test(message)) {
-                L.info("🌸账号[" + this.index + "] 今日已签到");
+                $.log(`🌸账号[${this.index}] 今日已签到`);
                 return;
             }
-            L.fail("🌸账号[" + this.index + "] 签到失败:" + message + "❌");
+            $.log(`🌸账号[${this.index}] 签到失败:${message}❌`);
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -330,42 +334,42 @@ class Task {
     async likePost(threadId, postId) {
         try {
             await this.request("v3/posts.update", { id: threadId, postId, data: { attributes: { isLiked: true } } });
-            L.ok("账号[" + this.index + "] 帖子点赞成功");
+            $.log(`账号[${this.index}] 帖子点赞成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 帖子点赞失败:" + e.message || e + "❌");
+            $.log(`账号[${this.index}] 帖子点赞失败:${e.message || e}❌`);
         }
         try {
             await this.request("v3/posts.update", { id: threadId, postId, data: { attributes: { isLiked: false } } });
-            L.ok("账号[" + this.index + "] 帖子取消点赞成功");
+            $.log(`账号[${this.index}] 帖子取消点赞成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 帖子取消点赞失败:" + e.message || e + "❌");
+            $.log(`账号[${this.index}] 帖子取消点赞失败:${e.message || e}❌`);
         }
     }
 
     async sharePost(threadId) {
         try {
             await this.request("v3/thread.share", { threadId });
-            L.ok("账号[" + this.index + "] 帖子分享成功");
+            $.log(`账号[${this.index}] 帖子分享成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 帖子分享失败:" + e.message || e + "❌");
+            $.log(`账号[${this.index}] 帖子分享失败:${e.message || e}❌`);
         }
     }
 
     async viewPost(threadId) {
         try {
             await this.request("v3/view.count", { threadId, type: 0 }, { method: "GET" });
-            L.ok("账号[" + this.index + "] 帖子浏览成功");
+            $.log(`账号[${this.index}] 帖子浏览成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 帖子浏览失败:" + e.message || e + "❌");
+            $.log(`账号[${this.index}] 帖子浏览失败:${e.message || e}❌`);
         }
     }
 
     async commonPost(threadId) {
         try {
             await this.request("v3/posts.create", { id: threadId, type: 0, content: "666", source: "", attachments: [] });
-            L.ok("账号[" + this.index + "] 帖子评论成功");
+            $.log(`账号[${this.index}] 帖子评论成功`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 帖子评论失败:" + e.message || e + "❌");
+            $.log(`账号[${this.index}] 帖子评论失败:${e.message || e}❌`);
         }
     }
 
@@ -383,15 +387,88 @@ class Task {
             this.threadId = first.threadId || "";
             this.postId = first.postId || "";
         } catch (e) {
-            L.fail("账号[" + this.index + "] 获取帖子列表失败:" + e.message || e + "");
+            $.log(`账号[${this.index}] 获取帖子列表失败:${e.message || e}`);
         }
     }
 }
 
-$.userIdx = 0;
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = 'iQOO社区';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k];
+        const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc);
+        else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj;
+    return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k];
+    if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v);
+    if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-  sectionLine("iQOO", "");
-    
+    await getNotice();
     $.checkEnv(ckName);
 
     for (const user of $.userList) {
@@ -399,15 +476,19 @@ $.userIdx = 0;
     }
 })()
     .catch((e) => console.log(e))
-    .finally(async () => {
-    // ========== push result ==========
+    .finally(() => $.done());
+
+async function getNotice() {
     try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("iqoo社区", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+        const options = {
+            url: "https://ghproxy.net/https://raw.githubusercontent.com/smallfawn/Note/refs/heads/main/Notice.json",
+            headers: {
+                "User-Agent": defaultUserAgent,
+            },
+            timeout: 3000,
+        };
+        const { data: res } = await axios.request(options);
+        $.log(res);
+        return res;
+    } catch (e) {}
+}

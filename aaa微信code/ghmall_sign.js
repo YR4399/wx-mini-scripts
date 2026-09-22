@@ -37,7 +37,6 @@ cron: 25 8 * * *
 */
 const { Env } = require("../tools/env.js");
 const { ICON, L, sectionLine, humanDelay } = require("./_decor");
-const { sendPushNotify } = require("./_push_helper");
 const $ = new Env("天津贵和购物中心");
 const axios = require("axios");
 const fs = require("fs");
@@ -75,6 +74,44 @@ function loadCache() {
 function saveCache(c) {
     try { fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(c, null, 2)); } catch {}
 }
+// ============ 推送(std_report 双引擎, 钉钉 markdown) ============
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "天津贵和购物中心签到";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, n) { if (n != null && n !== "") _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
 let CACHE = loadCache();
 
 // ---------- 通用请求 ----------
@@ -120,12 +157,12 @@ async function getCode(openid) {
             if (typeof code === "string" && code.length > 10) return code;
             const msg = JSON.stringify(res || {}).slice(0, 160);
             if (/account not found|not found/i.test(msg)) {
-                L.fail($.tag(`WCS账号不存在，跳过: ${msg}`));
+                L.warn(`WCS账号不存在，跳过: ${msg}`);
                 return null;
             }
-            L.info($.tag(`取code异常(${msg})，重试...`));
+            L.info(`取code异常(${msg})，重试...`);
         } catch (e) {
-            L.info($.tag(`取code异常(${e.message})，重试...`));
+            L.info(`取code异常(${e.message})，重试...`);
         }
         await $.wait(2000 * (i + 1));
     }
@@ -133,9 +170,10 @@ async function getCode(openid) {
 }
 
 class Account {
-    constructor(openid, nick) {
+    constructor(openid, nick, idx) {
         this.openid = openid;
         this.nick = nick || openid;
+        this.idx = idx || 0;
         const c = CACHE[openid] || {};
         this.token = c.token || null;
         this.userId = c.userId || null;
@@ -174,7 +212,7 @@ class Account {
                     return false;
                 }
                 if (res.m !== 1 || !res.d || !res.d.token) {
-                    L.fail(this.tag(`登录失败: ${JSON.stringify(res).slice(0, 200)}`));
+                    L.error(this.tag(`登录失败: ${JSON.stringify(res).slice(0, 200)}`));
                     return false;
                 }
                 const d = res.d;
@@ -194,7 +232,7 @@ class Account {
                     L.info(this.tag(`登录网络异常(${e.message})，第${i}次重试...`));
                     await $.wait(5000 * i);
                 } else {
-                    L.fail(this.tag(`登录异常(已重试${MAX}次): ${e.message}`));
+                    L.error(this.tag(`登录异常(已重试${MAX}次): ${e.message}`));
                 }
             }
         }
@@ -232,11 +270,13 @@ class Account {
         if (before.m === 2000 || bd.IsOpenCheckin === false) {
             L.warn(this.tag("该商场未开启签到"));
             this.note("签到: 商场未开启");
+            _setSign(this.idx, "商场未开启签到");
             return;
         }
         if (before.m === 2058) {
             L.warn(this.tag(`需先绑定会员卡: ${bd.MemberCardListStr || ""}`));
             this.note("签到: 需绑定会员卡");
+            _setSign(this.idx, "需绑定会员卡");
             return;
         }
         if (before.m !== 1 && before.m !== 2054) {
@@ -245,6 +285,7 @@ class Account {
         if (bd.IsCheckIn === true) {
             L.info(this.tag("今日已签到"));
             this.note("签到: 今日已签到");
+            _setSign(this.idx, "今日已签到");
             await this.showDetail();
             return;
         }
@@ -257,7 +298,7 @@ class Account {
                 MallID: MALL_ID, Longitude: 0, Latitude: 0, InMall: inMall,
             });
         } catch (e) {
-            L.fail(this.tag(`签到请求失败: ${e.message}`));
+            L.error(this.tag(`签到请求失败: ${e.message}`));
             this.note("签到: 请求失败");
             return;
         }
@@ -267,15 +308,20 @@ class Account {
             const msg = d.Msg || (d.RewardType === 1 ? `奖励${d.Content}积分` : "签到成功");
             L.ok(this.tag(`签到成功: ${msg}`));
             this.note(`签到: ${msg}`);
+            const earned = (d.RewardType === 1 && d.Content != null) ? `+${d.Content}积分` : "";
+            _setSign(this.idx, "签到成功", earned, "");
             if (d.RewardType === 3 && d.LotteryCount > 0) {
                 L.ok(this.tag(`🎁 额外获得 ${d.LotteryCount} 次抽奖机会`));
+                _setLottery(this.idx, `额外${d.LotteryCount}次抽奖机会`);
             }
         } else if (/已签到|重复|already/i.test(res.e || "")) {
             L.info(this.tag(`今日已签到 (服务端: ${res.e})`));
             this.note("签到: 今日已签到");
+            _setSign(this.idx, "今日已签到");
         } else {
             L.warn(this.tag(`签到失败: m=${res.m} ${res.e || ""}`));
             this.note(`签到失败: ${res.e || "m=" + res.m}`);
+            _setSign(this.idx, `签到失败: ${res.e || "m=" + res.m}`);
         }
         await this.showDetail();
     }
@@ -287,6 +333,9 @@ class Account {
                 const d = res.d;
                 L.info(this.tag(`连续签到 ${d.ContinueDay || 0} 天，累计签到积分 ${d.CheckinBonusSum || 0}`));
                 this.note(`连签${d.ContinueDay || 0}天 累计${d.CheckinBonusSum || 0}分`);
+                if (d.ContinueDay != null && d.ContinueDay !== "") _setStreak(this.idx, d.ContinueDay);
+                // CheckinBonusSum 为累计签到积分 → 总积分
+                if (d.CheckinBonusSum != null && !isNaN(Number(d.CheckinBonusSum))) _setSign(this.idx, null, null, String(d.CheckinBonusSum));
             }
         } catch { /* 详情非关键，忽略 */ }
     }
@@ -355,6 +404,8 @@ class Account {
 
         L.ok(this.tag(`任务: 共${tasks.length}个，领奖成功${claimed}个${failed ? `，失败${failed}个` : ""}`));
         this.note(`任务${tasks.length}个 领奖${claimed}个`);
+        if (claimed > 0) _setTaskEarned(this.idx, `任务${tasks.length}个 领奖${claimed}个`);
+        else _setTaskEarned(this.idx, `任务${tasks.length}个(无待领奖励)`);
         if (pending.length) {
             L.info(this.tag(`待完成(需小程序内实际行为): ${pending.slice(0, 5).join("、")}`));
         }
@@ -382,11 +433,14 @@ async function main() {
     const nickMap = parseNickMap();
     let success = 0;
 
-    for (const oid of openids) {
-        const acc = new Account(oid, nickMap[oid] || oid);
+    for (let i = 0; i < openids.length; i++) {
+        const oid = openids[i];
+        const idx = i + 1;
+        const acc = new Account(oid, nickMap[oid] || oid, idx);
+        _setName(idx, acc.nick);
         try {
             L.info(acc.tag("开始"));
-            if (!(await acc.ensureToken())) { L.info(acc.tag("跳过该账号")); continue; }
+            if (!(await acc.ensureToken())) { L.info(acc.tag("跳过该账号")); _setSign(idx, "登录失败/未注册"); continue; }
             await humanDelay();
             await acc.doSign();
             await humanDelay();
@@ -394,7 +448,8 @@ async function main() {
             success++;
             L.ok(acc.tag(`完成 | ${acc.summary.join(" | ")}`));
         } catch (e) {
-            L.fail(acc.tag(`执行异常: ${e.message}`));
+            L.error(acc.tag(`执行异常: ${e.message}`));
+            if (!_rpGet(idx).sign) _setSign(idx, "执行异常: " + e.message);
         }
         sectionLine("");
     }
@@ -405,9 +460,7 @@ async function main() {
     try { await main(); }
     catch (e) { L.fail("运行异常: " + e.message); }
     finally {
-        if (typeof sendPushNotify === "function") {
-            try { await sendPushNotify($); } catch {}
-        }
+        await flushLogPoints(_rpApp);
         $.done();
     }
 })();

@@ -11,7 +11,7 @@
  *   wx_opinion   - openid, 多账号 & 分隔
  *   wx_server_url- WCS 地址 (默认 http://host.docker.internal:18788)
  *   wx_auth      - WCS 认证
- *   PUSH_PLUS_TOKEN / PLUSPLUS_TOKEN - 推送
+ *   推送: 已迁移至 std_report 双引擎 (钉钉机器人)
  */
 const https = require('https');
 const http = require('http');
@@ -117,7 +117,7 @@ async function login(openid) {
 
 async function runAccount(openid, idx) {
   const tag = `账号${idx} (${openid.slice(0, 10)}...)`;
-  const res = { tag, sign: '—', browseCount: 0, shareCount: 0, shareGain: 0, integral: null, errors: [] };
+  const res = { tag, sign: '—', readCount: 0, readGain: 0, integral: null, signPts: null, errors: [] };
   log(`\n========== ${tag} ==========`, 'BOLD');
 
   // 1. 登录
@@ -126,6 +126,7 @@ async function runAccount(openid, idx) {
     const lo = await login(openid);
     token = lo.token; uid = lo.uid; nick = lo.nick;
     log(`✅ 登录成功 uid=${uid} ${nick}`, 'GREEN');
+    if (nick) _setName(idx, nick);
   } catch (e) {
     log(`❌ 登录失败: ${e.message}`, 'RED');
     res.errors.push(e.message);
@@ -151,6 +152,7 @@ async function runAccount(openid, idx) {
       const d = s.json.data || {};
       if (d && typeof d === 'object' && Object.keys(d).length > 0 && (d.integral !== undefined || d.id || d.linkId)) {
         res.sign = `签到成功 +${d.integral ?? 1}分`;
+        res.signPts = d.integral ?? 1;
         log(`✅ ${res.sign}`, 'GREEN');
       } else {
         res.sign = '今日已签到';
@@ -166,59 +168,27 @@ async function runAccount(openid, idx) {
   }
   await delay(1000);
 
-  // 4. 浏览任务 (article/list 取列表 → article/info 浏览 2 篇, 记录行为)
-  try {
-    const lst = await request('GET', '/article/list/601?page=1&limit=2', token);
-    let ids = [];
-    if (lst.json && lst.json.code === 200 && lst.json.data && Array.isArray(lst.json.data.list)) {
-      ids = lst.json.data.list.map(a => a.id).filter(Boolean);
-    }
-    if (ids.length === 0) {
-      log('📄 文章列表为空，跳过浏览任务', 'YELLOW');
-    } else {
-      for (const aid of ids.slice(0, 2)) {
-        try {
-          const r = await request('GET', `/article/info?id=${aid}`, token);
-          const ok = r.json && r.json.code === 200 && r.json.data && r.json.data.article;
-          if (ok) {
-            res.browseCount++;
-            log(`📄 浏览文章 ${aid}/2 次 -> ${(r.json.data.article.title || '').slice(0, 22)}`, 'GREEN');
-          } else {
-            log(`📄 浏览 ${aid} -> ${(r.json && r.json.message) || '异常'}`, 'YELLOW');
-          }
-        } catch (e) {
-          log(`📄 浏览 ${aid} -> ${e.message}`, 'YELLOW');
-        }
-        await delay(1200);
-      }
-    }
-  } catch (e) {
-    res.errors.push('browse:' + e.message);
-    log(`📄 浏览任务异常: ${e.message}`, 'YELLOW');
-  }
-  await delay(800);
-
-  // 5. 分享任务 (READ_ARTICLE ×5, 每次 +1, 到上限返回空 data)
+  // 4. 浏览/分享刷分 (READ_ARTICLE ×7, 每次 +1, 到上限返回空 data)
   for (let i = 1; i <= 5; i++) {
     try {
       const r = await request('GET', '/lxx/usercenter/share/READ_ARTICLE?noAuth=true', token);
       const d = (r.json && r.json.data) || {};
       if (r.json && r.json.code === 200 && (d.integral !== undefined || Object.keys(d).length > 0)) {
         const got = d.integral !== undefined ? d.integral : 1;
-        res.shareCount++;
-        res.shareGain += got;
-        log(`🔁 分享 ${i}/5 次 -> +${got}分`, 'GREEN');
+        res.readCount++;
+        res.readGain += got;
+        log(`📖 浏览/分享 ${i}/5 次 -> +${got}分`, 'GREEN');
       } else {
-        log(`🔁 分享 ${i}/5 次 -> 已达上限(空响应)，停止`, 'YELLOW');
+        log(`📖 浏览/分享 ${i}/5 次 -> 已达上限(空响应)，停止`, 'YELLOW');
         break;
       }
     } catch (e) {
-      log(`🔁 分享 ${i}/5 次 -> ${e.message}`, 'YELLOW');
+      log(`📖 浏览/分享 ${i}/5 次 -> ${e.message}`, 'YELLOW');
     }
     await delay(1200);
   }
 
-  // 6. 最终积分
+  // 5. 最终积分
   try {
     const u = await request('GET', '/integral/user', token);
     if (u.json && u.json.code === 200) res.integral = u.json.data.integral;
@@ -227,19 +197,50 @@ async function runAccount(openid, idx) {
   return res;
 }
 
-function push(title, content) {
-  return new Promise(resolve => {
-    const tk = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || '';
-    if (!tk) { log('⚠️ 未配置推送 token', 'YELLOW'); return resolve(); }
-    const body = JSON.stringify({ token: tk, title, content, template: 'txt' });
-    const req = https.request({ hostname: 'www.pushplus.plus', port: 443, path: '/send', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, rejectUnauthorized: false, timeout: 10000 },
-      res => { res.on('data', () => {}); res.on('end', () => { log('✅ 推送已发送', 'CYAN'); resolve(); }); });
-    req.on('error', () => { log('⚠️ 推送失败', 'YELLOW'); resolve(); });
-    req.write(body);
-    req.end();
-  });
+
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '益起欢乐走签到';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 (async () => {
   log('🔔 益起欢乐走,开始');
@@ -256,11 +257,28 @@ function push(title, content) {
   const lines = results.map(r =>
     `【${r.tag}】\n` +
     `签到: ${r.sign}\n` +
-    `浏览: ${r.browseCount}/2 次\n` +
-    `分享: ${r.shareCount}/5 次 +${r.shareGain}分\n` +
+    `浏览/分享: ${r.readCount}次 +${r.readGain}分\n` +
     `当前积分: ${r.integral ?? '?'}` + (r.errors.length ? `\n异常: ${r.errors.join('; ')}` : '')
   );
   console.log(lines.join('\n\n'));
-  await push('益起欢乐走签到', lines.join('\n\n'));
+
+  // 经 std_report 双引擎推送 (钉钉)，字段对齐谷雨模板
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const rp = _rpGet(i + 1);
+    let signTxt;
+    if (r.sign && r.sign.includes('登录失败')) signTxt = '登录失败';
+    else if (r.sign && r.sign.includes('今日已签到')) signTxt = '今日已签到';
+    else if (r.sign && r.sign.startsWith('签到成功')) signTxt = '签到成功';
+    else signTxt = r.sign || '未知';
+    rp.sign = signTxt;
+    if (r.signPts != null) rp.earned = `+${r.signPts}分`;
+    if (r.integral != null) rp.total = String(r.integral);
+    rp.streak = "";
+    if (r.readCount > 0) rp.tasks = `浏览/分享${r.readCount}次`;
+    rp.lottery = "";
+    if (r.readGain > 0) rp.taskEarned = `浏览+${r.readGain}分`;
+  }
+  await flushLogPoints("益起欢乐走签到");
   log('🔔 益起欢乐走,结束');
 })().catch(e => { console.error('FATAL:', e); process.exit(1); });

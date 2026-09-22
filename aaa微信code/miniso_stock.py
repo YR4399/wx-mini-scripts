@@ -1,14 +1,21 @@
 """
 名创优品积分商城 - 库存更新提醒
-监控兑换实物商品库存，有补货时 PushPlus 推送提醒
+监控兑换实物商品库存，有补货时 std_report(钉钉) 推送提醒
 通过 WCS 自动获取登录态，无需手动抓包
 支持 code 缓存，code 失效时自动刷新
+
+【2026-09-17 改】默认**单次运行**（查一轮即退出），由面板 cron 每 20 分钟拉起一次
+（cron 已改为 5,25,45 8-22 * * *）。旧版默认 while True 常驻，叠加面板 timeout=0
+（永不超时）会永久占用并发槽位：实测 9/15 08:45 起连续占用 57.5 小时，直到容器重启
+才被清理，期间把后面的任务全部堵在队列里。
 
 环境变量：
   wx_server_url / wx_auth - WCS 服务配置
   wx_opinion / wx_opinion - WCS openid
-  PLUSPLUS_TOKEN - PushPlus 推送 token
-  MINISO_INTERVAL - 检查间隔秒数（默认 1200，即 20 分钟）
+  MINISO_INTERVAL - 持续监控模式的检查间隔秒数（默认 1200，即 20 分钟）
+  MINISO_LOOP    - 置 true 或命令行加 --loop，才进入持续监控模式（仅供前台调试）
+  MINISO_MAX_SECONDS - 持续监控模式最长运行秒数（默认 3600，兜底防挂死）
+  （推送经 std_report 双引擎，无需配置推送 token）
 """
 import os
 import sys
@@ -59,27 +66,29 @@ def md5(s):
     return hashlib.md5(s.encode()).hexdigest()
 
 
+def open_with_retry(req, timeout=15, retries=2):
+    """urllib 请求带退避重试。
+
+    容器→名创接口的 TLS 握手偶发抖动（handshake operation timed out /
+    Name or service not known / 连接被重置）在日志里表现为单次失败，
+    重试一次基本都能通，避免把瞬时故障记成"检查失败"。
+    """
+    last = None
+    for i in range(retries + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout, context=CTX)
+        except Exception as e:
+            last = e
+            if i >= retries:
+                break
+            wait = (i + 1) * 2
+            log(f"请求异常({e})，{wait}s 后重试 {i + 1}/{retries}")
+            time.sleep(wait)
+    raise last
+
+
 # ========== 推送 ==========
-def push(title, content):
-    token = os.getenv("PLUSPLUS_TOKEN", "")
-    if not token:
-        log("未配置 PLUSPLUS_TOKEN，跳过推送")
-        return
-    try:
-        body = json.dumps({
-            "token": token, "title": title,
-            "content": content, "template": "txt"
-        }).encode()
-        req = urllib.request.Request("http://www.pushplus.plus/send", data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        resp = urllib.request.urlopen(req, timeout=15, context=CTX)
-        r = json.loads(resp.read())
-        if r.get("code") == 200:
-            log("PushPlus 推送成功")
-        else:
-            log(f"PushPlus 推送失败: {r.get('msg', '')}")
-    except Exception as e:
-        log(f"推送异常: {e}")
+from std_report import send_push
 
 
 # ========== Code 缓存 ==========
@@ -136,7 +145,7 @@ def fetch_code_from_wcs():
         req = urllib.request.Request(f"{WCS_URL}/wx/code", data=body, method="POST")
         req.add_header("AUTH", WCS_AUTH)
         req.add_header("Content-Type", "application/json")
-        resp = urllib.request.urlopen(req, timeout=15, context=CTX)
+        resp = open_with_retry(req, 15)
         result = json.loads(resp.read())
         code = result.get("data", {}).get("code", "")
         if not code:
@@ -178,7 +187,7 @@ def get_user_info():
         req.add_header("nonce", nonce)
         req.add_header("signature", md5(nonce + ts))
         req.add_header("time", ts)
-        resp = urllib.request.urlopen(req, timeout=15, context=CTX)
+        resp = open_with_retry(req, 15)
         result = json.loads(resp.read())
         data = result.get("data", {})
         if not data.get("uid"):
@@ -220,7 +229,7 @@ def get_user_info():
                 req.add_header("nonce", nonce)
                 req.add_header("signature", md5(nonce + ts))
                 req.add_header("time", ts)
-                resp = urllib.request.urlopen(req, timeout=15, context=CTX)
+                resp = open_with_retry(req, 15)
                 result = json.loads(resp.read())
                 data = result.get("data", {})
                 if not data.get("uid"):
@@ -301,7 +310,7 @@ def fetch_stock(user_info, page=0, page_size=12):
     for k, v in get_headers(user_info["uid"], user_info["openId"], user_info["unionId"]).items():
         req.add_header(k, v)
 
-    resp = urllib.request.urlopen(req, timeout=15, context=CTX)
+    resp = open_with_retry(req, 15)
     data = json.loads(resp.read())
 
     if not data.get("success"):
@@ -310,11 +319,11 @@ def fetch_stock(user_info, page=0, page_size=12):
     return data.get("data", {}).get("exchanges", []), data.get("data", {}).get("hasNextPage", False)
 
 
-def fetch_all_stock(user_info):
-    """获取所有实物商品"""
+def fetch_all_stock(user_info, max_pages=20):
+    """获取所有实物商品（分页上限兜底，防止服务端 hasNextPage 恒真导致死循环）"""
     all_items = []
     page = 0
-    while True:
+    while page < max_pages:
         items, has_next = fetch_stock(user_info, page)
         all_items.extend(items)
         if not has_next:
@@ -392,13 +401,13 @@ def check_once():
         msg = "名创优品积分商城补货提醒\n\n" + "\n".join(restocked)
         msg += chr(10) + chr(10) + "点击进入兑换页面:" + chr(10) + exchange_url
         log(f"发现补货: {len(restocked)} 个商品")
-        push("名创优品补货提醒", msg)
+        send_push("名创优品补货提醒", msg)
 
     if new_items:
         msg = "名创优品新增兑换商品（有货）\n\n" + "\n".join(new_items)
         msg += chr(10) + chr(10) + "点击进入兑换页面:" + chr(10) + "https://mp.miniso.com/pages-v2/member/pointsMall/index"
         log(f"发现有货新品: {len(new_items)} 个，推送通知")
-        push("名创优品新商品上架", msg)
+        send_push("名创优品新商品上架", msg)
 
     if silent_new_items:
         log(f"静默记录 {len(silent_new_items)} 个无货新品（不推送）: {', '.join(silent_new_items[:5])}{'...' if len(silent_new_items) > 5 else ''}")
@@ -412,20 +421,27 @@ def main():
         log("未配置 wx_server_url，无法获取微信 code")
         sys.exit(1)
 
-    # 单次运行模式
-    if len(sys.argv) > 1 and sys.argv[1] == "--once":
+    # 2026-09-17 改：默认单次运行（查一轮即退出），由面板 cron 每 20 分钟拉起
+    loop = ("--loop" in sys.argv) or os.getenv("MINISO_LOOP", "").lower() == "true"
+    if not loop:
+        log("单次运行模式（面板 cron 每 20 分钟拉起一次；持续监控请加 --loop）")
         check_once()
         return
 
-    # 持续监控模式
-    log(f"监控间隔: {INTERVAL} 秒")
-    while True:
+    # 持续监控模式（仅供手工前台调试，带最长运行时间兜底，避免霸占面板槽位）
+    max_seconds = int(os.getenv("MINISO_MAX_SECONDS", "3600"))
+    log(f"持续监控模式: 间隔 {INTERVAL} 秒，最长运行 {max_seconds} 秒")
+    t0 = time.time()
+    while time.time() - t0 < max_seconds:
         try:
             check_once()
         except Exception as e:
             log(f"检查异常: {e}")
+        if time.time() - t0 + INTERVAL >= max_seconds:
+            break
         log(f"等待 {INTERVAL} 秒后下次检查...")
         time.sleep(INTERVAL)
+    log(f"已达最长运行 {max_seconds} 秒，退出（避免长期占用面板并发槽位）")
 
 
 if __name__ == "__main__":

@@ -37,6 +37,7 @@ import hashlib
 import logging
 import requests
 from datetime import datetime
+from std_report import report
 
 # -----------------------------------------------------------------------
 # 日志配置
@@ -501,11 +502,11 @@ def login_manual():
 # 业务逻辑
 # -----------------------------------------------------------------------
 def run_sign(client):
-    """执行每日签到"""
+    """执行每日签到，返回 (签到是否成功, 当前总积分)"""
     info = client.get_sign_info()
     if not info:
         log.error("获取签到信息失败")
-        return False
+        return False, 0
 
     sign_status = info.get("data", {}).get("signStatus")
     total_point = info.get("data", {}).get("memberDetail", {}).get("totalPoint", 0)
@@ -513,7 +514,7 @@ def run_sign(client):
 
     if sign_status == 1:
         log.info("今日已签到, 跳过")
-        return True
+        return True, total_point
 
     result = client.sign()
     if result:
@@ -521,12 +522,12 @@ def run_sign(client):
         log.info(f"签到结果: code={code}, msg={result.get('msg')}")
         if str(code) == "200":
             log.info("签到成功")
-            return True
+            return True, total_point
         else:
             log.warning(f"签到可能失败: {result}")
     else:
         log.error("签到请求失败")
-    return False
+    return False, total_point
 
 
 def run_browse_task(client, task, wait_time=15):
@@ -612,13 +613,13 @@ def run_account(token, account_info):
     log.info(f"=== {display} ===")
     
     # 签到
-    signed = run_sign(client)
+    signed, total = run_sign(client)
     time.sleep(random.randint(3, 8))
-    
+
     # 浏览任务
     done, failed, points = run_all_tasks(client)
-    
-    return {"name": display, "signed": signed, "done": done, "failed": failed, "points": points}
+
+    return {"name": display, "signed": signed, "total": total, "done": done, "failed": failed, "points": points}
 
 
 def main():
@@ -658,34 +659,27 @@ def main():
         sys.exit(1)
 
     # 汇总并推送
-    lines = []
-    for r in results:
-        name = r.get("name", "")[:6]
-        s = "✅" if r.get("signed") else "❌"
-        lines.append(f"{name} 签到{s} 任务{r['done']}个 +{r['points']}分")
-    summary = "\n".join(lines)
-    log.info(summary)
-    _push("星妈会 签到结果", summary)
-
-
-def _push(title, content):
-    """PushPlus 推送"""
-    try:
-        token = os.getenv("PLUSPLUS_TOKEN") or os.getenv("PUSH_PLUS_TOKEN", "")
-        if not token or not content:
-            return
-        import json as _j, urllib.request as _u
-        data = _j.dumps({"token": token, "title": title, "content": content, "template": "txt"}).encode()
-        req = _u.Request("http://www.pushplus.plus/send", data=data,
-            headers={"Content-Type": "application/json"}, method="POST")
-        with _u.urlopen(req, timeout=10) as r:
-            resp = _j.loads(r.read())
-            if resp.get("code") == 200:
-                log.info("推送成功")
-            else:
-                log.info(f"推送失败: {resp.get('msg','')}")
-    except Exception as e:
-        log.info(f"推送异常: {e}")
+    _rows = []
+    for _i, r in enumerate(results):
+        name = r.get("name", "")
+        sign_txt = r.get("error") or ("签到成功" if r.get("signed") else "签到失败")
+        pts = r.get("points", 0)
+        earned = f"任务获得{pts}分" if pts else None
+        total = r.get("total", 0)
+        done = r.get("done", 0)
+        task_earned = f"完成{done}个任务" if done else None
+        _rows.append({
+            "idx": _i + 1,
+            "name": name,
+            "sign": sign_txt,
+            "earned": earned,
+            "total": total if total else None,
+            "streak": None,
+            "tasks": None,
+            "lottery": None,
+            "taskEarned": task_earned,
+        })
+    report("星妈会签到", _rows)
 
 
 if __name__ == "__main__":

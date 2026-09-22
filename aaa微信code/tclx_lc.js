@@ -23,6 +23,7 @@ const axios = require("axios");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const { report } = require("./std_report");
 
 const CK_NAME = "tclx_lc";
 const APP = { name: "同程旅行里程签到", appid: "wx336dcaf6a1ecf632" };
@@ -86,6 +87,7 @@ async function validateCachedToken(sectoken, openId) {
 
 // ====== 推送 / 日志装饰工具 ======
 const TC_SUMMARY = []; // 收集每个账号里程，用于结尾汇总
+const TC_ROWS = [];    // 收集每个账号结构化推送数据（接入 std_report）
 function maskOpenid(o) {
     if (!o) return "?";
     return o.length > 12 ? o.slice(0, 8) + "…" + o.slice(-4) : o;
@@ -103,36 +105,33 @@ const TC_ICON = {
 };
 // 四风判词（结尾装饰语，可随意替换）
 const TC_JUDGE = "他对错你我看也不透，百样苦自有百样人受。";
-// openid -> 昵称映射（用于汇总表展示，可自行增删）
-const TC_NICK = {
-    "oLvh-0ydiGAnlYBAVXbouPVAxXN4": "陌白",
-    "oLvh-06JSe-78wETfzEs0o0cPAJU": "陌白白",
-    "oLvh-07UPzQLJuCGIanokS7cdggM": "ww",
-};
-function nickOf(openid) { return TC_NICK[openid] || ""; }
-const WX_SERVER_URL = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/$/, "");
-const WX_AUTH = process.env.wx_auth || "";
+// 账号全部来自环境变量 wx_opinion (见下方 DEFAULT_OPENID)，不再写死 openid
+const TC_NICK = {};
+function nickOf(openid) { return openid ? openid.slice(-6) : ""; }
+const wx_server_url = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/$/, "");
+const wx_auth = process.env.wx_auth || "";
 // WCS 会话鉴权缓存：面板 wx_auth 通常是 smallcat-client 的会话 token；
 // 若失效(401)，自动用控制台账号密码(/api/client/login)刷新一次。
 let _wcsAuth = null;
-function getWcsAuth() { return _wcsAuth || WX_AUTH || ""; }
+function getWcsAuth() { return _wcsAuth || wx_auth || ""; }
 async function refreshWcsAuth() {
     try {
         const user = process.env.WCS_CONSOLE_USER || "yr1314";
         const pwd = process.env.WCS_CONSOLE_PWD || "yr123123";
-        const r = await request({ method: "POST", url: `${WX_SERVER_URL}/api/client/login`, headers: { "content-type": "application/json" }, data: { username: user, password: pwd } });
+        const r = await request({ method: "POST", url: `${wx_server_url}/api/client/login`, headers: { "content-type": "application/json" }, data: { username: user, password: pwd } });
         const auth = r.data?.data?.auth;
         if (auth) { _wcsAuth = auth; return auth; }
     } catch (e) {}
-    return WX_AUTH || "";
+    return wx_auth || "";
 }
-const DEFAULT_OPENID = process.env.wx_openid || "";
+const DEFAULT_OPENID = process.env.wx_opinion || "";
 const ENABLE_GUAFEN = (process.env.TCLX_LC_GUAFEN || "true") === "true";
 const ENABLE_HEAT_ESCAPE = (process.env.TCLX_LC_HEAT_ESCAPE ?? "true") === "true";
 const ENABLE_TRAVEL_FACT = (process.env.TCLX_LC_TRAVEL_FACT ?? "true") === "true";
 const ENABLE_CASH_SCRATCH = (process.env.TCLX_LC_CASH_SCRATCH ?? "true") === "true";
 const ENABLE_FLOWER_GOD = (process.env.TCLX_LC_FLOWER_GOD ?? "true") === "true";
 const ENABLE_TRAIN_LOTTERY = (process.env.TCLX_LC_TRAIN_LOTTERY ?? "true") === "true";
+const ENABLE_DAILY_CHECK = (process.env.TCLX_LC_DAILY_CHECK ?? "true") === "true";
 const USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
@@ -190,11 +189,11 @@ async function request(options, _attempt = 1) {
 }
 
 async function getWxCode(appid, openid) {
-    if (!WX_AUTH) throw new Error("未配置 wx_auth");
+    if (!wx_auth) throw new Error("未配置 wx_auth");
     const { status, data } = await request({
         method: "POST",
-        url: `${WX_SERVER_URL}/wx/code`,
-        headers: { auth: WX_AUTH, "content-type": "application/json" },
+        url: `${wx_server_url}/wx/code`,
+        headers: { auth: wx_auth, "content-type": "application/json" },
         data: { appid, openid },
     });
     const code = data?.code || data?.data?.code || data?.phoneCode || data?.data?.phoneCode;
@@ -274,6 +273,42 @@ async function dtChat(sectoken, unionId, subChannel, query) {
         }));
         req.end();
     });
+}
+
+// ====== 周周打卡瓜分现金 H5 活动（signInCash）请求封装 ======
+// 活动页: https://wx.17u.cn/cvgzt/20260819dailyCheckIn/index
+// 接口域: https://cvg.17usoft.com/activity/signInCash{path}  成功码: code===1000（注意非 0/200）
+// 接口: getIndexInfo / signIn / makeup / getTaskInfo / completeTask / claimTaskReward / draw / help
+//
+// 【身份机制·逆向结论 2026-08-28】该活动用的是「微信网页 OAuth 一次性 code」：
+//   app.js 的 getAuth(module 2872) 在无缓存时会 location.replace 跳微信授权，
+//   回跳 URL 带 ?code=xxx；q.openId = userInfo.code(即该 OAuth code)，q.unionId = unionid。
+//   后端用 code 换真实用户，静态/过期 code 一律返回 2018「客户信息不存在」。
+//   这与飞儿萌(tclx_fly_sign.js 用稳定 memberId)是两套不同身份体系，openid 不可互用。
+//   => 此任务【无法用 WCS / 静态抓包做定时自动化】。只能「每次现抓新鲜 code 当天跑一次」。
+// 【如何现抓】真机/模拟器微信打开活动 -> 开发者工具 Network 找 cvg.17usoft.com/activity/signInCash/getIndexInfo
+//   请求 body 里的 idenId(=回跳URL的?code=) 与 unionId 复制出来，立刻(几分钟内)填下面两个变量运行。
+//   多账号需各自现抓（code 一次性）。
+const DAILY_ACT_ID = "c60c3ca52ec79260203998db4578c913";
+const DAILY_IDENID = process.env.TCLX_LC_DAILY_IDENID || "";
+const DAILY_UNIONID = process.env.TCLX_LC_DAILY_UNIONID || "";
+const DAILY_COOKIE = process.env.TCLX_LC_DAILY_COOKIE || "";
+const DAILY_REFID = process.env.TCLX_LC_DAILY_REFID || "";
+async function dailyApi(path, body = {}) {
+    const r = await request({
+        method: "POST",
+        url: `https://cvg.17usoft.com/activity/signInCash${path}`,
+        headers: {
+            "Content-Type": "application/json",
+            Referer: "https://wx.17u.cn/cvgzt/20260819dailyCheckIn/index",
+            ...(DAILY_COOKIE ? { cookie: DAILY_COOKIE } : {}),
+        },
+        data: { actId: DAILY_ACT_ID, unionId: DAILY_UNIONID, idenId: DAILY_IDENID, ...body },
+        proxy: false,
+        validateStatus: () => true,
+        timeout: 20000,
+    });
+    return r.data || {};
 }
 
 class Tongcheng {
@@ -488,7 +523,7 @@ class Tongcheng {
             // 轻量校验缓存 token 是否仍然有效
             const valid = await validateCachedToken(cached.sectoken, cached.openId || this.openid);
             if (!valid) {
-                L.fail("缓存token失效，重新登录");
+                L.warn("缓存token失效，重新登录");
                 return this._doLogin();
             }
             return `openId=${cached.openId} memberId=${cached.memberId || ""} (缓存)`;
@@ -905,8 +940,8 @@ class Tongcheng {
     async getWebOauthCode(redirect) {
         const data = { openid: this.openid, appid: "wx3827070276e49e30", scope: "snsapi_userinfo", state: "99", redirect_uri: redirect };
         let auth = getWcsAuth();
-        let r = await request({ method: "POST", url: `${WX_SERVER_URL}/wx/oauth`, headers: { auth, "content-type": "application/json" }, data });
-        if (r.status === 401) { auth = await refreshWcsAuth(); r = await request({ method: "POST", url: `${WX_SERVER_URL}/wx/oauth`, headers: { auth, "content-type": "application/json" }, data }); }
+        let r = await request({ method: "POST", url: `${wx_server_url}/wx/oauth`, headers: { auth, "content-type": "application/json" }, data });
+        if (r.status === 401) { auth = await refreshWcsAuth(); r = await request({ method: "POST", url: `${wx_server_url}/wx/oauth`, headers: { auth, "content-type": "application/json" }, data }); }
         if (r.status !== 200 || !r.data?.data?.code) throw new Error(`网页授权失败 HTTP ${r.status}: ${short(r.data)}`);
         return r.data.data.code;
     }
@@ -984,6 +1019,46 @@ class Tongcheng {
             return `火车票抽奖码异常: ${e.message || e}`;
         }
     }
+
+    // ====== 周周打卡瓜分现金（H5 活动 signInCash）======
+    // 注意：身份是一次性 OAuth code，仅当天现抓现跑有效。详见文件顶部 DAILY_* 注释。
+    async dailyCheckIn() {
+        if (!DAILY_IDENID || !DAILY_UNIONID) {
+            return "周周打卡: 未配置身份(需现抓 OAuth code 填 TCLX_LC_DAILY_IDENID / TCLX_LC_DAILY_UNIONID，见文件顶部说明)";
+        }
+        const log = [];
+        try {
+            const idx = await dailyApi("/getIndexInfo", DAILY_REFID ? { refId: DAILY_REFID } : {});
+            L.info("    周周打卡 getIndexInfo: code=" + idx.code + " " + short(idx, 400));
+            if (Number(idx.code) !== 1000) return `周周打卡-首页失败 code=${idx.code} ${idx.message || ""}`;
+            const info = idx.data || {};
+            // 首跑以信息收集为主：直接尝试打卡（已打卡后端会返回非1000，安全记录）
+            const sign = await dailyApi("/signIn");
+            log.push(Number(sign.code) === 1000 ? "打卡✅" : `打卡(已打卡/失败 code=${sign.code})`);
+            const ti = await dailyApi("/getTaskInfo");
+            if (Number(ti.code) === 1000) {
+                const tasks = ti.data?.taskList || ti.data?.list || ti.data?.tasks || [];
+                L.info("    周周打卡 任务数=" + tasks.length);
+                for (const t of tasks) {
+                    if (t.status === 0 && t.taskRecordId) {
+                        const ct = await dailyApi("/completeTask", { taskType: t.taskType });
+                        if (Number(ct.code) === 1000) {
+                            const cr = await dailyApi("/claimTaskReward", { taskRecordId: t.taskRecordId });
+                            if (Number(cr.code) === 1000) log.push("任务✅" + (t.title || t.taskType || ""));
+                        }
+                    }
+                }
+            } else {
+                log.push("任务查询(code=" + ti.code + ")");
+            }
+            const draw = await dailyApi("/draw");
+            if (Number(draw.code) === 1000) log.push("瓜分抽奖✅");
+            else if (draw.code) log.push("抽奖(code=" + draw.code + ")");
+            return "周周打卡: " + (log.join("; ") || "无操作");
+        } catch (e) {
+            return "周周打卡异常: " + (e.message || e);
+        }
+    }
 }
 
 async function runAccount(openid, index, total) {
@@ -997,7 +1072,10 @@ async function runAccount(openid, index, total) {
         const mileage = (q.match(/remainMileageTitle":(\d+)/) || q.match(/里程=(\d+)/) || [])[1] || "?";
         TC_SUMMARY.push({ index, openid, mileage });
         L.info("" + TC_ICON.query + " 查询：" + q + "");
-        L.info("" + TC_ICON.sign + " 签到：" + await runner.sign() + "");
+        const _signTxt = await runner.sign();
+        L.info("" + TC_ICON.sign + " 签到：" + _signTxt + "");
+        const _streak = (_signTxt.match(/连续=(\d+)天/) || [])[1] || null;
+        TC_ROWS.push({ index, openid, mileage, sign: _signTxt, streak: _streak });
         if (ENABLE_GUAFEN) {
             L.info("" + TC_ICON.share + " 里程分享：" + await runner.mileageSign() + "");
             L.info("" + TC_ICON.task + " 任务：" + await runner.doTasks() + "");
@@ -1036,6 +1114,11 @@ async function runAccount(openid, index, total) {
         } else {
             L.info("" + TC_ICON.skip + " 花神抽签：已跳过 (TCLX_LC_FLOWER_GOD=false)");
         }
+        if (ENABLE_DAILY_CHECK) {
+            L.info("" + TC_ICON.sign + " 周周打卡：" + await runner.dailyCheckIn() + "");
+        } else {
+            L.info("" + TC_ICON.skip + " 周周打卡：已跳过 (TCLX_LC_DAILY_CHECK=false)");
+        }
     } catch (e) {
         L.fail("执行失败：" + e.message || e + "");
     }
@@ -1071,6 +1154,24 @@ async function runAccount(openid, index, total) {
         L.info("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
     }
     L.info("\n🌸 判词｜" + TC_JUDGE + "");
+    try {
+        if (report && TC_ROWS.length) {
+            const _rows = TC_ROWS.map(function (s) {
+                return {
+                    idx: s.index,
+                    name: nickOf(s.openid) || null,
+                    sign: s.sign || null,
+                    earned: null,
+                    total: (s.mileage != null && s.mileage !== "?" ? String(s.mileage) : null),
+                    streak: s.streak || null,
+                    tasks: null,
+                    lottery: null,
+                    taskEarned: null
+                };
+            });
+            await report('同程旅行里程签到', _rows);
+        }
+    } catch (e) {}
     await $.done();
 })().catch(async (e) => {
     L.fail("脚本异常：" + e.stack || e.message || e + "");

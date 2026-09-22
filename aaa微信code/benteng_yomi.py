@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 # -*- coding: utf-8 -*-
 """
 奔腾YOMI Python版
@@ -9,6 +10,7 @@ import os
 import sys
 import json
 import time
+from std_report import report
 import random
 import hashlib
 import requests
@@ -1002,6 +1004,7 @@ class UserInfo(BasicClass):
             await self.userInfo()
             if self.point:
                 self.log(f"获取用户信息成功，积分: {self.point}, 成长值: {self.growthValue}")
+                self._point_before = int(self.point) if self.point else 0
 
             
             self.log(f"\n******* 【账号{self.userIdx}】{self.nickName or ''} ******* ", 
@@ -1027,16 +1030,32 @@ class UserInfo(BasicClass):
             print(f"userTask异常: {e}")
 
     async def collect_points_info(self):
-        """收集账号积分信息"""
+        """收集账号积分信息（含签到状态与今日获得）"""
+        earned = None
+        _before = getattr(self, "_point_before", None)
+        if _before is not None and self.point:
+            try:
+                earned = int(self.point) - _before
+            except Exception:
+                earned = None
         if not self.logged_in:
-            return None
+            return {
+                'phone': self.phone,
+                'points': 0,
+                'nickName': self.nickName,
+                'userIdx': self.userIdx,
+                'sign': '登录失败',
+                'earned': None,
+            }
         await self.userInfo()
         if self.point:
             return {
                 'phone': self.phone,
                 'points': int(self.point) if self.point else 0,  # 🔴 确保转换为整数
                 'nickName': self.nickName,
-                'userIdx': self.userIdx
+                'userIdx': self.userIdx,
+                'sign': '已完成',
+                'earned': earned,
             }
         return None
 
@@ -1075,7 +1094,31 @@ async def main():
 
     # 🔴 所有账号执行完后，导出高积分账号
     env.export_high_points_accounts(all_accounts_points)
-    
+
+    # 构造 std_report 推送 rows
+    _rows = []
+    for p in all_accounts_points:
+        ph = str(p.get('phone', '') or '')
+        if p.get('nickName'):
+            _name = p['nickName']
+        elif len(ph) >= 7:
+            _name = ph[:3] + '****' + ph[-4:]
+        else:
+            _name = ph or f"账号{p.get('userIdx', '?')}"
+        _rows.append({
+            "idx": p.get('userIdx'),
+            "name": _name,
+            "sign": p.get('sign', '已完成'),
+            "earned": f"+{p['earned']}分" if p.get('earned') else None,
+            "total": p.get('points'),
+            "streak": None,
+            "tasks": None,
+            "lottery": None,
+            "taskEarned": None,
+        })
+    if _rows:
+        report("奔腾YOMI每日任务", _rows)
+
     elapsed = time.time() - env.startTime
     env.log(f"\n[奔腾YOMI], 结束! 🕛 {elapsed:.2f} 秒", time=True, prefixless=True)
 

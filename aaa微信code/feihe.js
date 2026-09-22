@@ -1,6 +1,9 @@
-// ========== 推送通知 ==========
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -20,15 +23,6 @@ const axios = require("axios");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx4205ec55b793245e";
 const API_BASE = "https://www.feihevip.com";
@@ -38,7 +32,7 @@ const SIGN_TASK_TYPE = "DJSYQD";
 const TOKEN_CACHE_FILE = path.join(__dirname, "feihe_token_cache.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "feihe";
 
 function readCache() {
     try {
@@ -115,7 +109,9 @@ function buildUrl(apiPath, query = {}) {
 class Task {
     constructor(account) {
         this.index = $.userIdx++;
-        this.account = String(account || "").trim();
+        const _a = String(account || "").trim().split("#");
+        this.account = _a[0].trim();
+        this.remark = (_a[1] || "").trim();
         this.token = "";
         this.userInfo = {};
     }
@@ -137,6 +133,7 @@ class Task {
         }
         if (!this.token) return;
 
+        if (this.remark) _setName(this.index, this.remark);
         await this.getIndexInfo();
         await this.signIn();
     }
@@ -189,7 +186,7 @@ class Task {
         if (!wxServerUrl || !wxAuth) throw new Error("未配置 wx_server_url 或 wx_auth");
 
         const { status, data } = await axios.post(
-            `${wxServerUrl.replace(/\/$/, "")}/wx/code`,
+            `${wxServerUrl.replace(/\/$/, "")}/wx/getuserinfo`,
             { appid: MINI_APP_ID, openid: this.account },
             {
                 headers: {
@@ -275,17 +272,97 @@ class Task {
             allowFail: true,
         });
         if (String(complete?.code) === "200") {
-            const points = complete.data?.awardSendPoints || complete.data?.awardPoint || "";
+            const points = complete.data?.awardSendPoints || complete.data?.awardPoint || 0;
             $.log(`账号[${this.index}] 签到完成${points ? `，获得${points}积分` : ""}`);
+            const done = String(finish?.code) === "200" && finish.data === true;
+            const _ep = Object.assign({}, extractPoints(finish) || {}, extractPoints(complete) || {});
+            if (_ep.total != null) _rpGet(this.index).total = String(_ep.total);
+            if (_ep.streak != null) _rpGet(this.index).streak = String(_ep.streak);
+            const _lot = _digLottery(finish) || _digLottery(complete);
+            if (_lot) _setLottery(this.index, _lot);
+            _setSign(this.index, done ? "签到成功" : "今日已签到", points ? `今日+${points}积分` : null, _ep.total != null ? String(_ep.total) : null);
         } else if (complete?.msg) {
             $.log(`账号[${this.index}] 完成确认返回: ${complete.msg}`);
+            _setSign(this.index, "签到失败", null, null);
         }
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "飞鹤微信小程序签到";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k];
+        const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc);
+        else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj;
+    return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k];
+    if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v);
+    if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
     if (!$.userCount) return;
 

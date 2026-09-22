@@ -3,6 +3,7 @@ const { sendPushNotify } = require("./_push_helper");
 // ========== 推送通知结束 ==========
 
 const fs = require('fs');
+const { push } = require("./_universal_push");
 const path = require('path');
 const axios = require("axios");
 const qs = require('querystring');
@@ -14,11 +15,9 @@ delete process.env.http_proxy;
 delete process.env.https_proxy;
 
 // ===================== 配置项 =====================
-// PushPlus 通知Token（青龙环境变量）
-const PLUSPLUS_TOKEN = process.env.PLUSPLUS_TOKEN || "";
 // 多端口服务器列表
-const WX_SERVER_URL = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/+$/, "");
-const WX_AUTH = process.env.wx_auth || "";
+const wx_server_url = (process.env.wx_server_url || "http://host.docker.internal:18788").replace(/\/+$/, "");
+const wx_auth = process.env.wx_auth || "";
 const CK_NAME = "wx_opinion";
 // 品赞代理配置（青龙环境变量）
 const PROXY_API = process.env.PROXY_API || ""; // 代理提取API链接
@@ -199,20 +198,11 @@ function addProxyToAxiosConfig(axiosConfig, proxyAgent) {
     };
 }
 
-// ===================== PushPlus通知函数 =====================
-async function sendPlusPlusNotification(title, content) {
-    if (!PLUSPLUS_TOKEN) return;
-    try {
-        await axios.post("https://www.pushplus.plus/send", {
-            token: PLUSPLUS_TOKEN,
-            title: title,
-            content: content,
-            template: "txt"
-        }, { timeout: 5000 });
-        console.log("✅ 通知推送成功");
-    } catch (e) {
-        console.log("❌ 通知推送失败：", e.message);
-    }
+async function sendNotification(title, content) {
+  try {
+    const { sendPush } = require("./std_report");
+    return await sendPush(title, content);
+  } catch (e) { console.warn("[push] 失败(忽略):", e.message); }
 }
 
 // ===================== 业务逻辑函数 =====================
@@ -221,11 +211,11 @@ async function getCode(openid) {
     const label = openid.slice(0, 10) + "...";
     console.log(`?? [${label}] ????WCS??code`);
     try {
-        const response = await axios.post(`${WX_SERVER_URL}/wx/code`, {
+        const response = await axios.post(`${wx_server_url}/wx/code`, {
             appid: APPID,
             openid: openid
         }, {
-            headers: { auth: WX_AUTH },
+            headers: { auth: wx_auth },
             timeout: 60000,
             proxy: false
         });
@@ -431,6 +421,7 @@ async function runAccount(openid, globalProxyAgent) {
         if (sign?.code == 200) {
             result.signMsg = `签到成功：${sign.message}`;
             console.log(`✅ [${server}] 签到成功：${sign.message}`);
+    if (typeof logPoints === 'function') logPoints(null, null, "飞蚂蚁旧衣回收", 1, "签到成功") // local accumulation needed;
         } else {
             result.signMsg = `签到失败：${sign?.message || "未知错误"}`;
             console.log(`❌ [${server}] 签到失败：${sign?.message || "未知错误"}`);
@@ -470,6 +461,40 @@ async function runAccount(openid, globalProxyAgent) {
     }
     return result;
 }
+
+
+// ===== 统一积分日志/推送 (自动注入 v2: 仅打印, 脚本自带末次汇总推送) =====
+let _lpApp = '';
+function digPoints(obj) {
+  if (obj == null) return null;
+  const keys = ['point','points','score','scores','integral','growth','coin','beans','bean','balance','addScore','getScore','addPoint','todayScore','signScore','awardScore','awardAmount','awardVipcoinTotal','vipGrow','VipGrow','currentIntegral','changeIntegeral','totalPoint','totalPoints','credit','credits','exp','growthValue','keepScore','signScore'];
+  let found = null;
+  const walk = (o, depth) => {
+    if (found != null || depth > 4 || !o || typeof o !== 'object') return;
+    for (const k of Object.keys(o)) {
+      const lk = k.toLowerCase();
+      if (keys.includes(lk) && (typeof o[k] === 'number' || (typeof o[k] === 'string' && o[k] !== '' && !isNaN(Number(o[k]))))) { found = Number(o[k]); return; }
+      if (typeof o[k] === 'object') walk(o[k], depth + 1);
+      if (found != null) return;
+    }
+  };
+  walk(obj, 0);
+  return found;
+}
+async function doPush(title, content) {
+  try {
+    await require('./std_report').sendPush(title, content);
+  } catch (e) {}
+}
+function logPoints(todayPoints, totalPoints, app, idx) {
+  const tp = Number(todayPoints) || 0;
+  const tot = Number(totalPoints) || 0;
+  const tpStr = tp > 0 ? '今日+' + tp + '积分' : '签到完成';
+  const totStr = tot > 0 ? '累计' + tot + '积分' : '';
+  const line = tpStr + (totStr ? ' | ' + totStr : '');
+  console.log('📊 账号[' + idx + '] ' + app + ': ' + line);
+}
+
 
 // ===================== 主程序 =====================
 (async () => {
@@ -512,6 +537,9 @@ async function runAccount(openid, globalProxyAgent) {
 `;
         }
     });
-    await sendPlusPlusNotification("飞蚂蚁旧衣回收任务完成", notifyContent);
+    await sendNotification("飞蚂蚁旧衣回收任务完成", notifyContent);
     console.log('\n===== 所有账号执行完成 =====');
 })();
+
+// 推送结果
+try { await sendNotification('飞蚂蚁旧衣回收', '签到完成'); } catch(e) {}

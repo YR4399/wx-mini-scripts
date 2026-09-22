@@ -1,8 +1,12 @@
 # cron: 25 10 * * *
+
+
+# ==================== 推送 ====================
+from std_report import report
 # new Env('统一快乐星球茄皇（五期）')
 #
 # code 版环境变量：
-#   wx_openid：WCS 账号标识，多账号用 & 分隔
+#   wx_opinion：WCS 账号标识，多账号用 & 分隔
 #   wx_server_url：WCS 服务地址，默认 https://wc.smallfawn.top
 #   wx_auth：WCS 鉴权
 #
@@ -224,7 +228,7 @@ def split_accounts(raw):
 
 
 def parse_users():
-    return split_accounts(os.getenv("wx_openid", ""))
+    return split_accounts(os.getenv("wx_opinion", ""))
 
 
 def nested_value(data, paths):
@@ -685,7 +689,17 @@ def process_user(client, index, source_tag):
 
     logs.append(f"{ICON['final']} {home_line(home, '最终状态')}")
     logs.append(f"{ICON['summary']} 本次完成任务 {completed} 个，跳过 {skipped} 个")
-    return logs
+    try:
+        gained = int(home.get("gainedTomatoAmount") or 0)
+    except Exception:
+        gained = 0
+    summary = {
+        "nick": login_data.get("nickName") or "",
+        "tomato": int(home.get("tomatoBalance") or 0),
+        "gained": gained,
+        "completed": completed,
+    }
+    return logs, summary
 
 
 def run_single_account(index, wcs_open_id, cache):
@@ -701,9 +715,9 @@ def run_single_account(index, wcs_open_id, cache):
         wid, open_id = cached
         try:
             client = TomatoClient(wid, open_id)
-            logs = process_user(client, index, f"{ICON['cache']} 缓存命中")
+            logs, summary = process_user(client, index, f"{ICON['cache']} 缓存命中")
             put_cached_identity(cache, wcs_open_id, wid, open_id)  # 刷新时间戳
-            return logs
+            return logs, summary
         except Exception as exc:
             print(f"{ICON['refresh']} 账号{index} 缓存 CK 失效（{exc}），回源 WCS 刷新…")
             drop_cached_identity(cache, wcs_open_id)
@@ -712,9 +726,9 @@ def run_single_account(index, wcs_open_id, cache):
     wid, open_id = resolve_identity(wcs_open_id)
     print(f"{ICON['ok']} 账号{index} WCS 回源成功：wid={wid}，openId={short_open_id(open_id)}")
     client = TomatoClient(wid, open_id)
-    logs = process_user(client, index, f"{ICON['refresh']} WCS 回源刷新")
+    logs, summary = process_user(client, index, f"{ICON['refresh']} WCS 回源刷新")
     put_cached_identity(cache, wcs_open_id, wid, open_id)
-    return logs
+    return logs, summary
 
 
 def render_report(all_logs, stats):
@@ -733,7 +747,8 @@ def render_report(all_logs, stats):
 
 def safe_send(title, message):
     try:
-        send(title, message)
+        if report:
+            report(title, [{'name': title, 'sign': message, 'earned': None, 'total': None, 'streak': None, 'tasks': None, 'lottery': None, 'taskEarned': None}])
     except Exception as exc:
         print(f"{ICON['warn']} 通知发送失败（不影响脚本执行结果）：{exc}")
 
@@ -746,7 +761,7 @@ def main():
         safe_send(f"{ICON['app']} {APP_NAME}", message)
         return
     if not users:
-        message = f"{ICON['fail']} 没有可用账号：未读取到 wx_openid 环境变量"
+        message = f"{ICON['fail']} 没有可用账号：未读取到 wx_opinion 环境变量"
         print(message)
         safe_send(f"{ICON['app']} {APP_NAME}", message)
         return
@@ -755,11 +770,13 @@ def main():
     all_logs = []
     stats = {"total": len(users), "ok": 0, "fail": 0, "cache_hit": 0, "refresh": 0}
 
+    _rows = []
     for index, wcs_open_id in enumerate(users, 1):
         print(f"\n{LINE}\n{ICON['app']} 开始处理账号 {index}\n{LINE}")
         had_cache = get_cached_identity(cache, wcs_open_id) is not None
+        _summary = None
         try:
-            logs = run_single_account(index, wcs_open_id, cache)
+            logs, _summary = run_single_account(index, wcs_open_id, cache)
             stats["ok"] += 1
             # 判定最终身份来源（缓存条目仍在且此前命中 = 缓存命中；否则为回源）
             if had_cache and any("缓存命中" in l for l in logs):
@@ -774,13 +791,39 @@ def main():
             ]
         all_logs.append(logs)
         print("\n".join(logs))
+        if _summary:
+            _rows.append({
+                'name': _summary.get('nick') or f'账号{index}',
+                'sign': '任务完成',
+                'earned': (f"获得番茄 {_summary.get('gained')}" if _summary.get('gained') else None),
+                'total': str(_summary.get('tomato')) if _summary.get('tomato') is not None else None,
+                'streak': None,
+                'tasks': (f"完成 {_summary.get('completed')} 个" if _summary.get('completed') else None),
+                'lottery': None,
+                'taskEarned': None,
+            })
+        else:
+            _rows.append({
+                'name': f'账号{index}',
+                'sign': '处理失败',
+                'earned': None,
+                'total': None,
+                'streak': None,
+                'tasks': None,
+                'lottery': None,
+                'taskEarned': None,
+            })
         if index < len(users):
             human_delay("account")
 
     save_cache(cache)
-    report = render_report(all_logs, stats)
-    print(f"\n{report}")
-    safe_send(f"{ICON['app']} {APP_NAME}", report)
+    report_text = render_report(all_logs, stats)
+    print(f"\n{report_text}")
+    try:
+        if report:
+            report(APP_NAME, _rows)
+    except Exception as exc:
+        print(f"{ICON['warn']} 通知发送失败：{exc}")
 
 
 if __name__ == "__main__":

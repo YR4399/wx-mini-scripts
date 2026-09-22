@@ -9,7 +9,7 @@
  *   wx_opinion    - OpenID，多账号用 & 分隔
  *   wx_server_url - WCS 服务地址
  *   wx_auth       - WCS 认证密钥
- *   PUSH_PLUS_TOKEN / PLUSPLUS_TOKEN - PushPlus 推送（可选）
+ *   推送: 已迁移至 std_report 双引擎 (钉钉机器人)
  */
 
 // 清除容器内常驻坏代理
@@ -187,11 +187,51 @@ async function processAccount(openid, idx) {
 }
 
 // ==================== 推送 ====================
-async function sendPush(title, content) {
-  const pk = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
-  if (!pk) return;
-  try { await axios.post("http://www.pushplus.plus/send", { token: pk, title, content }, { proxy: false }); } catch (e) {}
+
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '金至尊珠宝会员签到';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
 
 // ==================== 主入口 ====================
 async function main() {
@@ -215,9 +255,24 @@ async function main() {
   }
 
   const ok = results.filter(r => r.status === "ok").length;
-  await sendPush("金至尊珠宝签到",
-    `共 ${accounts.length} 账号，成功 ${ok} 个\n` +
-    results.map(r => `账号${r.i}: ${r.status === "ok" ? `✅ ${r.msg || ("积分" + (r.integral ?? "-"))}` : `❌ ${r.msg || "失败"}`}`).join("\n"));
+  // 经 std_report 双引擎推送 (钉钉)，字段对齐谷雨模板
+  for (const r of results) {
+    const rp = _rpGet(r.i);
+    if (r.status === "error") {
+      rp.sign = "失败";
+    } else if (r.msg === "已签到") {
+      rp.sign = "今日已签到";
+    } else {
+      rp.sign = "签到成功";
+    }
+    if (r.integral != null) rp.total = String(r.integral);
+    // 金至尊签到接口仅返回 "1" 成功标志，不返回今日获得积分/连签天数，诚实留空
+    rp.earned = "";
+    rp.streak = "";
+    rp.taskEarned = "";
+    rp.lottery = "";
+  }
+  await flushLogPoints("金至尊珠宝签到");
 
   console.log(`\n📊 完成: ${ok}/${accounts.length} 账号`);
   console.log(`🔔 金至尊珠宝,结束`);

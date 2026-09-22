@@ -1,28 +1,27 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
+------------------------------------------
+@Author: sm
+@Date: 2026.05.31
 @Description: CASETiFY 签到
 cron: 46 8 * * *
+------------------------------------------
+变量名：casetify
+变量值：wx_server 里的 openid/账号标识，多账号用 & 或换行
+------------------------------------------
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("CASETiFY 签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wxd0c71d6bf928a416";
 const PAGE_VERSION = "160";
@@ -30,9 +29,29 @@ const API_BASE = "https://mini-app-api.casetify.cn/api/v4";
 const WECHAT_ID = 260;
 const POINT_MALL_TYPE = 13;
 const TOKEN_CACHE_FILE = path.join(__dirname, "casetify_token_cache.json");
+
+// ---------- 本地累计积分（接口无总积分字段，本机向前累计每日签到获得积分）----------
+function _cfReadPoints() {
+    try { if (!fs.existsSync(path.join(__dirname, "casetify_points_cache.json"))) return {}; return JSON.parse(fs.readFileSync(path.join(__dirname, "casetify_points_cache.json"), "utf8")) || {}; } catch (e) { return {}; }
+}
+function _cfWritePoints(c) {
+    try { fs.writeFileSync(path.join(__dirname, "casetify_points_cache.json"), JSON.stringify(c, null, 2), "utf8"); } catch (e) { $.log(`写入积分缓存失败: ${e.message || e}`); }
+}
+function _cfToday() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+function _cfRollDay(openid, cache) {
+    const rec = cache[openid] || (cache[openid] = { hist: 0, gain: 0, date: _cfToday() });
+    if (rec.date !== _cfToday()) { rec.hist = (Number(rec.hist) || 0) + (Number(rec.gain) || 0); rec.gain = 0; rec.date = _cfToday(); }
+    return rec;
+}
+function _cfAddGain(openid, point, cache) {
+    const rec = cache[openid] || (cache[openid] = { hist: 0, gain: 0, date: _cfToday() });
+    rec.gain = (Number(rec.gain) || 0) + (Number(point) || 0);
+    rec.date = _cfToday();
+}
+function _cfCurTotal(openid, cache) { const rec = cache[openid] || { hist: 0, gain: 0 }; return (Number(rec.hist) || 0) + (Number(rec.gain) || 0); }
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "casetify";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -53,7 +72,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e + "");
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -73,9 +92,11 @@ function isTokenError(message) {
 }
 
 class Task {
-    constructor(openid) {
+    constructor(raw) {
+        const _parts = String(raw || "").split("#");
+        this.openid = _parts[0].trim();
+        this.remark = (_parts[1] || "").trim();
         this.index = $.userIdx++;
-        this.openid = String(openid || "").trim();
         this.token = "";
         this.memberId = "";
         this.customerNo = "";
@@ -85,19 +106,24 @@ class Task {
     }
 
     async run() {
+        if (this.remark) _setName(this.index, this.remark);
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            L.info("账号[" + this.index + "] 使用缓存token");
+            $.log(`账号[${this.index}] 使用缓存token`);
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
             }
         }
 
         if (!this.token) {
             await this.loginByWxCode();
             if (!this.token) return;
+        }
+        if (!this.remark) {
+            const _n = this.phone || this.customerNo || this.levels || "";
+            if (_n) _setName(this.index, _n);
         }
 
         await this.getCampaignId();
@@ -198,9 +224,9 @@ class Task {
                 levels: user.levels,
             });
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] 登录成功: " + this.levels || "会员" + " " + this.customerNo || this.memberId || "" + "");
+            $.log(`账号[${this.index}] 登录成功: ${this.levels || "会员"} ${this.customerNo || this.memberId || ""}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e + "");
+            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
         }
     }
 
@@ -222,7 +248,7 @@ class Task {
         if (!campaignId) throw new Error("未找到积分商城活动");
         this.campaignId = campaignId;
         this.saveCachedToken();
-        if (!silent) L.info("账号[" + this.index + "] 积分商城活动: " + campaignId + "");
+        if (!silent) $.log(`账号[${this.index}] 积分商城活动: ${campaignId}`);
         return campaignId;
     }
 
@@ -234,7 +260,7 @@ class Task {
         return result.data || {};
     }
 
-    async doSign(retried = false) {
+    async doSign() {
         try {
             const before = await this.getSignInfo();
             const signDays = Array.isArray(before.signDays) ? before.signDays : [];
@@ -242,61 +268,144 @@ class Task {
             const dailyTask = Array.isArray(before.assignDetail)
                 ? before.assignDetail.find((item) => item.assignmentName && item.assignmentName.includes("单日"))
                 : null;
-            if (todayStatus?.signStatus === 1 || dailyTask?.completeStatus === 1) {
-                L.info("账号[" + this.index + "] 今日已签到");
-                return;
-            }
+            const alreadySigned = todayStatus?.signStatus === 1 || dailyTask?.completeStatus === 1;
 
-            const sign = await this.request("POST", "estore-campaign/member/sign/do", {}, { allowAnyCode: true });
-            if (sign.resultCode !== "1") {
-                const message = sign.msg || JSON.stringify(sign);
-                if (/已签|重复/.test(message)) {
-                    L.info("账号[" + this.index + "] 今日已签到");
-                    return;
+            let after = before;
+            if (!alreadySigned) {
+                const sign = await this.request("POST", "estore-campaign/member/sign/do", {}, { allowAnyCode: true });
+                if (sign.resultCode !== "1") {
+                    const message = sign.msg || JSON.stringify(sign);
+                    if (/已签|重复/.test(message)) {
+                        $.log(`账号[${this.index}] 今日已签到`);
+                    } else {
+                        throw new Error(message);
+                    }
                 }
-                throw new Error(message);
+                after = await this.getSignInfo();
             }
 
-            const after = await this.getSignInfo();
+            // 填充四项推送字段：签到奖励 / 总积分 / 连签 / 抽奖
             const task = Array.isArray(after.assignDetail)
                 ? after.assignDetail.find((item) => item.assignmentName && item.assignmentName.includes("单日"))
                 : null;
-            L.ok("账号[" + this.index + "] 签到成功: +" + task?.awardPrice || "未知" + "积分");
+            // 本地累计：只有当天真正签到成功才累加（alreadySigned 时不重复加）
+            const _pc = _cfReadPoints();
+            _cfRollDay(this.openid, _pc);
+            if (!alreadySigned && task?.awardPrice != null) _cfAddGain(this.openid, task.awardPrice, _pc);
+            const _localTotal = _cfCurTotal(this.openid, _pc);
+            _cfWritePoints(_pc);
+            if (task?.awardPrice != null && task.awardPrice !== "") {
+                logPoints(task.awardPrice, String(_localTotal), "CASETiFY 签到", this.index, "签到成功");
+            } else {
+                logPoints(null, String(_localTotal), "CASETiFY 签到", this.index, "签到成功");
+            }
+            _rpGet(this.index).totalLabel = "累计积分";
+
+            const _ep = extractPoints(after) || {};
+            if (_ep.total != null) _setSign(this.index, null, null, _ep.total);
+            let _streak = _ep.streak != null ? _ep.streak : computeStreak(after.signDays);
+            if (_streak != null && _streak !== "" && _streak !== 0) _rpGet(this.index).streak = _streak;
+            const _lot = _digLottery(after);
+            if (_lot) _setLottery(this.index, _lot);
+
+            $.log(`账号[${this.index}] 签到成功: +${task?.awardPrice || "未知"}积分`);
         } catch (e) {
             const message = e.message || e;
-            L.fail("账号[" + this.index + "] 签到失败: " + message + "");
-            if (isTokenError(message) && !retried) {
-                this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 登录失效，重新登录后重试");
-                await this.loginByWxCode();
-                if (this.token) {
-                    await this.getCampaignId();
-                    return this.doSign(true);
-                }
-            }
+            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = 'CASETiFY';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null || typeof obj !== "object") return "";
+  const hits = [];
+  const keys = ["lottery", "draw", "prize", "raffle", "turntable", "wheel", "转盘", "抽奖", "奖励"];
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        const lk = String(k).toLowerCase();
+        const hit = keys.some((kk) => lk.includes(kk.toLowerCase()));
+        const val = v[k];
+        if (hit && val != null && val !== "" && typeof val !== "object") {
+          hits.push(`${k}=${val}`);
+        }
+        if (typeof val === "object") walk(val, depth + 1);
+      }
+      return;
+    }
+  };
+  walk(obj, 0);
+  return hits.length ? hits.join("｜") : "";
+}
+function computeStreak(signDays) {
+  const arr = (signDays || [])
+    .filter((x) => x && x.signStatus === 1)
+    .map((x) => normalizeDate(x.signDay))
+    .filter((x) => x)
+    .sort();
+  if (!arr.length) return 0;
+  let streak = 0;
+  const d = new Date();
+  for (;;) {
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    if (arr.includes(key)) { streak++; d.setDate(d.getDate() - 1); }
+    else break;
+  }
+  return streak;
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-  sectionLine("CASETiFY", "");
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("CASETiFY 签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());

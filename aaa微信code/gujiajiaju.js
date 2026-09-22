@@ -1,7 +1,9 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
 ------------------------------------------
 @Author: sm
@@ -15,22 +17,12 @@ cron: 41 8 * * *
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("顾家小程序签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx0770280d160f09fe";
 const PAGE_VERSION = "286";
@@ -43,7 +35,7 @@ const VERSION_NUMBER = "2.8.6";
 const TOKEN_CACHE_FILE = path.join(__dirname, "gujiajiaju_token_cache.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "gujiajiaju";
 
 const wechat = new WeChatServer({
   url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -68,7 +60,7 @@ function writeTokenCache(cache) {
   try {
     fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
   } catch (e) {
-    L.fail("写入token缓存失败: " + e.message || e + "");
+    $.log(`写入token缓存失败: ${e.message || e}`);
   }
 }
 
@@ -116,7 +108,9 @@ function buildParameterSign(data, timestamp) {
 class Task {
   constructor(openid) {
     this.index = $.userIdx++;
-    this.openid = String(openid || "").trim();
+    const _a = String(openid || "").trim().split("#");
+    this.openid = _a[0].trim();
+    this.remark = (_a[1] || "").trim();
     this.tmpToken = "";
     this.accessToken = "";
     this.memberId = "";
@@ -253,26 +247,26 @@ class Task {
     this.userInfo = info.data;
     this.applyToken(info.data);
     const name = this.userInfo.nickName || this.userInfo.name || this.memberId || "未知";
-    L.info("账号[" + this.index + "] 用户: " + name + "");
+    $.log(`账号[${this.index}] 用户: ${name}`);
   }
 
   async ensureLogin() {
     const cached = this.getCachedToken();
     if (cached) {
       this.applyToken(cached);
-      L.info("账号[" + this.index + "] 使用缓存token");
+      $.log(`账号[${this.index}] 使用缓存token`);
       try {
         await this.getUserInfo();
         return;
       } catch {
         this.clearCachedToken();
-        L.fail("账号[" + this.index + "] 缓存失效，重新登录");
+        $.log(`账号[${this.index}] 缓存失效，重新登录`);
       }
     }
     await this.login();
     await this.getUserInfo();
     this.saveCachedToken();
-    L.ok("账号[" + this.index + "] 登录成功 memberId=" + this.memberId + "");
+    $.log(`账号[${this.index}] 登录成功 memberId=${this.memberId}`);
   }
 
   async checkCalendar() {
@@ -282,9 +276,9 @@ class Task {
         url: `${INTEGRAL_BASE}/user/sign/calendar`,
         params: {},
       });
-      L.info("账号[" + this.index + "] 日历查询: code=" + ret.code + "");
+      $.log(`账号[${this.index}] 日历查询: code=${ret.code}`);
     } catch (e) {
-      L.fail("账号[" + this.index + "] 日历查询失败: " + e.message || e + "");
+      $.log(`账号[${this.index}] 日历查询失败: ${e.message || e}`);
     }
   }
 
@@ -299,19 +293,30 @@ class Task {
         },
       });
       if (ret.code === 0) {
-        L.ok("账号[" + this.index + "] 签到成功");
+        $.log(`账号[${this.index}] 签到成功`);
+        const _ep = extractPoints(ret) || {};
+        if (_ep.streak != null) _rpGet(this.index).streak = String(_ep.streak);
+        if (_ep.total != null) _rpGet(this.index).total = String(_ep.total);
+        const _lot = _digLottery(ret);
+        if (_lot) _setLottery(this.index, _lot);
+        if (_ep.earned != null) _rpGet(this.index).earned = "今日+" + _ep.earned + "积分";
+        _setSign(this.index, "签到成功", _ep.earned != null ? "今日+" + _ep.earned + "积分" : null, _ep.total != null ? String(_ep.total) : null);
         return;
       }
       const msg = ret.message || ret.msg || JSON.stringify(ret);
       if (/已签|重复|already|今日/.test(msg)) {
-        L.info("账号[" + this.index + "] 今日已签到");
+        $.log(`账号[${this.index}] 今日已签到`);
+        const _ep = extractPoints(ret) || {};
+        if (_ep.streak != null) _rpGet(this.index).streak = String(_ep.streak);
+        if (_ep.total != null) _rpGet(this.index).total = String(_ep.total);
+        _setSign(this.index, "今日已签到", null, _ep.total != null ? String(_ep.total) : null);
         return;
       }
       throw new Error(msg);
     } catch (e) {
       const msg = e.message || String(e);
       if (/已签|重复|already|今日/.test(msg)) {
-        L.info("账号[" + this.index + "] 今日已签到");
+        $.log(`账号[${this.index}] 今日已签到`);
         return;
       }
       throw e;
@@ -321,36 +326,98 @@ class Task {
   async run() {
     try {
       await this.ensureLogin();
+      if (this.remark) _setName(this.index, this.remark);
       await this.checkCalendar();
       await this.sign();
       this.saveCachedToken();
     } catch (e) {
       const msg = e.message || String(e);
-      L.fail("账号[" + this.index + "] 执行失败: " + msg + "");
+      $.log(`账号[${this.index}] 执行失败: ${msg}`);
       if (/401|token|登录|失效|过期/i.test(msg)) this.clearCachedToken();
     }
   }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '顾家家居';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k];
+        const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc);
+        else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj;
+    return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k];
+    if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v);
+    if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-  sectionLine("顾家家居", "");
-  
-$.userIdx = 0;
-    $.checkEnv(ckName);
+  $.checkEnv(ckName);
   for (const openid of $.userList) {
     await new Task(openid).run();
   }
 })()
   .catch((e) => $.log(e.message || e))
-  .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("顾家小程序签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+  .finally(() => $.done());

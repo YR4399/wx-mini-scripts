@@ -2,8 +2,8 @@
  * 多多果园自动化脚本 v1.0
  * 功能：偷水5次、浇水种树、签到领化肥、打卡、一日三餐领水
  * 环境变量：DDGY_ACCOUNTS (openid列表，多账号用&分隔)
- *           wx_server_url / wxcodeurl (WCS地址)
- *           wx_auth / WXAPIKEY (WCS认证)
+ *           wx_server_url / wx_server_url (WCS地址)
+ *           wx_auth / wx_auth (WCS认证)
  *
  * API 接口说明：
  *   POST /manor/steal/water - 偷水 (friend_uid, steal_type)
@@ -17,10 +17,26 @@
  *   POST /manor/report - 上报
  */
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const https = require("https");
 
 // 禁用代理（容器内直连WCS）
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+require("https").globalAgent.options.rejectUnauthorized = false;
 process.env.HTTP_PROXY = "";
 process.env.HTTPS_PROXY = "";
 process.env.http_proxy = "";
@@ -34,25 +50,16 @@ const BASE_URL = "https://mobile.yangkeduo.com/proxy/api/api";
 
 // ============== 推送 ==============
 async function sendPush(title, message) {
-  const token = process.env.PLUSPLUS_TOKEN || process.env.PUSH_PLUS_TOKEN;
-  if (!token) {
-    console.log(`[Push] ${title}: ${message}`);
-    return;
-  }
-  try {
-    await axios.post("https://www.pushplus.plus/send", null, {
-      params: { token, title, content: message, template: "text" },
-      timeout: 10000,
-    });
-  } catch (e) {
-    console.log(`[Push Error] ${e.message}`);
-  }
+  console.log(`[Push→std_report] ${title}`);
 }
 
 // ============== 核心客户端 ==============
 class PDDClient {
-  constructor(openid, wxServerUrl, wxAuth, presetCookies, presetPdduid) {
-    this.openid = openid;
+  constructor(openid, wxServerUrl, wxAuth, presetCookies, presetPdduid, index) {
+    const _parts = String(openid || "").split("#");
+    this.openid = _parts[0].trim();
+    this.remark = (_parts[1] || "").trim();
+    this.index = index || 1;
     this.wxServerUrl = wxServerUrl;
     this.wxAuth = wxAuth;
     this.pdduid = presetPdduid || null;
@@ -624,6 +631,8 @@ class PDDClient {
    */
   async doSignIn() {
     console.log(`[${this.openid.slice(-8)}] 开始签到/打卡...`);
+    _setSign(this.index, "签到成功", "", null);
+    let _water = 0;
     const results = [];
 
     // 打卡 type
@@ -633,6 +642,12 @@ class PDDClient {
         const result = await this.applyActivity(type, {});
         const status = result.status;
         const waterAmount = result.water_amount || 0;
+        _water += Number(waterAmount) || 0;
+        const _ep = extractPoints(result) || {};
+        if (_ep.total != null) _setSign(this.index, null, null, String(_ep.total));
+        if (_ep.streak != null) _rpGet(this.index).streak = _ep.streak;
+        const _lot = _digLottery(result);
+        if (_lot) _setLottery(this.index, _lot);
         if (status === 1) {
           results.push(`打卡(type=${type}): 成功, 水滴:${waterAmount}💧`);
           console.log(
@@ -676,12 +691,9 @@ class PDDClient {
       await this.sleep(500);
     }
 
+    if (_water > 0) _setSign(this.index, "签到成功", "今日+" + _water + "💧", null);
     return results;
   }
-
-  /**
-   * 主执行流程
-   */
   async run() {
     const allResults = [];
 
@@ -732,15 +744,81 @@ class PDDClient {
 }
 
 // ============== 入口 ==============
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '多多果园';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null || typeof obj !== "object") return "";
+  const hits = [];
+  const keys = ["lottery", "draw", "prize", "raffle", "turntable", "wheel", "转盘", "抽奖", "奖励"];
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        const lk = String(k).toLowerCase();
+        const hit = keys.some((kk) => lk.includes(kk.toLowerCase()));
+        const val = v[k];
+        if (hit && val != null && val !== "" && typeof val !== "object") hits.push(`${k}=${val}`);
+        if (typeof val === "object") walk(val, depth + 1);
+      }
+      return;
+    }
+  };
+  walk(obj, 0);
+  return hits.length ? hits.join("｜") : "";
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 async function main() {
   const wxServerUrl =
-    process.env.WX_SERVER_URL ||
+    process.env.wx_server_url ||
     process.env.wx_server_url ||
     process.env.WXCODEURL ||
-    process.env.wxcodeurl;
+    process.env.wx_server_url;
   const wxAuth =
-    process.env.WX_AUTH ||
-    process.env.WXAPIKEY ||
+    process.env.wx_auth ||
+    process.env.wx_auth ||
     process.env.WX_SERVER_APIKEY;
 
   if (!wxServerUrl || !wxAuth) {
@@ -755,12 +833,12 @@ async function main() {
   // 解析账号
   const accounts = (process.env.DDGY_ACCOUNTS || "").split("&").filter(Boolean);
   if (accounts.length === 0) {
-    const wechatAccounts = (process.env.WECHAT_ACCOUNTS || "").split("&").filter(Boolean);
+    const wechatAccounts = (process.env.wx_opinion || "").split("&").filter(Boolean);
     accounts.push(...wechatAccounts);
   }
 
   if (accounts.length === 0) {
-    console.error("缺少账号环境变量: DDGY_ACCOUNTS 或 WECHAT_ACCOUNTS");
+    console.error("缺少账号环境变量: DDGY_ACCOUNTS 或 wx_opinion");
     process.exit(1);
   }
 
@@ -768,8 +846,10 @@ async function main() {
   if (presetCookies) console.log(`  使用预设Cookie, pdduid=${presetPdduid}`);
   const allResults = [];
 
-  for (const account of accounts) {
-    const client = new PDDClient(account, wxServerUrl, wxAuth, presetCookies, presetPdduid);
+  for (let i = 0; i < accounts.length; i++) {
+    const account = accounts[i];
+    const client = new PDDClient(account, wxServerUrl, wxAuth, presetCookies, presetPdduid, i + 1);
+    _setName(i + 1, client.remark || client.openid);
     const result = await client.run();
     allResults.push(result);
 
@@ -794,7 +874,7 @@ async function main() {
     })
     .join("\n\n");
 
-  await sendPush("多多果园", pushMsg);
+  // 推送统一走 std_report 双引擎（钉钉 markdown），由 beforeExit 钩子触发
   console.log("\n= 执行完成 =");
 }
 

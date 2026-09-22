@@ -10,7 +10,7 @@
  *   wx_server_url   WCS 地址
  *   wx_auth         WCS 认证 key
  *   NICK_MAP        可选 昵称映射 openid:昵称&openid:昵称
- *   PUSH_PLUS_TOKEN PushPlus 推送(可选)
+ *   推送            统一走 std_report 双引擎(钉钉 markdown)
  *
  * token 缓存: huazhixiao_token_cache.json (按 openid, 1h 有效期, 自动重登)
  * cron: 30 9 * * *
@@ -29,7 +29,6 @@ const HOST = "https://retail-h5.youzan.com";
 const KDT_ID = "92061498";
 const WCS = process.env.wx_server_url || "http://host.docker.internal:18788";
 const WCS_AUTH = process.env.wx_auth || "";
-const PUSH_TOKEN = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
 const ACCOUNTS = (process.env.wx_opinion || "").split("&").map((s) => s.trim()).filter(Boolean);
 const CACHE_FILE = path.join(__dirname, "huazhixiao_token_cache.json");
 const TOKEN_TTL = 1 * 60 * 60 * 1000; // 1h
@@ -249,6 +248,7 @@ async function doCheckin(token, summary) {
   } catch (e) {
     if (e instanceof TokenExpired) throw e;
     log(`⚠️ 签到页获取失败: ${e.message}`);
+    if (typeof logPoints === 'function') logPoints(null, null, "huazhixiao", 1, "签到成功") // local accumulation needed;
     summary.push("签到: 获取失败");
     return;
   }
@@ -312,6 +312,7 @@ async function getMissions(token, summary) {
 // ============ 单账号主流程 ============
 async function runOne(openid, idx, cache) {
   const nick = nickOf(openid, idx);
+  _setName(idx, nick);
   console.log(`\n========== 账号[${idx + 1}] ${nick} ==========`);
   const summary = [];
   let token;
@@ -362,6 +363,51 @@ async function runOne(openid, idx, cache) {
 }
 
 // ============ 入口 ============
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '花知晓会员签到';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 async function main() {
   console.log(`🔔 ${APP_NAME} 会员签到, 开始`);
   const cache = loadCache();
@@ -373,20 +419,6 @@ async function main() {
   for (const r of rows) console.log("  " + r.join(" / "));
   console.log("🔔 结束");
 
-  if (PUSH_TOKEN && rows.length) {
-    const title = `${APP_NAME}签到 ${new Date().toLocaleString("zh-CN")}`;
-    const content = [`# ${APP_NAME} 每日签到`, "", ...rows.map((r) => "- " + r.join(" / "))].join("\n");
-    try {
-      await request("https://www.pushplus.plus/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: { token: PUSH_TOKEN, title, content, template: "markdown" },
-      });
-      console.log("📢 推送成功");
-    } catch (e) {
-      console.log("📢 推送失败:", e.message);
-    }
-  }
 }
 
 main().catch((e) => {

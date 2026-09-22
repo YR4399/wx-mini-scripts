@@ -2,8 +2,10 @@
 @Description: 牛游谷签到
 cron: 15 8 * * *
 """
+
+# ==================== 推送 ====================
 import sys, json, time, os, requests, urllib3
-from _push_helper import send_push_notify  # 自动采集日志并推送
+from std_report import report
 
 urllib3.disable_warnings()
 
@@ -15,8 +17,8 @@ UA = (
     "MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI "
     "MiniProgramEnv/Windows WindowsWechat/WMPF"
 )
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788")
+wx_auth = os.getenv("wx_auth", "")
 WX_OPINION = os.getenv("wx_opinion", "")
 
 
@@ -44,8 +46,8 @@ def _write_cache(openid, token):
 
 def get_code(openid):
     try:
-        r = requests.post(f"{WX_SERVER_URL}/wx/code", json={"appid": APPID, "openid": openid},
-                          headers={"auth": WX_AUTH}, timeout=60, proxies={"http": None, "https": None})
+        r = requests.post(f"{wx_server_url}/wx/code", json={"appid": APPID, "openid": openid},
+                          headers={"auth": wx_auth}, timeout=60, proxies={"http": None, "https": None})
         return (r.json().get("data", {}).get("code") or r.json().get("code"))
     except Exception as e:
         print(f"[WCS] {e}")
@@ -78,15 +80,15 @@ def sign(token):
         d = r.json()
         if d.get("code") == 0:
             print("✅ 签到成功")
-            return True
+            return "签到成功"
         if "已签到" in str(d):
             print("今日已签到")
-            return True
+            return "今日已签到"
         print(f"[签到] {d.get('msg', d)}")
-        return False
+        return None
     except Exception as e:
         print(f"[签到] {e}")
-        return False
+        return None
 
 
 def mask(s, n=4):
@@ -94,25 +96,38 @@ def mask(s, n=4):
     return s[:n] + "***" + s[-n:] if len(s) > n * 2 else s
 
 
-def run(openid):
-    print(f"\n{'='*40}\n账号: {mask(openid)}")
+def run(raw):
+    if '#' in raw:
+        openid, remark = raw.split('#', 1)
+    else:
+        openid, remark = raw, ''
+    _name = remark.strip() if remark and remark.strip() else mask(openid)
+    print(f"\n{'='*40}\n账号: {_name}")
+    _sign = None
 
     cached = _read_cache(openid)
     if cached:
         print("[缓存] 尝试使用缓存token")
-        if sign(cached):
-            return
+        st = sign(cached)
+        if st:
+            _sign = st
+            return {'name': _name, 'sign': _sign, 'earned': None, 'total': None, 'streak': None, 'tasks': None, 'lottery': None, 'taskEarned': None}
         print("[缓存] 无效，重新登录")
 
     code = get_code(openid)
     if not code:
-        return print("❌ code")
+        print("❌ code")
+        return {'name': _name, 'sign': '获取code失败', 'earned': None, 'total': None, 'streak': None, 'tasks': None, 'lottery': None, 'taskEarned': None}
     token, uid = login(code)
     if not token:
-        return print("❌ 登录")
+        print("❌ 登录")
+        return {'name': _name, 'sign': '登录失败', 'earned': None, 'total': None, 'streak': None, 'tasks': None, 'lottery': None, 'taskEarned': None}
     print(f"[登录] uid={uid}")
     _write_cache(openid, token)
-    sign(token)
+    st = sign(token)
+    if st:
+        _sign = st
+    return {'name': _name, 'sign': _sign, 'earned': None, 'total': None, 'streak': None, 'tasks': None, 'lottery': None, 'taskEarned': None}
 
 
 if __name__ == "__main__":
@@ -121,6 +136,12 @@ if __name__ == "__main__":
     if not accts:
         print("未配置 wx_opinion")
         exit()
+    _rows = []
     for i, a in enumerate(accts):
         if i: time.sleep(3 + i * 3)
-        run(a)
+        _rows.append(run(a))
+    try:
+        if report:
+            report('牛游谷签到', _rows)
+    except:
+        pass

@@ -51,7 +51,6 @@
  *  wx_opinion      : ★账号来源(WCS openid, & 分隔)
  *  wx_server_url   : WCS 地址
  *  wx_auth         : WCS 认证 key
- *  PUSH_PLUS_TOKEN : PushPlus 推送(可选)
  *
  * token 缓存: jotoys_token_cache.json (按 openid, 复用 usertoken+cookie, 失效自动重登)
  * cron: 20 9 * * *
@@ -67,7 +66,6 @@ const APPID = "wx5a842e396784099b";
 const HOST = "https://jotoys.jiouchaole.cn/qiouapi";
 const WCS = process.env.wx_server_url || "http://host.docker.internal:18788";
 const WCS_AUTH = process.env.wx_auth || "";
-const PUSH_TOKEN = process.env.PUSH_PLUS_TOKEN || process.env.PLUSPLUS_TOKEN || "";
 const ACCOUNTS = (process.env.wx_opinion || "").split("&").map(s => s.trim()).filter(Boolean);
 const CACHE_FILE = path.join(__dirname, "jotoys_token_cache.json");
 
@@ -298,11 +296,13 @@ async function doShare(ctx, td) {
     return { before: done, after: done, limit, newly: 0 };
   }
   console.log(`  🌐 分享任务 (${done}/${limit}), 需再分享 ${limit - done} 次...`);
-  let newly = 0;
+  let newly = 0, gainSum = 0;
   for (let i = done; i < limit; i++) {
     const r = await ctx.session.call("appapi.php", "addshare", { usertoken: ctx.usertoken });
     if (r && r.status == 1) {
       newly++;
+      const gv = Number(r.value || 0);
+      if (gv) gainSum += gv;
       console.log(`  ✅ 分享 ${i + 1}/${limit} 成功${r.value ? ", +" + r.value + "积分" : ""}`);
     } else {
       const msg = (r && r.msg) || "未知";
@@ -316,7 +316,7 @@ async function doShare(ctx, td) {
       await sleep(w);
     }
   }
-  return { before: done, after: done + newly, limit, newly };
+  return { before: done, after: done + newly, limit, newly, gainSum };
 }
 
 async function getIntegral(ctx) {
@@ -328,6 +328,7 @@ async function getIntegral(ctx) {
 // ============ 单账号流程 ============
 async function runAccount(openid, cache, idx) {
   console.log(`\n========== 账号[${idx + 1}] ${mask(openid)} ==========`);
+  _setName(idx + 1, mask(openid));
   try {
     let ctx = await reuse(openid, cache);
     if (!ctx) ctx = await login(openid);
@@ -356,27 +357,61 @@ async function runAccount(openid, cache, idx) {
     if (jf) console.log(`  💰 当前积分: ${jf.total}  余额: ¥${jf.money}`);
 
     const lian = (td2 && td2.signeddata && td2.signeddata.lian) || (sign.lian || "-");
+    const signText = sign.already ? "今日已签到" : (sign.done ? "签到成功" : (sign.error ? "签到失败" : "签到状态未知"));
+    _setName(idx + 1, ctx.nickname || mask(openid));
+    _setSign(idx + 1, signText, (sign.done && sign.gain) ? `+${sign.gain}积分` : "", jf ? String(jf.total) : "");
+    if (lian && lian !== "-") _setStreak(idx + 1, lian);
+    if (share.newly > 0) _setTaskEarned(idx + 1, `分享任务${share.newly}次+${share.gainSum || share.newly * 5}积分`);
     return {
       ok: true, nickname: ctx.nickname, sign, share, lian,
       integral: jf ? jf.total : "-",
     };
   } catch (e) {
     console.log(`  ❌ 失败: ${e.message}`);
+    _setSign(idx + 1, "失败: " + e.message);
     // 登录类错误清缓存, 下次重登
     if (/登录|token|usertoken|mpweixinphonelogin/i.test(e.message)) delete cache[openid];
     return { ok: false, error: e.message };
   }
 }
 
-// ============ 推送 ============
-async function push(title, content) {
-  if (!PUSH_TOKEN) return;
-  try {
-    await reqRetry("POST", "http://www.pushplus.plus/send",
-      { "Content-Type": "application/json" },
-      { token: PUSH_TOKEN, title, content, template: "txt" });
-  } catch (e) { console.log("  ⚠️ 推送失败:", e.message); }
+// ============ 推送(std_report 双引擎, 钉钉 markdown) ============
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "JOTOYS集玩具签到";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
 }
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, n) { if (n != null && n !== "") _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 
 // ============ 入口 ============
 async function main() {
@@ -408,7 +443,7 @@ async function main() {
 
   const summary = `成功 ${okN}, 失败 ${failN}\n` + lines.join("\n");
   console.log(`\n${summary}`);
-  await push("JOTOYS集玩具", summary);
+  await flushLogPoints(_rpApp);
   console.log("\n🔔 JOTOYS(集玩具),结束");
 }
 

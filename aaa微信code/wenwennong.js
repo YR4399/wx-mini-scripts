@@ -23,7 +23,6 @@ cron: 30 8 * * *
 */
 const { Env } = require("../tools/env.js");
 const { ICON, L, sectionLine, humanDelay } = require("./_decor");
-const { sendPushNotify } = require("./_push_helper");
 const $ = new Env("问问农会员");
 const axios = require("axios");
 const fs = require("fs");
@@ -84,12 +83,12 @@ async function getCode(openid) {
             if (typeof code === "string" && code.length > 10) return code;
             const msg = JSON.stringify(res || {}).slice(0, 160);
             if (/account not found|not found/i.test(msg)) {
-                L.fail($.tag(`WCS账号不存在，跳过: ${msg}`));
+                L.warn(`WCS账号不存在，跳过: ${msg}`);
                 return null;
             }
-            L.info($.tag(`取code异常(${msg})，重试...`));
+            L.info(`取code异常(${msg})，重试...`);
         } catch (e) {
-            L.info($.tag(`取code异常(${e.message})，重试...`));
+            L.info(`取code异常(${e.message})，重试...`);
         }
         await $.wait(2000 * (i + 1));
     }
@@ -103,6 +102,15 @@ function parseToken(res) {
     return { accessToken, member };
 }
 
+// 判断 axios 错误是否为网络瞬时错误(无 HTTP 状态码: 超时/连接重置/DNS 等)
+function _isNetErr(e) {
+    if (!e) return false;
+    const c = e.code || "";
+    if (["ECONNABORTED","ETIMEDOUT","ECONNRESET","ENOTFOUND","EAI_AGAIN","ECONNREFUSED"].includes(c)) return true;
+    const m = (e.message || "").toLowerCase();
+    return /timeout|network|connection|socket hang|econn/.test(m);
+}
+
 class Account {
     constructor(openid, nick) {
         this.openid = openid;
@@ -112,18 +120,24 @@ class Account {
     }
     tag(s) { return `【${this.nick}】${s}`; }
 
-    // 封装请求: 遇 401/403 自动重登一次后重试
-    async call(method, urlPath, opts = {}) {
+    // 封装请求: 遇 401/403 自动重登; 遇网络瞬时错误(超时/重置)自动重试
+    async call(method, urlPath, opts = {}, _ad = 0, _nd = 0) {
         if (!this.token) await this.login();
         try {
             return await api(method, urlPath, { ...opts, token: this.token });
         } catch (e) {
             const st = e.response?.status;
-            if (st === 401 || st === 403 || e.response?.data?.code === 40001) {
+            const isAuth = (st === 401 || st === 403 || e.response?.data?.code === 40001);
+            const isNet = (!st && _isNetErr(e));
+            if (isAuth && _ad < 2) {
                 L.info(this.tag("token失效, 重新登录后重试"));
-                if (await this.login()) {
-                    return await api(method, urlPath, { ...opts, token: this.token });
-                }
+                if (await this.login()) return this.call(method, urlPath, opts, _ad + 1, _nd);
+                throw e;
+            }
+            if (isNet && _nd < 2) {
+                L.info(this.tag(`网络瞬时错误(${e.message}), 重试 ${_nd + 1}/2`));
+                await $.wait(2000 * (_nd + 1));
+                return this.call(method, urlPath, opts, _ad, _nd + 1);
             }
             throw e;
         }
@@ -139,20 +153,35 @@ class Account {
             is_group: "false",
         };
         try {
-            const res = await axios.request({
-                method: "POST",
-                url: OAUTH_BASE + "/v2/weapp/oauth",
-                headers: {
-                    "X-Account-Id": ACCOUNT_ID,
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Content-Type": "application/json",
-                },
-                data: body,
-                timeout: 30000,
-            });
-            const { accessToken, member } = parseToken(res.data);
+            let res = null;
+        for (let _la = 0; _la < 3; _la++) {
+            try {
+                res = await axios.request({
+                    method: "POST",
+                    url: OAUTH_BASE + "/v2/weapp/oauth",
+                    headers: {
+                        "X-Account-Id": ACCOUNT_ID,
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Content-Type": "application/json",
+                    },
+                    data: body,
+                    timeout: 45000,
+                });
+                break;
+            } catch (e) {
+                const _code = e.code || "";
+                const _net = ["ECONNABORTED","ETIMEDOUT","ECONNRESET","ENOTFOUND","EAI_AGAIN"].includes(_code) || /timeout|network|connection/i.test(e.message || "");
+                if (_net && _la < 2) {
+                    L.info(this.tag(`登录请求瞬时错误(${e.message}), 重试 ${_la + 1}/2`));
+                    await $.wait(2000 * (_la + 1));
+                    continue;
+                }
+                throw e;
+            }
+        }
+        const { accessToken, member } = parseToken(res.data);
             if (!accessToken) {
-                L.fail(this.tag(`登录失败: ${JSON.stringify(res.data).slice(0, 160)}`));
+                L.error(this.tag(`登录失败: ${JSON.stringify(res.data).slice(0, 160)}`));
                 return false;
             }
             this.token = accessToken;
@@ -163,7 +192,7 @@ class Account {
             return true;
         } catch (e) {
             const d = e.response?.data;
-            L.fail(this.tag(`登录异常: ${e.message} ${d ? JSON.stringify(d).slice(0, 160) : ""}`));
+            L.error(this.tag(`登录异常: ${e.message} ${d ? JSON.stringify(d).slice(0, 160) : ""}`));
             return false;
         }
     }
@@ -188,29 +217,30 @@ class Account {
             stats = await this.call("GET", "/modules/campaigncenter/signin/stats");
         } catch (e) {
             L.warn(this.tag(`查签到状态失败: ${e.message}`));
-            return { signed: false };
+            return { signed: false, consecutiveDays: null };
         }
         const d = stats?.data || stats || {};
+        const cd = d.consecutiveDays || d.consecutiveDaysInPeriod || null;
         L.info(this.tag(`签到状态: ${JSON.stringify(d).slice(0, 220)}`));
         const signed = d.hasSignedInToday || d.isSignInToday || d.signed || d.isSigned;
         if (signed) {
             L.ok(this.tag(`今日已签到 (连续${d.consecutiveDays || d.consecutiveDaysInPeriod || "?"}天)`));
-            return { signed: true, skipped: true };
+            return { signed: true, skipped: true, consecutiveDays: cd };
         }
         try {
             const res = await this.call("POST", "/modules/campaigncenter/signin", { data: { templateIds: [] } });
             L.info(this.tag(`签到返回: ${JSON.stringify(res?.data || res).slice(0, 200)}`));
             L.ok(this.tag("签到成功 ✓"));
-            return { signed: true };
+            return { signed: true, consecutiveDays: cd };
         } catch (e) {
             const st = e.response?.status;
             const msg = JSON.stringify(e.response?.data || "");
             if (st === 400 && /已签到|signed|重复|today/i.test(msg)) {
                 L.ok(this.tag("今日已签到 (服务端确认)"));
-                return { signed: true };
+                return { signed: true, consecutiveDays: cd };
             }
             L.warn(this.tag(`签到失败: ${st} ${msg.slice(0, 160)}`));
-            return { signed: false };
+            return { signed: false, consecutiveDays: cd };
         }
     }
 
@@ -236,7 +266,7 @@ class Account {
             page++;
         }
         const tasks = [...seen.values()];
-        if (!tasks.length) { L.warn(this.tag("未获取到任务列表")); return; }
+        if (!tasks.length) { L.warn(this.tag("未获取到任务列表")); return { total: 0, perfTried: 0, perfOk: 0, claimed: 0, claimable: 0 }; }
 
         const byType = {};
         for (const t of tasks) { const ty = t.type || "?"; byType[ty] = (byType[ty] || 0) + 1; }
@@ -284,6 +314,7 @@ class Account {
             else if (rw.hasLeftTaskRewards) claimable++;
         }
         L.ok(this.tag(`任务报告: 共${tasks.length}个 | 完善资料尝试${perfTried}次(实际发放${perfOk}次) | 已领奖励${claimed}个 | 可领奖励${claimable}个(需用户行为达成后自动发放)`));
+        return { total: tasks.length, perfTried, perfOk, claimed, claimable };
     }
 }
 
@@ -301,25 +332,79 @@ function parseNickMap() {
     return m;
 }
 
+
+const { report: _stdReport } = require("./std_report");
+let _rpRows = [];
+let _rpApp = "问问农会员";
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], lottery: "", taskEarned: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _setStreak(idx, n) { if (n != null && n !== "") _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 async function main() {
     sectionLine("问问农会员");
     const openids = (process.env[ckName] || "").split("&").map((s) => s.trim()).filter(Boolean);
     if (!openids.length) { L.fail("未配置 wx_opinion"); return; }
     const nickMap = parseNickMap();
     let success = 0;
-    for (const oid of openids) {
+    for (let i = 0; i < openids.length; i++) {
+        const oid = openids[i];
+        const idx = i + 1;
         const acc = new Account(oid, nickMap[oid] || oid);
+        _setName(idx, acc.nick);
         try {
             L.info(acc.tag("开始"));
-            if (!(await acc.ensureToken())) { L.fail(acc.tag("登录失败, 跳过")); continue; }
+            if (!(await acc.ensureToken())) { L.warn(acc.tag("登录失败, 跳过")); _setSign(idx, "登录失败"); continue; }
             await humanDelay();
-            await acc.doSign();
+            const sg = await acc.doSign();
+            _setSign(idx, sg.signed ? (sg.skipped ? "今日已签到" : "签到成功") : "签到失败");
+            if (sg.consecutiveDays != null && sg.consecutiveDays !== "") _setStreak(idx, sg.consecutiveDays);
             await humanDelay();
-            await acc.doTasks();
+            const tk = await acc.doTasks();
+            if (tk && tk.total) _setTaskEarned(idx, `任务${tk.total}个(完善${tk.perfOk}/${tk.perfTried}发放, 已领${tk.claimed}/可领${tk.claimable})`);
             success++;
             L.ok(acc.tag("完成"));
         } catch (e) {
-            L.fail(acc.tag(`执行异常: ${e.message}`));
+            L.error(acc.tag(`执行异常: ${e.message}`));
+            if (!_rpGet(idx).sign) _setSign(idx, "执行异常");
         }
         sectionLine("");
     }
@@ -330,9 +415,7 @@ async function main() {
     try { await main(); }
     catch (e) { L.fail("运行异常: " + e.message); }
     finally {
-        if (typeof sendPushNotify === "function") {
-            try { await sendPushNotify($); } catch {}
-        }
+        await flushLogPoints(_rpApp);
         $.done();
     }
 })();

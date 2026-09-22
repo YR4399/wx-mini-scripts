@@ -11,10 +11,9 @@ for env_key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
         del os.environ[env_key]
 
 # ===================== 配置项 =====================
-PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 # WCS 配置
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+wx_auth = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 PROXY_API = os.getenv("PROXY_API", "")
 PROXY_TYPE = os.getenv("PROXY_TYPE", "http")
@@ -142,31 +141,21 @@ async def getValidProxy(accountName):
     print(f"❌ [{accountName}] 连续多次获取代理失败，使用直连")
     return None
 
-# ===================== PushPlus通知 =====================
 def sendPlusPlusNotification(title, content):
-    if not PLUSPLUS_TOKEN:
-        return
+    from std_report import send_push as _dd_push
     try:
-        url = "https://www.pushplus.plus/send"
-        data = {
-            "token": PLUSPLUS_TOKEN,
-            "title": title,
-            "content": content,
-            "template": "txt"
-        }
-        requests.post(url, json=data, timeout=5)
-        print("✅ 通知推送成功")
+        return _dd_push(title, content)
     except Exception as e:
-        print(f"❌ 通知推送失败：{str(e)}")
-
+        print(f'[push] 失败: {e}')
+        return False
 # ===================== 业务函数 =====================
 def getCode(openid):
     print(f"📡 [{openid[:10]}...] 正在通过WCS获取code")
     try:
         res = requests.post(
-            f"{WX_SERVER_URL}/wx/code",
+            f"{wx_server_url}/wx/code",
             json={"appid": APPID, "openid": openid},
-            headers={"auth": WX_AUTH},
+            headers={"auth": wx_auth},
             timeout=60,
             proxies={}
         )

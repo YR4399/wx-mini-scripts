@@ -14,11 +14,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ===================== 配置项 =====================
 # 基础配置
 APP_ID = "wx51a2021dd921f747"
-PLUSPLUS_TOKEN = os.getenv("PLUSPLUS_TOKEN", "")
 
 # WCS 配置（从环境变量读取）
-WX_SERVER_URL = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
-WX_AUTH = os.getenv("wx_auth", "")
+wx_server_url = os.getenv("wx_server_url", "http://host.docker.internal:18788").rstrip("/")
+wx_auth = os.getenv("wx_auth", "")
 CK_NAME = "wx_opinion"
 
 # 品赞代理配置（青龙环境变量）
@@ -185,9 +184,9 @@ def get_wx_code(openid):
     """通过 WCS 获取 wx.login code"""
     try:
         res = requests.post(
-            f"{WX_SERVER_URL}/wx/code",
+            f"{wx_server_url}/wx/code",
             json={"appid": APP_ID, "openid": openid},
-            headers={"auth": WX_AUTH},
+            headers={"auth": wx_auth},
             timeout=60,
             proxies={"http": None, "https": None}
         )
@@ -310,24 +309,12 @@ def get_user_info(token, headers, proxy_config, account_name):
         return "未知", "未知", 0
 
 def push_plusplus(title, content):
-    """PlusPlus推送（带状态返回）"""
-    if not PLUSPLUS_TOKEN:
-        print("ℹ️ 未配置PLUSPLUS_TOKEN，不推送")
-        return False
+    from std_report import send_push as _dd_push
     try:
-        data = {"token": PLUSPLUS_TOKEN, "title": title, "content": content}
-        res = requests.post(
-            "https://www.pushplus.plus/send",
-            json=data,
-            timeout=10,
-            verify=False
-        )
-        result = res.json()
-        return result.get("code") == 200
+        return _dd_push(title, content)
     except Exception as e:
-        print(f"❌ PushPlus推送异常：{str(e)}")
+        print(f'[push] 失败: {e}')
         return False
-
 def do_sign(token, headers, proxy_config, account_name):
     """执行签到【支持代理+直连兜底】"""
     try:

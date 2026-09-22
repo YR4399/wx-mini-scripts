@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+
+# ==================== 推送 ====================
 # -*- coding: utf-8 -*-
 """
 泰康在线保险小程序每日签到、做金币悬赏任务
@@ -40,16 +43,12 @@ import requests
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
-# ========== 推送通知 ==========
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'aaa微信code'))
 try:
-    from _push_helper import push_notify
-    from _push_helper import send_push_notify  # 自动采集日志并推送
-
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
+    from std_report import report
+except Exception as _e:
+    print(f'[std_report] 加载失败: {_e}')
+    report = None
 # ========== 推送通知结束 ==========
 
 TITLE = '泰康在线保险小程序'
@@ -145,6 +144,12 @@ class TkzxClient:
         self.device_id = 'WC39ZUyXRgdExSj90tOeGomyOuuFeIVfnoBh4K6/N2S6+cPQvxZzEMpX4YkYGt7bl61lJVmGniEtWjSm22hAKQUL4jL6rQD4StL/WmrP2Tauiuo9Z2Nzm4Q==1487577677129'
         self.member_id = ''
         self.token = ''
+        self._sign = None
+        self._earned = None
+        self._tasks = []
+        # 默认推送行: 保证 run() 任何早退出路径下 client._row 都存在(否则 main 里 append 会 AttributeError)
+        self._row = {'name': remark, 'sign': None, 'earned': None, 'total': None,
+                     'streak': None, 'tasks': None, 'lottery': None, 'taskEarned': None}
 
     def log(self, msg):
         self.logs.append(str(msg))
@@ -234,9 +239,13 @@ class TkzxClient:
         body = self.make_body({'memberid': self.member_id, 'token': self.token, 'unionid': self.unionid or self.openid, 'deviceId': self.device_id, 'fromid': FROMID, 'platform': 'WECHAT', 'coordinate': '', 'nickName': nickname})
         r = self.enc_post('https://m.tk.cn/activity_execute/rest/membergoldbean/sign', body)
         if r.get('error_code') == '0':
-            self.log(f'每日签到: +{(r.get("data") or {}).get("signAmount", 0)}积分')
+            amt = (r.get("data") or {}).get("signAmount", 0)
+            self.log(f'每日签到: +{amt}积分')
+            self._sign = '签到成功'
+            self._earned = f'+{amt}积分'
         else:
             self.log(f'每日签到: {r.get("error_message", r)}')
+            self._sign = '签到失败'
 
     def query_tasks(self):
         body = self.make_body({'memberid': self.member_id, 'token': self.token, 'platform': 'WECHAT'})
@@ -273,7 +282,7 @@ class TkzxClient:
                 self.log(f'{name}: {(r.get("data") or {}).get("msg", r.get("data")) if r.get("error_code")=="0" else r.get("error_message", r)}')
             except Exception as e:
                 self.log(f'{name}: 浏览回调异常 {e}')
-
+        self._tasks.append(f'{name}: 已完成')
     def _generate_signature(self, from_id='71672'):
         """生成 Signature 和 Authorization 请求头"""
         auth_body = self.make_body({'memberId': self.member_id, 'token': self.token, 'platform': 'APPLET', 'fromId': from_id})
@@ -421,6 +430,8 @@ class TkzxClient:
         self.log(f'********{self.remark}********')
         try:
             if not self.login():
+                self._sign = '登录失败'
+                self._row.update({'name': self.remark, 'sign': self._sign})
                 return self.logs
             self.headers['content-type'] = 'application/json'
             body = self.make_body({'memberId': self.member_id, 'token': self.token, 'fromid': FROMID, 'platform': 'WECHAT', 'rewardCode': 'redpacketone', 'deviceId': self.device_id})
@@ -447,18 +458,35 @@ class TkzxClient:
                 self.log(f'浏览任务异常: {traceback.format_exc().strip()}')
         except Exception:
             self.log(traceback.format_exc().strip())
+        self._row = {
+            'name': self.remark,
+            'sign': self._sign,
+            'earned': self._earned,
+            'total': None,
+            'streak': None,
+            'tasks': None,
+            'lottery': None,
+            'taskEarned': '、'.join(self._tasks) if self._tasks else None,
+        }
         return self.logs
 
 
 def main():
     all_logs = []
+    _rows = []
     
     # WCS模式
     if wx_server_url and wx_auth and WX_OPINION:
-        for idx, openid in enumerate([x.strip() for x in WX_OPINION.split('&') if x.strip()], 1):
-            print(f'\n>>>>>>>>WCS账号【{idx}】<<<<<<<<')
-            logs = TkzxClient(remark=f'WCS{idx}', openid=openid).run()
+        for idx, raw in enumerate([x.strip() for x in WX_OPINION.split('&') if x.strip()], 1):
+            if '#' in raw:
+                openid, remark = raw.split('#', 1)
+            else:
+                openid, remark = raw, f'WCS{idx}'
+            print(f'\n>>>>>>>>WCS账号【{idx}】【{remark}】<<<<<<<<')
+            client = TkzxClient(remark=remark, openid=openid)
+            logs = client.run()
             all_logs.extend(logs)
+            _rows.append(client._row)
     
     # unionid模式
     raw = os.environ.get('tkzxbx', '').strip()
@@ -469,15 +497,18 @@ def main():
                 continue
             remark, unionid = item.split('#', 1)
             print(f'\n>>>>>>>>{remark}<<<<<<<<')
-            logs = TkzxClient(remark=remark, unionid=unionid).run()
+            client = TkzxClient(remark=remark, unionid=unionid)
+            logs = client.run()
             all_logs.extend(logs)
+            _rows.append(client._row)
     
     if not all_logs:
         print('未配置账号')
         return 1
     
     try:
-        push_notify('泰康在线保险 签到结果', '\n'.join(all_logs)[-2000:])
+        if report:
+            report('泰康在线保险签到', _rows)
     except:
         pass
     return 0

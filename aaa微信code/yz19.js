@@ -1,28 +1,32 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+// ========== 环境配置 ==========
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
+------------------------------------------
+@Author: sm
+@Date: 2026.05.31
 @Description: tuoluzhe 拓路者小程序签到
 cron: 27 8 * * *
+------------------------------------------
+变量名：tuoluzhe
+变量值：wx_server 里的 openid/账号标识，多账号用 & 或换行
+------------------------------------------
+备注：有赞店铺「签到活动」由商家侧开关控制。若 show_checkin_page_v2 返回
+      isShow=false 或 checkinV2 返回 code 1000030091「活动未开启」，本脚本视为
+      中性状态（➖ 其他），不再报错，待商家重新开放后自动恢复签到。
+------------------------------------------
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("tuoluzhe拓路者小程序签到");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx19afe76fc30d5c37";
 const CLIENT_BIZ = "weapp_wsc";
@@ -33,7 +37,7 @@ const API_BASE = "https://h5.youzan.com";
 const TOKEN_CACHE_FILE = path.join(__dirname, "tuoluzhe_token_cache.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MicroMessenger/3.9.12 MiniProgramEnv/Windows WindowsWechat/WMPF";
 
-let ckName = "wx_opinion";
+let ckName = "tuoluzhe";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -54,7 +58,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e );
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -71,9 +75,11 @@ function isTokenError(message) {
 }
 
 class Task {
-    constructor(openid) {
-        this.index = $.userIdx++;
-        this.openid = String(openid || "").trim();
+    constructor(openid, index) {
+        this.index = index || $.userIdx++;
+        const _p = String(openid || "").split("#");
+        this.openid = _p[0].trim();
+        this.remark = _p[1] ? _p[1].trim() : "";
         this.token = "";
         this.sessionId = "";
         this.cookie = "";
@@ -82,13 +88,14 @@ class Task {
     }
 
     async run() {
+        if (this.remark) _setName(this.index, this.remark);
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            L.info("账号[" + this.index + "] 使用缓存token");
+            $.log(`账号[${this.index}] 使用缓存token`);
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
             }
         }
 
@@ -170,7 +177,7 @@ class Task {
     async request({ method = "GET", path: apiPath, params = {}, data = {}, skipToken = false }) {
         const options = {
             method,
-            url: API_BASE + (apiPath.startsWith("/") ? apiPath : "/" + apiPath),
+            url: `${API_BASE}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`,
             headers: this.getHeaders(method === "POST" ? { "Content-Type": "application/json" } : {}),
             timeout: 15000,
             validateStatus: () => true,
@@ -183,7 +190,10 @@ class Task {
             this.cookie = headers["set-cookie"].map((item) => item.split(";")[0]).join("; ");
         }
         if (status !== 200) throw new Error(`HTTP ${status}: ${JSON.stringify(result)}`);
-        if (!result || result.code !== 0) throw new Error(result?.msg || JSON.stringify(result));
+        // 带上服务端业务码，便于上层按 code 精确分类（如 1000030091 活动未开启）
+        if (!result || result.code !== 0) {
+            throw new Error((result?.msg || JSON.stringify(result)) + (result?.code ? ` (code ${result.code})` : ""));
+        }
         return result.data;
     }
 
@@ -210,9 +220,9 @@ class Task {
             this.applyToken(data);
             this.userInfo = data || {};
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] 登录成功: " + data.nick_name || data.nickName || "" + " " + maskPhone(data.mobile) || "" );
+            $.log(`账号[${this.index}] 登录成功: ${data.nick_name || data.nickName || ""} ${maskPhone(data.mobile) || ""}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
+            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
         }
     }
 
@@ -231,16 +241,29 @@ class Task {
             const data = await this.request({ path: "/wscump/checkin/show_checkin_page_v2.json" });
             this.checkinId = data?.checkinId;
             this.isShow = !!data?.isShow;
-            L.info("账号[" + this.index + "] 签到活动: checkinId=" + this.checkinId || "未获取" + " isShow=" + this.isShow );
+            $.log(`账号[${this.index}] 签到活动: checkinId=${this.checkinId || "未获取"} isShow=${this.isShow}`);
+            // 连签天数（防御性提取，字段缺失则诚实留空）
+            const _ep = extractPoints(data);
+            const _st = _ep.streak != null ? _ep.streak : _pickNum(data, ['series_days', 'seriesdays', 'sign_day', 'signday', 'continuous_days', 'continuousday', 'continue_days', 'sign_count', 'signcount', 'total_sign', 'totalsign', 'signseries']);
+            if (_st != null) _setStreak(this.index, _st);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 获取签到活动失败: " + e.message || e );
+            $.log(`账号[${this.index}] 获取签到活动失败: ${e.message || e}`);
             if (isTokenError(e.message || e)) this.removeCachedToken();
         }
     }
 
     async doCheckin() {
         if (!this.checkinId) {
-            L.info("账号[" + this.index + "] 未获取到 checkinId，跳过签到");
+            $.log(`账号[${this.index}] 未获取到 checkinId，跳过签到`);
+            _setSign(this.index, "活动未开启");
+            return;
+        }
+        // 商家侧关闭了签到活动：show_checkin_page_v2 返回 showPage/isShow=false，
+        // checkinV2 会以 code 1000030091「活动未开启」拒绝。这不是脚本/账号故障，
+        // 如实记为中性状态（➖ 其他），等商家重新开放后本脚本自动恢复签到。
+        if (this.isShow === false) {
+            $.log(`账号[${this.index}] ➖ 签到活动未开放（isShow=false），跳过（非脚本故障）`);
+            _setSign(this.index, "活动未开启");
             return;
         }
         try {
@@ -249,14 +272,23 @@ class Task {
                 params: { checkinId: this.checkinId },
             });
             const awards = (data?.list || []).map((item) => item?.infos?.title).filter(Boolean).join(", ");
-            L.ok("账号[" + this.index + "] 签到成功: " + (data?.desc || "") + (awards ? " " + awards : ""));
+            _setSign(this.index, "签到成功", awards ? awards : "");
+            _setLottery(this.index, _digLottery(data));
+            $.log(`账号[${this.index}] 签到成功: ${data?.desc || ""}${awards ? ` ${awards}` : ""}`);
         } catch (e) {
             const message = String(e.message || e);
-            if (/已达最大参与次数|已签到|重复签到/.test(message)) {
-                L.info("账号[" + this.index + "] 今日已签到");
+            if (/1000030091|1000030001|活动未开启|活动不存在|活动已结束/.test(message)) {
+                $.log(`账号[${this.index}] ➖ 签到活动未开放: ${message}`);
+                _setSign(this.index, "活动未开启");
                 return;
             }
-            L.fail("账号[" + this.index + "] 签到失败: " + message );
+            if (/已达最大参与次数|已签到|重复签到/.test(message)) {
+                $.log(`账号[${this.index}] 今日已签到`);
+                _setSign(this.index, "今日已签到");
+                return;
+            }
+            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            _setSign(this.index, "签到失败");
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -264,32 +296,102 @@ class Task {
     async getPoints() {
         try {
             const data = await this.request({ path: "/wscump/integral/user_points.json" });
-            L.info("账号[" + this.index + "] 当前积分: " + data?.current_points ?? data?.real_points ?? "未知" );
+            const _pts = data?.current_points ?? data?.real_points;
+            if (_pts != null && !isNaN(Number(_pts))) _rpGet(this.index).total = String(_pts);
+            $.log(`账号[${this.index}] 当前积分: ${_pts ?? "未知"}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 查询积分失败: " + e.message || e );
+            $.log(`账号[${this.index}] 查询积分失败: ${e.message || e}`);
         }
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '拓路者';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], taskEarned: "", lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _setStreak(idx, n) { if (n != null && n !== "" && !isNaN(Number(n))) _rpGet(idx).streak = String(n); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _pickNum(obj, keys) {
+    if (!obj || typeof obj !== 'object') return null;
+    const flat = {};
+    for (const [k, v] of Object.entries(obj)) {
+        flat[String(k).toLowerCase()] = v;
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            for (const [k2, v2] of Object.entries(v)) flat[String(k2).toLowerCase()] = v2;
+        }
+    }
+    for (const key of keys) {
+        const v = flat[key];
+        if (v != null && v !== '' && !isNaN(Number(v))) return Math.trunc(Number(v));
+    }
+    return null;
+}
+function _digLottery(obj) {
+    if (obj == null) return "";
+    const keys = ['lottery', 'draw', 'prize', '转盘', 'turntable', 'raffle', 'lucky', '福袋', 'reward', 'rewards', 'gift'];
+    const hits = [];
+    const scan = (o, depth) => {
+        if (o == null || depth > 4) return;
+        if (Array.isArray(o)) { o.forEach(v => scan(v, depth + 1)); return; }
+        if (typeof o === 'object') {
+            for (const k of Object.keys(o)) {
+                if (keys.some(kk => String(k).toLowerCase().includes(kk.toLowerCase()))) {
+                    const v = o[k];
+                    if (v != null && v !== '') hits.push(typeof v === 'object' ? JSON.stringify(v) : String(v));
+                }
+                scan(o[k], depth + 1);
+            }
+        }
+    };
+    scan(obj, 0);
+    return hits.length ? hits.join("｜") : "";
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-  sectionLine("拓路者", "");
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
-    for (const openid of $.userList) {
-        await new Task(openid).run();
+    for (let i = 0; i < $.userList.length; i++) {
+        await new Task($.userList[i], i + 1).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("tuoluzhe拓路者小程序签到", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());

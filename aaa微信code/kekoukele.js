@@ -1,3 +1,10 @@
+// ========== 环境配置 ==========
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 
 /*
 ------------------------------------------
@@ -26,9 +33,6 @@ const {
 } = require("../tools/env")
 const $ = new Env("可口可乐小程序");
 const WeChatServer = require("./wcs.js");
-const TokenCache = require("./_token_cache");
-const path = require("path");
-const tokenCache = new TokenCache(path.join(__dirname, "kekoukele_token_cache.json"));
 let ckName = `kekoukele`;
 const strSplitor = "#";
 const axios = require("axios");
@@ -47,13 +51,14 @@ class Task {
         this.user = env.split(strSplitor);
         this.token = null
         this.wcsid = this.user[0]
+        this.remark = this.user[1] || ""
         this.isSign = false
     }
 
     async run() {
-        const cached = tokenCache.read(this.wcsid);
-        if (cached && cached.token && cached.ts && Date.now() - cached.ts < 70000000) { this.token = cached.token; }
-        
+        if (this.remark) _setName(this.index, this.remark);
+            //随机延迟5-30s 模拟人工操作
+       await $.wait(Math.floor(Math.random() * 20 + 5) * 1000);
         let { data: codeRes } = await wechat.getCode(this.wcsid)
         if (codeRes.status) {
             await this.getUserToken(codeRes.data.code)
@@ -114,14 +119,22 @@ class Task {
         try {
             let { data: res } = await axios.request(options);
             if (res.success == true) {
-                $.log(`签到成功 获得【${res.point}】快乐瓶`)
+                $.log(`签到成功 获得【${res.point}】快乐瓶`);
+                const _ep = extractPoints(res) || {};
+                const _earned = (res?.point != null && !isNaN(Number(res.point))) ? `获得${res.point}快乐瓶` : (_ep.earned != null ? String(_ep.earned) : null);
+                const _total = _ep.total != null ? String(_ep.total) : null;
+                const _streak = _ep.streak != null ? _ep.streak : null;
+                _setSign(this.index, "签到成功", _earned, _total);
+                if (_streak != null) _rpGet(this.index).streak = String(_streak);
+                _setLottery(this.index, _digLottery(res));
             } else {
-                $.log(`签到失败`)
+                $.log(`签到失败`);
                 console.log(res);
+                _setSign(this.index, "签到失败", null, null);
             }
         } catch (e) {
             console.log(e);
-
+            _setSign(this.index, "签到异常", null, null);
         }
     }
     async userInfo() {
@@ -144,7 +157,8 @@ class Task {
         }
         try {
             let { data: res } = await axios.request(options);
-            $.log(`目前还剩【${res.point}】瓶 `)
+            $.log(`目前还剩【${res.point}】瓶 `);
+            if (res?.point != null && !isNaN(Number(res.point))) _setSign(this.index, null, null, String(res.point));
 
         } catch (e) {
             console.log(e);
@@ -161,9 +175,78 @@ class Task {
 
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+let _rpRows = [];
+let _rpApp = '可口可乐';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
     await getNotice()
-$.userIdx = 0;
     $.checkEnv(ckName);
     if (process.env['wx_server_url'] && process.env['wx_auth']) {
         for (let user of $.userList) {
@@ -177,10 +260,7 @@ $.userIdx = 0;
 
 })()
     .catch((e) => console.log(e))
-    .then(async () => {
-    const _logs = $.notifyStr || [];
-    if (_logs.length > 0) await sendPushNotify("可口可乐签到", _logs.join("\n"));
-  }).finally(() => $.done());
+    .finally(() => $.done());
 
 async function getNotice() {
     try {

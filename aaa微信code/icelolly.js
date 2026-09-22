@@ -1,11 +1,99 @@
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '冰菓';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", tasks: [], lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k];
+        const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc);
+        else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj;
+    return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k];
+    if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v);
+    if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
 /*
 @Description: 冰菓签到+积分任务
 cron: 30 8 * * *
 */
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+require("https").globalAgent.options.rejectUnauthorized = false;
 const { Env } = require("../tools/env.js");
 const $ = new Env("冰菓签到");
 const axios = require("axios");
+// __NET_RETRY__
+axios.interceptors.response.use(
+  (r) => r,
+  async (e) => {
+    const cfg = e.config || {};
+    cfg.__rc = (cfg.__rc || 0) + 1;
+    const m = String((e && (e.message || e.code)) || "");
+    const net = !e.response && /timeout|ECONNABORTED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang|network|connection/i.test(m);
+    if (net && cfg.__rc <= 3) {
+      await new Promise((s) => setTimeout(s, 2000 * cfg.__rc));
+      const { __rc, ...rest } = cfg;
+      return axios.request(rest);
+    }
+    throw e;
+  }
+);
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
@@ -28,7 +116,9 @@ axios.defaults.proxy = false;
 // ========== Task 类 ==========
 class Task {
     constructor(openid, index) {
-        this.openid = openid;
+        const _a = String(openid || "").trim().split("#");
+        this.openid = _a[0].trim();
+        this.remark = (_a[1] || "").trim();
         this.index = index;
         this.token = null;
         this.userId = null;
@@ -158,11 +248,22 @@ class Task {
         if (d?.success) {
             const reward = d.data?.signReward || 0;
             $.log(`账号[${this.index}] 签到成功 +${reward}积分`);
+            if (reward) _rpGet(this.index).earned = "今日+" + reward + "积分";
+            const _ep = extractPoints(d) || {};
+            if (_ep.streak != null) _rpGet(this.index).streak = String(_ep.streak);
+            if (_ep.total != null) _rpGet(this.index).total = String(_ep.total);
+            const _lot = _digLottery(d);
+            if (_lot) _setLottery(this.index, _lot);
+            _setSign(this.index, "签到成功", reward ? "今日+" + reward + "积分" : null, _ep.total != null ? String(_ep.total) : null);
             return reward;
         }
         const msg = d?.error || d?.message || JSON.stringify(d);
         if (msg && (msg.toString().includes("已签") || msg.toString().includes("signed"))) {
             $.log(`账号[${this.index}] 今日已签到`);
+            const _ep = extractPoints(d) || {};
+            if (_ep.streak != null) _rpGet(this.index).streak = String(_ep.streak);
+            if (_ep.total != null) _rpGet(this.index).total = String(_ep.total);
+            _setSign(this.index, "今日已签到", null, _ep.total != null ? String(_ep.total) : null);
             return 0;
         }
         $.log(`账号[${this.index}] 签到失败(${resp.status}): ${msg}`);
@@ -178,10 +279,16 @@ class Task {
         return [];
     }
 
+
+
+
+
     // ========== 主流程 ==========
     async run() {
         $.log(`\n========== 冰菓 账号[${this.index}] ${this.openid.slice(0, 8)}*** ==========`);
-        
+        if (this.remark) _setName(this.index, this.remark);
+        else if (this.nickName) _setName(this.index, this.nickName);
+
         await this.login();
         const pointsBefore = await this.getPoints();
         $.log(`账号[${this.index}] 当前积分: ${pointsBefore}`);
@@ -197,6 +304,10 @@ class Task {
 
         const pointsAfter = await this.getPoints();
         $.log(`账号[${this.index}] 签到后积分: ${pointsAfter}`);
+        if (pointsAfter != null) {
+            _rpGet(this.index).total = String(pointsAfter);
+            if (typeof logPoints === 'function') logPoints(null, pointsAfter, '冰菓', this.index, '签到成功');
+        }
         $.log(`账号[${this.index}] 任务完成`);
     }
 }

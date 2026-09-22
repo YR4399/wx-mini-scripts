@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import os as _os
+for _k in ("http_proxy","https_proxy","HTTP_PROXY","HTTPS_PROXY","all_proxy","ALL_PROXY"):
+    _os.environ.pop(_k, None)
+# [AGENT-PATCH] disable system proxy for curl_cffi
 """
 🎯 Bing Rewards 自动化脚本 --v2.6
 
@@ -38,6 +42,7 @@ from functools import wraps
 import traceback
 import secrets
 import uuid
+from std_report import report
 
 SCRIPT_VERSION = "v2.6"
 
@@ -565,17 +570,8 @@ class NotificationManager:
         self.notify_client = self._init_notify_client()
     
     def _init_notify_client(self):
-        """初始化通知客户端"""
-        try:
-            import notify
-            # 检查是否已经配置了推送参数
-            if hasattr(notify, 'notify_function') and notify.notify_function:
-                return notify
-            else:
-                # 如果没有配置推送参数，使用默认的notify配置
-                return notify
-        except ImportError:
-            return self._create_mock_notify()
+        """初始化通知客户端（统一经 std_report 双引擎推送，此处仅保留打印型 mock，避免重复推送）"""
+        return self._create_mock_notify()
     
     def _create_mock_notify(self):
         """创建模拟通知客户端"""
@@ -979,8 +975,8 @@ class RequestManager:
     
     def __init__(self):
         """初始化请求管理器，创建独立的Session"""
-        self.desktop_session = curl_requests.Session()
-        self.mobile_session = curl_requests.Session()
+        self.desktop_session = curl_requests.Session(proxies=None)
+        self.mobile_session = curl_requests.Session(proxies=None)
 
     @staticmethod
     def _clean_headers(headers: Dict[str, Optional[str]]) -> Dict[str, str]:
@@ -1130,12 +1126,13 @@ class RequestManager:
         if method_upper not in ("GET", "POST"):
             raise ValueError(f"不支持的HTTP方法: {method}")
         session = self._get_session(profile)
+
         request_kwargs: Dict[str, Any] = {
             "headers": headers,
             "params": params,
             "timeout": timeout,
             "allow_redirects": allow_redirects,
-            "impersonate": self._get_impersonate(profile)
+            "impersonate": self._get_impersonate(profile), "proxies": None
         }
         if method_upper == "POST":
             content_type = str(headers.get("Content-Type", "") or "").lower()
@@ -1149,6 +1146,14 @@ class RequestManager:
                         request_kwargs["data"] = data
             else:
                 request_kwargs["data"] = data
+        # 对 cn.bing.com 搜索使用全新 Session，避免跨域名 curl 状态残留问题
+        if 'cn.bing.com' in url:
+            import curl_cffi.requests as _cr
+            fresh_session = _cr.Session(proxies=None)
+            try:
+                return fresh_session.request(method_upper, url, **request_kwargs)
+            except Exception:
+                raise
         return session.request(method_upper, url, **request_kwargs)
     
     def close(self):
@@ -2040,6 +2045,8 @@ class RewardsService:
         self.last_pc_search_result = None
 
         # ========== 1. 动态重构Cookie ==========
+        # 清理cookie中的换行符和空格
+        cookies = cookies.replace(chr(10), '').replace(chr(13), '').strip()
         cookie_dict = {}
         for item in cookies.split('; '):
             if '=' in item:
@@ -3803,6 +3810,7 @@ class RewardsBot:
     
     def __init__(self):
         self.accounts = AccountManager.get_accounts()
+        self.account_rows = {}  # 账号索引 -> std_report row 数据
         
         if not self.accounts:
             print_log("启动错误", "没有检测到任何账号配置，程序退出")
@@ -4017,6 +4025,48 @@ class RewardsBot:
                     point_claim_status=point_claim_status,
                     point_claim_points=point_claim_points
                 )
+
+                # 构造 std_report 推送 row（多账号分开展示）
+                _sign_parts = []
+                if app_sign_in_points > 0:
+                    _sign_parts.append("APP签到✅")
+                elif app_sign_in_points == 0:
+                    _sign_parts.append("APP已签")
+                elif app_sign_in_points == -3:
+                    _sign_parts.append("APP签到(屏蔽)")
+                elif app_sign_in_points == -2:
+                    _sign_parts.append("APP签到(无令牌)")
+                else:
+                    _sign_parts.append("APP签到❌")
+                if edge_checkin_points > 0:
+                    _sign_parts.append("Edge打卡✅")
+                elif edge_checkin_points == 0:
+                    _sign_parts.append("Edge已打卡")
+                elif edge_checkin_points == -3:
+                    _sign_parts.append("Edge(屏蔽)")
+                elif edge_checkin_points == -2:
+                    _sign_parts.append("Edge(无令牌)")
+                else:
+                    _sign_parts.append("Edge打卡❌")
+                _task_parts = [
+                    f"每日活动{daily_completed}/{daily_total}",
+                    f"继续赚取{more_completed}/{more_total}",
+                    f"阅读{read_completed}/30",
+                ]
+                if extra_completed_count:
+                    _task_parts.append(f"额外{extra_completed_count}")
+                self.account_rows[account_index] = {
+                    "idx": account_index,
+                    "name": email,
+                    "sign": " · ".join(_sign_parts),
+                    "earned": f"今日+{today_total_earned}" if today_total_earned else None,
+                    "total": final_points,
+                    "streak": None,
+                    "tasks": " · ".join(_task_parts),
+                    "lottery": None,
+                    "taskEarned": None,
+                }
+
                 return summary
             else:
                 print_log("脚本完成", "无法获取最终积分", account_index)
@@ -4347,8 +4397,9 @@ class RewardsBot:
                 else:
                     print_log("统一推送", "准备发送所有账号的汇总消息...")
                     try:
-                        title = f"Microsoft Rewards 任务总结 ({date.today().strftime('%Y-%m-%d')})"
-                        global_notification_manager.send(title, content)
+                        _rows = [self.account_rows[i] for i in sorted(self.account_rows.keys())]
+                        if _rows:
+                            report("Microsoft Rewards 每日任务", _rows)
                         print_log("推送成功", "汇总消息已发送。")
                         global_cache_manager.mark_pushed_today()
                     except Exception as e:

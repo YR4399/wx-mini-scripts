@@ -1,6 +1,8 @@
 from __future__ import annotations
+
+
+from std_report import report
 # ========== SSL和代理修复 ==========
-from __future__ import annotations
 import urllib3
 urllib3.disable_warnings()
 import os
@@ -29,15 +31,7 @@ import requests
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from _push_helper import push_notify
-    from _push_helper import send_push_notify  # 自动采集日志并推送
 
-except ImportError:
-    def push_notify(title, content):
-        print(f'⚠️ 推送模块未加载')
-        return False
-# ========== 推送通知结束 ==========
 
 
 # ==================== 配置区 ====================
@@ -148,21 +142,34 @@ def main() -> int:
     print()
 
     ok_count = 0
+    _rows = []
     for index, openid in enumerate(openids, start=1):
         prefix = f"🌸 账号[{index}]"
         try:
             result = run_account(openid)
             print_success(prefix, openid, result)
             ok_count += 1
+            _rows.append({
+                'name': mask_openid(openid),
+                'sign': {'claimed': '领取成功', 'already_claimed': '今日已领取', 'no_daily': '无可用券'}.get(result.get('status'), result.get('status') or '未知'),
+                'earned': (coupon_name(result['coupon']) if result.get('coupon') else None),
+                'total': None, 'streak': None, 'tasks': None, 'taskEarned': None, 'lottery': None,
+            })
         except Exception as err:
             print(f"{prefix} ❌ 处理失败（{mask_openid(openid)}）")
             print(f"{prefix} 错误：{err}")
+            _rows.append({'name': mask_openid(openid), 'sign': '处理失败', 'earned': None, 'total': None, 'streak': None, 'tasks': None, 'taskEarned': None, 'lottery': None})
         print()
 
     print("=" * 60)
     print(f"执行完成: 成功 {ok_count}/{len(openids)}")
     print("=" * 60)
-    
+
+    try:
+        report('微信支付优惠券每日领取', _rows)
+    except Exception as e:
+        print('report 失败:', e)
+
     return 0 if ok_count == len(openids) else 1
 
 
@@ -436,3 +443,4 @@ def mask_openid(openid: str) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -1,29 +1,29 @@
-// ========== 推送通知 ==========
-const { sendPushNotify } = require("./_push_helper");
-// ========== 推送通知结束 ==========
-
+// ========== 环境配置 ==========
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.all_proxy = "";
+process.env.ALL_PROXY = "";
 /*
+------------------------------------------
+@Author: sm
+@Date: 2026.05.31
 @Description: 花生帮粉丝俱乐部签到任务
 cron: 41 8 * * *
+------------------------------------------
+变量名：wb
+变量值：wx_server 里的 openid/账号标识，多账号用 & 或换行
+------------------------------------------
 */
 
 const { Env } = require("../tools/env.js");
-const { ICON, L, sectionLine, humanDelay } = require("./_decor");
 const $ = new Env("花生帮粉丝俱乐部签到任务");
 const axios = require("axios");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const WeChatServer = require("./wcs.js");
-// ========== SSL和代理修复 ==========
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.HTTP_PROXY = "";
-process.env.HTTPS_PROXY = "";
-process.env.http_proxy = "";
-process.env.https_proxy = "";
-// ========== SSL和代理修复结束 ==========
-
-
 
 const MINI_APP_ID = "wx841a8e9e6972a9a6";
 const PAGE_VERSION = "102";
@@ -37,7 +37,7 @@ const TARGET_TASKS = {
     i_0006: "浏览四格漫画",
 };
 
-let ckName = "wx_opinion";
+let ckName = "wb";
 
 const wechat = new WeChatServer({
     url: process.env.wx_server_url || "http://192.168.31.196:8787",
@@ -58,7 +58,7 @@ function writeTokenCache(cache) {
     try {
         fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
     } catch (e) {
-        L.fail("写入token缓存失败: " + e.message || e );
+        $.log(`写入token缓存失败: ${e.message || e}`);
     }
 }
 
@@ -104,7 +104,9 @@ function isTokenError(message) {
 class Task {
     constructor(openid) {
         this.index = $.userIdx++;
-        this.openid = String(openid || "").trim();
+        const _p = String(openid || "").split("#");
+        this.openid = _p[0].trim();
+        this.remark = _p[1] ? _p[1].trim() : "";
         this.token = "";
         this.appOpenid = "";
         this.userId = "";
@@ -114,13 +116,14 @@ class Task {
     }
 
     async run() {
+        if (this.remark) _setName(this.index, this.remark);
         const cached = this.getCachedToken();
         if (cached) {
             this.applyToken(cached);
-            L.info("账号[" + this.index + "] 使用缓存token");
+            $.log(`账号[${this.index}] 使用缓存token`);
             if (!(await this.checkToken())) {
                 this.removeCachedToken();
-                L.fail("账号[" + this.index + "] 缓存token失效，重新登录");
+                $.log(`账号[${this.index}] 缓存token失效，重新登录`);
             }
         }
 
@@ -186,7 +189,7 @@ class Task {
             "X-Request-Lang": "zh-CN",
             "Authorization": this.token || "",
             "x-request-ts": timestamp,
-            "x-request-sign": getSign(method, "/" + apiPath, payload, timestamp),
+            "x-request-sign": getSign(method, `/${apiPath}`, payload, timestamp),
         };
     }
 
@@ -241,9 +244,9 @@ class Task {
                 mobile: login.data?.mobile || "",
             });
             this.saveCachedToken();
-            L.ok("账号[" + this.index + "] 登录成功: userId=" + this.userId || "未知" );
+            $.log(`账号[${this.index}] 登录成功: userId=${this.userId || "未知"}`);
         } catch (e) {
-            L.fail("账号[" + this.index + "] 登录失败: " + e.message || e );
+            $.log(`账号[${this.index}] 登录失败: ${e.message || e}`);
         }
     }
 
@@ -267,7 +270,8 @@ class Task {
         this.mobile = user.mobile || this.mobile;
         this.currentJf = user.currentJf ?? this.currentJf;
         this.saveCachedToken();
-        if (!silent) L.info("账号[" + this.index + "] 用户: userId=" + (this.userId || "未知") + " 能量" + (this.currentJf ?? 0));
+        if (!silent) $.log(`账号[${this.index}] 用户: userId=${this.userId || "未知"} 能量${this.currentJf ?? 0}`);
+        _rpGet(this.index).total = String(this.currentJf ?? 0);
         return user;
     }
 
@@ -277,16 +281,19 @@ class Task {
                 signMonth: formatMonth(),
             }, "GET");
             const signList = Array.from(new Set(monthInfo.data?.signDateList || []));
-            L.info("账号[" + this.index + "] 签到记录: 本月" + signList.length + "天 连续" + monthInfo.data?.continuousSignDays || 0 + "天");
+            $.log(`账号[${this.index}] 签到记录: 本月${signList.length}天 连续${monthInfo.data?.continuousSignDays || 0}天`);
+            if (monthInfo.data?.continuousSignDays != null) _rpGet(this.index).streak = String(monthInfo.data.continuousSignDays);
 
             const justSign = await this.request("marketing/sign/woBeiCus/v1/justSign", {}, "POST", { allowAnyCode: true });
             if (justSign.code !== 200 && /已签|签到/.test(String(justSign.message || ""))) {
-                L.info("账号[" + this.index + "] 今日已签到");
+                $.log(`账号[${this.index}] 今日已签到`);
+                _setSign(this.index, "今日已签到");
                 return;
             }
             if (justSign.code !== 200) throw new Error(justSign.message || JSON.stringify(justSign));
             if (justSign.data === 0 || justSign.data === "0") {
-                L.info("账号[" + this.index + "] 今日已签到");
+                $.log(`账号[${this.index}] 今日已签到`);
+                _setSign(this.index, "今日已签到");
                 return;
             }
 
@@ -297,17 +304,21 @@ class Task {
             if (callback.code === 200) {
                 const rewards = Array.isArray(callback.data) ? callback.data : [];
                 const energy = rewards.find((item) => String(item.rewardType) === "1" || String(item.rewardType) === "2");
-                L.ok("账号[" + this.index + "] 签到成功: +" + energy?.rewardValue || justSign.data || "未知" + "能量");
+                const _gain = energy?.rewardValue != null ? energy.rewardValue : justSign.data;
+                $.log(`账号[${this.index}] 签到成功: +${_gain ?? "未知"}能量`);
+                _setSign(this.index, "签到成功", _gain != null && !isNaN(Number(_gain)) ? "今日+" + _gain + "能量" : "", "");
             } else {
-                L.fail("账号[" + this.index + "] 签到回调失败: " + callback.message || callback.code );
+                $.log(`账号[${this.index}] 签到回调失败: ${callback.message || callback.code}`);
             }
         } catch (e) {
             const message = e.message || e;
             if (/已签|今日已签到|重复/.test(String(message))) {
-                L.info("账号[" + this.index + "] 今日已签到");
+                $.log(`账号[${this.index}] 今日已签到`);
+                _setSign(this.index, "今日已签到");
                 return;
             }
-            L.fail("账号[" + this.index + "] 签到失败: " + message );
+            $.log(`账号[${this.index}] 签到失败: ${message}`);
+            _setSign(this.index, "签到失败: " + message);
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
@@ -336,65 +347,128 @@ class Task {
     }
 
     async doTargetTasks() {
+        let _taskEnergy = 0;
         try {
             const taskList = await this.getTaskList();
             const tasks = taskList.filter((task) => TARGET_TASKS[task.indexNo]);
             if (!tasks.length) {
-                L.info("账号[" + this.index + "] 未找到目标任务");
+                $.log(`账号[${this.index}] 未找到目标任务`);
                 return;
             }
 
             for (const task of tasks) {
                 const taskName = task.taskName || TARGET_TASKS[task.indexNo];
                 if (String(task.status) === "2") {
-                    L.info("账号[" + this.index + "] " + taskName + ": 已完成");
+                    $.log(`账号[${this.index}] ${taskName}: 已完成`);
                     continue;
                 }
 
                 if (String(task.status) === "0") {
                     const ok = await this.setTaskOk(task);
                     if (ok.code !== 200) {
-                        L.fail("账号[" + this.index + "] " + taskName + ": 标记完成失败 " + ok.message || ok.code );
+                        $.log(`账号[${this.index}] ${taskName}: 标记完成失败 ${ok.message || ok.code}`);
                         continue;
                     }
                 }
 
                 const complete = await this.completeTask(task);
                 if (complete.code === 200) {
-                    L.ok("账号[" + this.index + "] " + taskName + ": 领取成功 +" + task.awardsValue || "未知" + "能量");
+                    $.log(`账号[${this.index}] ${taskName}: 领取成功 +${task.awardsValue || "未知"}能量`);
+                    const _av = Number(task.awardsValue);
+                    if (!isNaN(_av) && _av > 0) {
+                        _taskEnergy += _av;
+                        _setTaskEarned(this.index, "做任务+" + _taskEnergy + "能量");
+                    }
                 } else if (complete.code === 21210108) {
-                    L.info("账号[" + this.index + "] " + taskName + ": 奖励已领取");
+                    $.log(`账号[${this.index}] ${taskName}: 奖励已领取`);
                 } else {
-                    L.fail("账号[" + this.index + "] " + taskName + ": 领取失败 " + complete.message || complete.code );
+                    $.log(`账号[${this.index}] ${taskName}: 领取失败 ${complete.message || complete.code}`);
                 }
             }
         } catch (e) {
             const message = e.message || e;
-            L.fail("账号[" + this.index + "] 任务中心失败: " + message );
+            $.log(`账号[${this.index}] 任务中心失败: ${message}`);
             if (isTokenError(message)) this.removeCachedToken();
         }
     }
 }
 
+
+const { report: _stdReport, extractPoints } = require("./std_report");
+let _rpRows = [];
+let _rpApp = '花生帮';
+function _rpGet(idx) {
+  if (!_rpRows[idx]) _rpRows[idx] = { idx: idx, name: "", sign: "", earned: "", total: "", streak: "", tasks: [], taskEarned: "", lottery: "" };
+  return _rpRows[idx];
+}
+function logPoints(todayPoints, totalPoints, app, idx, status) {
+  _rpApp = app || _rpApp;
+  const r = _rpGet(idx);
+  if (status != null && status !== "") r.sign = String(status);
+  if (totalPoints != null && totalPoints !== "" && !isNaN(Number(totalPoints))) r.total = String(totalPoints);
+  if (todayPoints != null && todayPoints !== "" && !isNaN(Number(todayPoints)) && Number(todayPoints) !== 0) r.earned = "今日+" + todayPoints + "积分";
+}
+function _setName(idx, name) { if (name != null) _rpGet(idx).name = String(name); }
+function _setSign(idx, sign, earned, total) {
+  const r = _rpGet(idx);
+  if (sign != null) r.sign = String(sign);
+  if (earned != null && earned !== "") r.earned = String(earned);
+  if (total != null && total !== "") r.total = String(total);
+}
+function _addTask(idx, name, status) { _rpGet(idx).tasks.push({ name: String(name), status: String(status) }); }
+function _setLottery(idx, text) { if (text != null && text !== "") _rpGet(idx).lottery = String(text); }
+function _setTaskEarned(idx, text) { if (text != null && text !== "") _rpGet(idx).taskEarned = String(text); }
+function _digLottery(obj) {
+  if (obj == null) return "";
+  const flat = (function _f(o, pre, acc) {
+    acc = acc || {};
+    if (Array.isArray(o)) { o.forEach((v, i) => _f(v, pre ? pre + "." + i : "" + i, acc)); return acc; }
+    if (o && typeof o === "object") {
+      for (const k of Object.keys(o)) {
+        const nv = o[k]; const nk = pre ? pre + "." + k : k;
+        if (nv && typeof nv === "object") _f(nv, nk, acc); else acc[nk.toLowerCase()] = nv;
+      }
+      return acc;
+    }
+    if (pre) acc[pre] = obj; return acc;
+  })(obj, "", {});
+  const keys = Object.keys(flat);
+  const hit = (re) => keys.filter(k => re.test(k));
+  const lotteryKeys = hit(/lottery|draw|prize|转盘|turntable|raffle|lucky|福袋|reward|rewards|gift/);
+  const out = [];
+  for (const k of lotteryKeys) {
+    let v = flat[k]; if (v == null) continue;
+    if (typeof v === "object") v = JSON.stringify(v);
+    const s = String(v); if (s && s !== "{}" && s !== "[]") out.push(s);
+  }
+  return out.join("｜");
+}
+async function doPush() { /* 由 flushLogPoints 统一经 std_report 推送 */ }
+let _rpFlushed = false;
+async function flushLogPoints(app) {
+  if (_rpFlushed) return;
+  _rpApp = app || _rpApp;
+  const rows = _rpRows.filter(Boolean);
+  if (!rows.length) return;
+  _rpFlushed = true;
+  await _stdReport(_rpApp, rows);
+}
+{
+  const _oe = process.exit.bind(process);
+  process.exit = function (code) {
+    const p = flushLogPoints(_rpApp);
+    if (p && typeof p.then === 'function') p.then(() => _oe(code)).catch(() => _oe(code));
+    else _oe(code);
+  };
+}
+process.on('beforeExit', () => { flushLogPoints(_rpApp); });
+
+
 !(async () => {
-  sectionLine("花生帮", "");
-    
-$.userIdx = 0;
     $.checkEnv(ckName);
     for (const openid of $.userList) {
         await new Task(openid).run();
     }
 })()
     .catch((e) => $.log(e.message || e))
-    .finally(async () => {
-    // ========== push result ==========
-    try {
-        const _logs = $.notifyStr || [];
-        if (_logs.length > 0) {
-            await sendPushNotify("花生帮粉丝俱乐部签到任务", _logs.join("\n"));
-        }
-    } catch(_e) {}
-    // ========== push end ==========
-    $.sendMsg = async () => {}; $.log = async () => {};
-    process.exit(0);
-});
+    .finally(() => $.done());
